@@ -1,0 +1,44 @@
+program = *function-def
+
+function-def = "fn" identifier "(" [param-list] ")" "->" type-name block
+
+param-list = param *("," param)
+param = identifier ":" type-name
+
+type-name = "i64"
+
+block = "{" *statement [expression] "}"
+
+statement = expression ";"
+
+expression = return-expr / bitwise-or-expr
+
+return-expr = "return" [expression]
+
+bitwise-or-expr = bitwise-and-expr *(bitwise-or-op bitwise-and-expr)
+bitwise-or-op = "|"
+
+bitwise-and-expr = equality-expr *(bitwise-and-op equality-expr)
+bitwise-and-op = "&"
+
+equality-expr = relational-expr *(equality-op relational-expr)
+equality-op = "==" / "!="
+
+relational-expr = additive-expr *(relational-op additive-expr)
+relational-op = "<" / "<=" / ">" / ">="
+
+additive-expr = multiplicative-expr *(additive-op multiplicative-expr)
+additive-op = "+" / "-"
+
+multiplicative-expr = unary-expr *(multiplicative-op unary-expr)
+multiplicative-op = "*" / "/" / "%"
+
+unary-expr = unary-op unary-expr / primary-expr
+unary-op = "-"
+
+primary-expr = literal / identifier / block / "(" expression ")"
+
+literal = integer
+integer = 1*DIGIT
+
+identifier = ALPHA *(ALPHA / DIGIT)
