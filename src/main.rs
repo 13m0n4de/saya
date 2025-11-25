@@ -579,148 +579,89 @@ impl<'a> Parser<'a> {
             });
         }
 
-        self.parse_bitwise_or()
+        self.parse_expr_bp(0)
     }
 
-    fn parse_bitwise_or(&mut self) -> Result<Expr, ParseError> {
-        let mut left = self.parse_bitwise_and()?;
+    fn infix_binding_power(&self, token: &TokenKind) -> Option<(u8, u8)> {
+        let bp = match token {
+            TokenKind::Or => (10, 11),                   // |
+            TokenKind::And => (20, 21),                  // &
+            TokenKind::EqEq | TokenKind::Ne => (30, 31), // == !=
+            TokenKind::Lt | TokenKind::Le | TokenKind::Gt | TokenKind::Ge => (40, 41), // < <= > >=
+            TokenKind::Plus | TokenKind::Minus => (50, 51), // + -
+            TokenKind::Star | TokenKind::Slash | TokenKind::Percent => (60, 61), // * / %
+            _ => return None,
+        };
+        Some(bp)
+    }
 
-        while self.current.kind == TokenKind::Or {
-            self.advance()?;
-            let right = self.parse_bitwise_and()?;
-
-            let span = left.span;
-            left = Expr {
-                kind: ExprKind::Binary(BinaryOp::BitOr, Box::new(left), Box::new(right)),
-                span,
-            };
+    fn prefix_binding_power(&self, token: &TokenKind) -> Option<u8> {
+        match token {
+            TokenKind::Minus => Some(70), // -
+            _ => None,
         }
-
-        Ok(left)
     }
 
-    fn parse_bitwise_and(&mut self) -> Result<Expr, ParseError> {
-        let mut left = self.parse_equality()?;
-
-        while self.current.kind == TokenKind::And {
-            self.advance()?;
-            let right = self.parse_equality()?;
-
-            let span = left.span;
-            left = Expr {
-                kind: ExprKind::Binary(BinaryOp::BitAnd, Box::new(left), Box::new(right)),
-                span,
-            };
-        }
-
-        Ok(left)
-    }
-
-    fn parse_equality(&mut self) -> Result<Expr, ParseError> {
-        let mut left = self.parse_relational()?;
-
-        loop {
+    fn parse_expr_bp(&mut self, min_bp: u8) -> Result<Expr, ParseError> {
+        let mut lhs = if let Some(prefix_bp) = self.prefix_binding_power(&self.current.kind) {
+            // Prefix operator
+            let start_span = self.current.span;
             let op = match self.current.kind {
-                TokenKind::EqEq => BinaryOp::Eq,
-                TokenKind::Ne => BinaryOp::Ne,
-                _ => break,
+                TokenKind::Minus => UnaryOp::Neg,
+                _ => unreachable!(),
             };
             self.advance()?;
-            let right = self.parse_relational()?;
+            let rhs = self.parse_expr_bp(prefix_bp)?;
+            Expr {
+                kind: ExprKind::Unary(op, Box::new(rhs)),
+                span: start_span,
+            }
+        } else {
+            // Primary expression
+            self.parse_primary()?
+        };
 
-            let span = left.span;
-            left = Expr {
-                kind: ExprKind::Binary(op, Box::new(left), Box::new(right)),
-                span,
-            };
-        }
-
-        Ok(left)
-    }
-
-    fn parse_relational(&mut self) -> Result<Expr, ParseError> {
-        let mut left = self.parse_additive()?;
-
+        // Infix operators
         loop {
-            let op = match self.current.kind {
+            let op_token = &self.current.kind.clone();
+
+            let (left_bp, right_bp) = match self.infix_binding_power(op_token) {
+                Some(bp) => bp,
+                None => break,
+            };
+
+            if left_bp < min_bp {
+                break;
+            }
+
+            let op = match op_token {
+                TokenKind::Plus => BinaryOp::Add,
+                TokenKind::Minus => BinaryOp::Sub,
+                TokenKind::Star => BinaryOp::Mul,
+                TokenKind::Slash => BinaryOp::Div,
+                TokenKind::Percent => BinaryOp::Rem,
                 TokenKind::Lt => BinaryOp::Lt,
                 TokenKind::Le => BinaryOp::Le,
                 TokenKind::Gt => BinaryOp::Gt,
                 TokenKind::Ge => BinaryOp::Ge,
-                _ => break,
+                TokenKind::EqEq => BinaryOp::Eq,
+                TokenKind::Ne => BinaryOp::Ne,
+                TokenKind::And => BinaryOp::BitAnd,
+                TokenKind::Or => BinaryOp::BitOr,
+                _ => unreachable!(),
             };
-            self.advance()?;
-            let right = self.parse_additive()?;
 
-            let span = left.span;
-            left = Expr {
-                kind: ExprKind::Binary(op, Box::new(left), Box::new(right)),
+            let span = lhs.span;
+            self.advance()?;
+            let rhs = self.parse_expr_bp(right_bp)?;
+
+            lhs = Expr {
+                kind: ExprKind::Binary(op, Box::new(lhs), Box::new(rhs)),
                 span,
             };
         }
 
-        Ok(left)
-    }
-
-    fn parse_additive(&mut self) -> Result<Expr, ParseError> {
-        let mut left = self.parse_multiplicative()?;
-
-        loop {
-            let op = match self.current.kind {
-                TokenKind::Plus => BinaryOp::Add,
-                TokenKind::Minus => BinaryOp::Sub,
-                _ => break,
-            };
-            self.advance()?;
-            let right = self.parse_multiplicative()?;
-
-            let span = left.span;
-            left = Expr {
-                kind: ExprKind::Binary(op, Box::new(left), Box::new(right)),
-                span,
-            };
-        }
-
-        Ok(left)
-    }
-
-    fn parse_multiplicative(&mut self) -> Result<Expr, ParseError> {
-        let mut left = self.parse_unary()?;
-
-        loop {
-            let op = match self.current.kind {
-                TokenKind::Star => BinaryOp::Mul,
-                TokenKind::Slash => BinaryOp::Div,
-                TokenKind::Percent => BinaryOp::Rem,
-                _ => break,
-            };
-            self.advance()?;
-            let right = self.parse_unary()?;
-
-            let span = left.span;
-            left = Expr {
-                kind: ExprKind::Binary(op, Box::new(left), Box::new(right)),
-                span,
-            };
-        }
-
-        Ok(left)
-    }
-
-    fn parse_unary(&mut self) -> Result<Expr, ParseError> {
-        let start_span = self.current.span;
-
-        match &self.current.kind {
-            TokenKind::Minus => {
-                self.advance()?;
-                let expr = Box::new(self.parse_unary()?);
-                Ok(Expr {
-                    kind: ExprKind::Unary(UnaryOp::Neg, expr),
-                    span: start_span,
-                })
-            }
-            _ => self.parse_primary(),
-        }
+        Ok(lhs)
     }
 
     fn parse_primary(&mut self) -> Result<Expr, ParseError> {
