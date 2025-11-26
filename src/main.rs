@@ -569,16 +569,33 @@ impl<'a> Parser<'a> {
             let expr_span = expr.span;
 
             if self.eat(TokenKind::Semi)? {
+                // Explicit semicolon: statement
                 stmts.push(Stmt {
                     kind: StmtKind::Semi(expr),
                     span: expr_span,
                 });
-            } else {
+            } else if self.current.kind == TokenKind::CloseBrace {
+                // No semicolon, followed by '}': tail expression
                 stmts.push(Stmt {
                     kind: StmtKind::Expr(expr),
                     span: expr_span,
                 });
                 break;
+            } else if matches!(expr.kind, ExprKind::Block(_)) {
+                // Block expressions can omit semicolons
+                stmts.push(Stmt {
+                    kind: StmtKind::Semi(expr),
+                    span: expr_span,
+                });
+            } else {
+                // Other expressions require semicolons
+                return Err(ParseError::new(
+                    format!(
+                        "Expected ';' after expression (found {:?})",
+                        self.current.kind
+                    ),
+                    self.current.span,
+                ));
             }
         }
 
