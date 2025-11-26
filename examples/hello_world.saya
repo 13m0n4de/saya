@@ -1,3 +1,4 @@
 fn main(argc: i64) -> i64 {
-    return 1 != 1 | 1 < 2;
+    let x: i64 = 4 + argc;
+    return x + 2 * 3;
 }
