@@ -4,6 +4,7 @@ use std::{fs::read_to_string, str::Chars};
 pub enum TokenKind {
     Fn,
     Return,
+    Let,
 
     Ident(String),
     Integer(i64),
@@ -288,6 +289,7 @@ impl<'a> Lexer<'a> {
         match ident.as_str() {
             "fn" => TokenKind::Fn,
             "return" => TokenKind::Return,
+            "let" => TokenKind::Let,
             _ => TokenKind::Ident(ident),
         }
     }
@@ -326,9 +328,23 @@ pub struct Block {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Stmt {
+pub struct Stmt {
+    kind: StmtKind,
+    span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum StmtKind {
     Expr(Expr),
     Semi(Expr),
+    Let(Let),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Let {
+    pub name: String,
+    pub ty: Ty,
+    pub init: Expr,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -541,12 +557,25 @@ impl<'a> Parser<'a> {
                 break;
             }
 
+            if self.current.kind == TokenKind::Let {
+                let stmt = self.parse_let_statment()?;
+                stmts.push(stmt);
+                continue;
+            }
+
             let expr = self.parse_expression()?;
+            let expr_span = expr.span;
 
             if self.eat(TokenKind::Semi)? {
-                stmts.push(Stmt::Semi(expr));
+                stmts.push(Stmt {
+                    kind: StmtKind::Semi(expr),
+                    span: expr_span,
+                });
             } else {
-                stmts.push(Stmt::Expr(expr));
+                stmts.push(Stmt {
+                    kind: StmtKind::Expr(expr),
+                    span: expr_span,
+                });
                 break;
             }
         }
@@ -555,6 +584,29 @@ impl<'a> Parser<'a> {
 
         Ok(Block {
             stmts,
+            span: start_span,
+        })
+    }
+
+    fn parse_let_statment(&mut self) -> Result<Stmt, ParseError> {
+        let start_span = self.current.span;
+
+        self.expect(TokenKind::Let)?;
+
+        let name = self.expect_identifier()?;
+
+        self.expect(TokenKind::Colon)?;
+
+        let ty = self.parse_type()?;
+
+        self.expect(TokenKind::Eq)?;
+
+        let init = self.parse_expression()?;
+
+        self.expect(TokenKind::Semi)?;
+
+        Ok(Stmt {
+            kind: StmtKind::Let(Let { name, ty, init }),
             span: start_span,
         })
     }
@@ -758,11 +810,25 @@ impl CodeGen {
 
     fn generate_block(&mut self, qfunc: &mut qbe::Function<'static>, block: &Block) {
         for stmt in &block.stmts {
-            match stmt {
-                Stmt::Expr(expr) | Stmt::Semi(expr) => {
+            match &stmt.kind {
+                StmtKind::Expr(expr) | StmtKind::Semi(expr) => {
                     self.generate_expression(qfunc, expr);
                 }
+                StmtKind::Let(let_stmt) => {
+                    self.generate_let(qfunc, let_stmt);
+                }
             }
+        }
+    }
+
+    fn generate_let(&mut self, qfunc: &mut qbe::Function<'static>, let_stmt: &Let) {
+        let qbe_ty = Self::type_to_qbe(&let_stmt.ty);
+        if let Some(init_val) = self.generate_expression(qfunc, &let_stmt.init) {
+            qfunc.assign_instr(
+                qbe::Value::Temporary(let_stmt.name.to_owned()),
+                qbe_ty,
+                qbe::Instr::Copy(init_val),
+            );
         }
     }
 
@@ -827,12 +893,15 @@ impl CodeGen {
             ExprKind::Block(block) => {
                 let mut result = None;
                 for stmt in &block.stmts {
-                    match stmt {
-                        Stmt::Semi(expr) => {
+                    match &stmt.kind {
+                        StmtKind::Semi(expr) => {
                             self.generate_expression(qfunc, expr);
                         }
-                        Stmt::Expr(expr) => {
+                        StmtKind::Expr(expr) => {
                             result = self.generate_expression(qfunc, expr);
+                        }
+                        StmtKind::Let(let_stmt) => {
+                            self.generate_let(qfunc, let_stmt);
                         }
                     }
                 }
