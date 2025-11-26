@@ -13,9 +13,12 @@ statement = expr-stmt / let-stmt
 expr-stmt = expression ";"
 let-stmt = "let" identifier ":" type-name "=" expression ";"
 
-expression = return-expr / bitwise-or-expr
+expression = return-expr / assign-expr
 
 return-expr = "return" [expression]
+
+assign-expr = bitwise-or-expr [assign-op assign-expr]
+assign-op = "="
 
 bitwise-or-expr = bitwise-and-expr *(bitwise-or-op bitwise-and-expr)
 bitwise-or-op = "|"

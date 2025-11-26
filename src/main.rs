@@ -1,4 +1,4 @@
-use std::{fs::read_to_string, str::Chars};
+use std::{collections::HashSet, fs::read_to_string, str::Chars};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
@@ -345,6 +345,7 @@ pub struct Let {
     pub name: String,
     pub ty: Ty,
     pub init: Expr,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -359,6 +360,7 @@ pub enum ExprKind {
     Ident(String),
     Unary(UnaryOp, Box<Expr>),
     Binary(BinaryOp, Box<Expr>, Box<Expr>),
+    Assign(String, Box<Expr>),
     Return(Option<Box<Expr>>),
     Block(Block),
 }
@@ -558,7 +560,7 @@ impl<'a> Parser<'a> {
             }
 
             if self.current.kind == TokenKind::Let {
-                let stmt = self.parse_let_statment()?;
+                let stmt = self.parse_let_statement()?;
                 stmts.push(stmt);
                 continue;
             }
@@ -588,7 +590,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_let_statment(&mut self) -> Result<Stmt, ParseError> {
+    fn parse_let_statement(&mut self) -> Result<Stmt, ParseError> {
         let start_span = self.current.span;
 
         self.expect(TokenKind::Let)?;
@@ -606,7 +608,12 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::Semi)?;
 
         Ok(Stmt {
-            kind: StmtKind::Let(Let { name, ty, init }),
+            kind: StmtKind::Let(Let {
+                name,
+                ty,
+                init,
+                span: start_span,
+            }),
             span: start_span,
         })
     }
@@ -631,7 +638,33 @@ impl<'a> Parser<'a> {
             });
         }
 
-        self.parse_expr_bp(0)
+        self.parse_expr_assign()
+    }
+
+    fn parse_expr_assign(&mut self) -> Result<Expr, ParseError> {
+        let lhs = self.parse_expr_bp(0)?;
+
+        if self.current.kind == TokenKind::Eq {
+            let name = match &lhs.kind {
+                ExprKind::Ident(n) => n.clone(),
+                _ => {
+                    return Err(ParseError::new(
+                        "Left side of assignment must be an identifier".to_string(),
+                        lhs.span,
+                    ));
+                }
+            };
+
+            self.advance()?;
+            let rhs = self.parse_expr_assign()?;
+
+            Ok(Expr {
+                kind: ExprKind::Assign(name, Box::new(rhs)),
+                span: lhs.span,
+            })
+        } else {
+            Ok(lhs)
+        }
     }
 
     fn infix_binding_power(&self, token: &TokenKind) -> Option<(u8, u8)> {
@@ -757,11 +790,15 @@ impl<'a> Parser<'a> {
 
 pub struct CodeGen {
     temp_counter: usize,
+    locals: HashSet<String>,
 }
 
 impl CodeGen {
     fn new() -> Self {
-        Self { temp_counter: 0 }
+        Self {
+            temp_counter: 0,
+            locals: HashSet::new(),
+        }
     }
 
     fn new_temp(&mut self) -> String {
@@ -787,6 +824,8 @@ impl CodeGen {
     }
 
     fn generate_function(&mut self, func: &FunctionDef) -> qbe::Function<'static> {
+        self.locals.clear();
+
         let params = func
             .params
             .iter()
@@ -823,12 +862,14 @@ impl CodeGen {
 
     fn generate_let(&mut self, qfunc: &mut qbe::Function<'static>, let_stmt: &Let) {
         let qbe_ty = Self::type_to_qbe(&let_stmt.ty);
+
+        let addr = qbe::Value::Temporary(let_stmt.name.clone());
+        qfunc.assign_instr(addr.clone(), qbe::Type::Long, qbe::Instr::Alloc8(8));
+
+        self.locals.insert(let_stmt.name.clone());
+
         if let Some(init_val) = self.generate_expression(qfunc, &let_stmt.init) {
-            qfunc.assign_instr(
-                qbe::Value::Temporary(let_stmt.name.to_owned()),
-                qbe_ty,
-                qbe::Instr::Copy(init_val),
-            );
+            qfunc.add_instr(qbe::Instr::Store(qbe_ty, addr, init_val));
         }
     }
 
@@ -839,7 +880,20 @@ impl CodeGen {
     ) -> Option<qbe::Value> {
         match &expr.kind {
             ExprKind::Literal(lit) => Some(qbe::Value::Const(*lit as u64)),
-            ExprKind::Ident(name) => Some(qbe::Value::Temporary(name.clone())),
+            ExprKind::Ident(name) => {
+                if self.locals.contains(name) {
+                    let addr = qbe::Value::Temporary(name.clone());
+                    let result = qbe::Value::Temporary(self.new_temp());
+                    qfunc.assign_instr(
+                        result.clone(),
+                        qbe::Type::Long,
+                        qbe::Instr::Load(qbe::Type::Long, addr),
+                    );
+                    Some(result)
+                } else {
+                    Some(qbe::Value::Temporary(name.clone()))
+                }
+            }
             ExprKind::Unary(unop, expr) => match unop {
                 UnaryOp::Neg => {
                     let operand = self.generate_expression(qfunc, expr)?;
@@ -881,6 +935,13 @@ impl CodeGen {
 
                 qfunc.assign_instr(result.clone(), qbe::Type::Long, instr);
                 Some(result)
+            }
+            ExprKind::Assign(name, assign_expr) => {
+                if let Some(rhs_val) = self.generate_expression(qfunc, assign_expr) {
+                    let addr = qbe::Value::Temporary(name.clone());
+                    qfunc.add_instr(qbe::Instr::Store(qbe::Type::Long, addr, rhs_val));
+                }
+                None
             }
             ExprKind::Return(ret_expr) => {
                 let value = match ret_expr {
