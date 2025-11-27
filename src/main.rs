@@ -2,9 +2,11 @@ use std::{collections::HashMap, fs::read_to_string, str::Chars};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
-    Fn,
-    Return,
-    Let,
+    Fn,     // fn
+    Return, // return
+    Let,    // let
+    If,     // if
+    Else,   // else
 
     Ident(String),
     Integer(i64),
@@ -290,6 +292,8 @@ impl<'a> Lexer<'a> {
             "fn" => TokenKind::Fn,
             "return" => TokenKind::Return,
             "let" => TokenKind::Let,
+            "if" => TokenKind::If,
+            "else" => TokenKind::Else,
             _ => TokenKind::Ident(ident),
         }
     }
@@ -363,6 +367,7 @@ pub enum ExprKind {
     Assign(String, Box<Expr>),
     Return(Option<Box<Expr>>),
     Block(Block),
+    If(Box<Expr>, Box<Block>, Option<Box<Block>>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -790,6 +795,19 @@ impl<'a> Parser<'a> {
                 let block = self.parse_block()?;
                 ExprKind::Block(block)
             }
+            TokenKind::If => {
+                self.advance()?;
+
+                let cond = self.parse_expression()?;
+                let then_block = self.parse_block()?;
+                let else_block = if self.eat(TokenKind::Else)? {
+                    Some(Box::new(self.parse_block()?))
+                } else {
+                    None
+                };
+
+                ExprKind::If(Box::new(cond), Box::new(then_block), else_block)
+            }
             _ => {
                 return Err(ParseError::new(
                     format!("Expected expression, found {:?}", self.current.kind),
@@ -825,6 +843,7 @@ impl CodeGenError {
 
 pub struct CodeGen {
     temp_counter: usize,
+    label_counter: usize,
     scopes: Vec<HashMap<String, VarKind>>,
 }
 
@@ -832,6 +851,7 @@ impl CodeGen {
     fn new() -> Self {
         Self {
             temp_counter: 0,
+            label_counter: 0,
             scopes: Vec::new(),
         }
     }
@@ -840,6 +860,12 @@ impl CodeGen {
         let name = format!("temp.{}", self.temp_counter);
         self.temp_counter += 1;
         name
+    }
+
+    fn new_label(&mut self) -> usize {
+        let id = self.label_counter;
+        self.label_counter += 1;
+        id
     }
 
     fn push_scope(&mut self) {
@@ -926,18 +952,24 @@ impl CodeGen {
         &mut self,
         qfunc: &mut qbe::Function<'static>,
         block: &Block,
-    ) -> Result<(), CodeGenError> {
+    ) -> Result<Option<qbe::Value>, CodeGenError> {
+        self.push_scope();
+        let mut result = None;
         for stmt in &block.stmts {
             match &stmt.kind {
-                StmtKind::Expr(expr) | StmtKind::Semi(expr) => {
+                StmtKind::Semi(expr) => {
                     self.generate_expression(qfunc, expr)?;
+                }
+                StmtKind::Expr(expr) => {
+                    result = self.generate_expression(qfunc, expr)?;
                 }
                 StmtKind::Let(let_stmt) => {
                     self.generate_let(qfunc, let_stmt)?;
                 }
             }
         }
-        Ok(())
+        self.pop_scope();
+        Ok(result)
     }
 
     fn generate_let(
@@ -1045,24 +1077,84 @@ impl CodeGen {
                 qfunc.add_instr(qbe::Instr::Ret(value));
                 Ok(None)
             }
-            ExprKind::Block(block) => {
-                self.push_scope();
-                let mut result = None;
-                for stmt in &block.stmts {
-                    match &stmt.kind {
-                        StmtKind::Semi(expr) => {
-                            self.generate_expression(qfunc, expr)?;
-                        }
-                        StmtKind::Expr(expr) => {
-                            result = self.generate_expression(qfunc, expr)?;
-                        }
-                        StmtKind::Let(let_stmt) => {
-                            self.generate_let(qfunc, let_stmt)?;
+            ExprKind::Block(block) => self.generate_block(qfunc, block),
+            ExprKind::If(cond_expr, then_block, else_block) => {
+                let cond = self.generate_expression(qfunc, cond_expr)?.ok_or_else(|| {
+                    CodeGenError::new("Condition must produce a value".to_string(), cond_expr.span)
+                })?;
+
+                let label_id = self.new_label();
+                let then_label = format!("if.{}.then", label_id);
+                let end_label = format!("if.{}.end", label_id);
+
+                match else_block {
+                    None => {
+                        // if without else: no return value
+                        qfunc.add_instr(qbe::Instr::Jnz(
+                            cond,
+                            then_label.clone(),
+                            end_label.clone(),
+                        ));
+
+                        qfunc.add_block(then_label);
+                        self.generate_block(qfunc, then_block)?;
+
+                        qfunc.add_block(end_label);
+                        Ok(None)
+                    }
+                    Some(else_block) => {
+                        // if-else: can return value
+                        let else_label = format!("if.{}.else", label_id);
+
+                        qfunc.add_instr(qbe::Instr::Jnz(
+                            cond,
+                            then_label.clone(),
+                            else_label.clone(),
+                        ));
+
+                        // Then block
+                        qfunc.add_block(then_label.clone());
+                        let then_result = self.generate_block(qfunc, then_block)?.map(|val| {
+                            let temp = qbe::Value::Temporary(self.new_temp());
+                            qfunc.assign_instr(
+                                temp.clone(),
+                                qbe::Type::Long,
+                                qbe::Instr::Copy(val),
+                            );
+                            temp
+                        });
+                        qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
+
+                        // Else block
+                        qfunc.add_block(else_label.clone());
+                        let else_result = self.generate_block(qfunc, else_block)?.map(|val| {
+                            let temp = qbe::Value::Temporary(self.new_temp());
+                            qfunc.assign_instr(
+                                temp.clone(),
+                                qbe::Type::Long,
+                                qbe::Instr::Copy(val),
+                            );
+                            temp
+                        });
+
+                        // End block
+                        qfunc.add_block(end_label);
+
+                        // If both branches return a value, merge them with phi
+                        match (then_result, else_result) {
+                            (Some(then_val), Some(else_val)) => {
+                                let result = qbe::Value::Temporary(self.new_temp());
+                                qfunc.assign_instr(
+                                    result.clone(),
+                                    qbe::Type::Long,
+                                    qbe::Instr::Phi(then_label, then_val, else_label, else_val),
+                                );
+                                Ok(Some(result))
+                            }
+                            _ => Ok(None),
                         }
                     }
                 }
-                self.pop_scope();
-                Ok(result)
             }
         }
     }

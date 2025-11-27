@@ -41,7 +41,9 @@ multiplicative-op = "*" / "/" / "%"
 unary-expr = unary-op unary-expr / primary-expr
 unary-op = "-"
 
-primary-expr = literal / identifier / block / "(" expression ")"
+primary-expr = literal / identifier / if-expr / block / "(" expression ")"
+
+if-expr = "if" expression block ["else" (if-expr / block)]
 
 literal = integer
 integer = 1*DIGIT
