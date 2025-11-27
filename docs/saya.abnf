@@ -17,8 +17,14 @@ expression = return-expr / assign-expr
 
 return-expr = "return" [expression]
 
-assign-expr = bitwise-or-expr [assign-op assign-expr]
+assign-expr = logical-or-expr [assign-op assign-expr]
 assign-op = "="
+
+logical-or-expr = logical-and-expr *(logical-or-op logical-and-expr)
+logical-or-op = "||"
+
+logical-and-expr = bitwise-or-expr *(logical-and-op bitwise-or-expr)
+logical-and-op = "&&"
 
 bitwise-or-expr = bitwise-and-expr *(bitwise-or-op bitwise-and-expr)
 bitwise-or-op = "|"

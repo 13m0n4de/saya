@@ -398,6 +398,8 @@ pub enum BinaryOp {
     Ne,     // !=
     BitAnd, // &
     BitOr,  // |
+    And,    // &&
+    Or,     // ||
 }
 
 #[derive(Debug)]
@@ -699,12 +701,14 @@ impl<'a> Parser<'a> {
 
     fn infix_binding_power(&self, token: &TokenKind) -> Option<(u8, u8)> {
         let bp = match token {
-            TokenKind::Or => (10, 11),                   // |
-            TokenKind::And => (20, 21),                  // &
-            TokenKind::EqEq | TokenKind::Ne => (30, 31), // == !=
-            TokenKind::Lt | TokenKind::Le | TokenKind::Gt | TokenKind::Ge => (40, 41), // < <= > >=
-            TokenKind::Plus | TokenKind::Minus => (50, 51), // + -
-            TokenKind::Star | TokenKind::Slash | TokenKind::Percent => (60, 61), // * / %
+            TokenKind::OrOr => (10, 11),                 // ||
+            TokenKind::AndAnd => (20, 21),               // &&
+            TokenKind::Or => (30, 31),                   // |
+            TokenKind::And => (40, 41),                  // &
+            TokenKind::EqEq | TokenKind::Ne => (50, 51), // == !=
+            TokenKind::Lt | TokenKind::Le | TokenKind::Gt | TokenKind::Ge => (60, 61), // < <= > >=
+            TokenKind::Plus | TokenKind::Minus => (70, 71), // + -
+            TokenKind::Star | TokenKind::Slash | TokenKind::Percent => (80, 81), // * / %
             _ => return None,
         };
         Some(bp)
@@ -763,6 +767,8 @@ impl<'a> Parser<'a> {
                 TokenKind::Ne => BinaryOp::Ne,
                 TokenKind::And => BinaryOp::BitAnd,
                 TokenKind::Or => BinaryOp::BitOr,
+                TokenKind::AndAnd => BinaryOp::And,
+                TokenKind::OrOr => BinaryOp::Or,
                 _ => unreachable!(),
             };
 
@@ -1068,6 +1074,7 @@ impl CodeGen {
                     qfunc.assign_instr(temp.clone(), qbe::Type::Long, qbe::Instr::Copy(val));
                     temp
                 });
+                qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
 
                 // End block
                 qfunc.add_block(end_label);
@@ -1087,6 +1094,112 @@ impl CodeGen {
                 }
             }
         }
+    }
+
+    fn generate_logical_and(
+        &mut self,
+        qfunc: &mut qbe::Function<'static>,
+        left: &Expr,
+        right: &Expr,
+    ) -> Result<Option<qbe::Value>, CodeGenError> {
+        let left_val = self.generate_expression(qfunc, left)?.ok_or_else(|| {
+            CodeGenError::new("Left operand must produce a value".to_string(), left.span)
+        })?;
+
+        let label_id = self.new_label();
+        let rhs_label = format!("land.{}.rhs", label_id);
+        let false_label = format!("land.{}.false", label_id);
+        let end_label = format!("land.{}.end", label_id);
+
+        qfunc.add_instr(qbe::Instr::Jnz(
+            left_val,
+            rhs_label.clone(),
+            false_label.clone(),
+        ));
+
+        qfunc.add_block(rhs_label.clone());
+        let right_val = self.generate_expression(qfunc, right)?.ok_or_else(|| {
+            CodeGenError::new("Right operand must produce a value".to_string(), right.span)
+        })?;
+        let right_temp = qbe::Value::Temporary(self.new_temp());
+        qfunc.assign_instr(
+            right_temp.clone(),
+            qbe::Type::Long,
+            qbe::Instr::Copy(right_val),
+        );
+        qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
+
+        qfunc.add_block(false_label.clone());
+        let false_temp = qbe::Value::Temporary(self.new_temp());
+        qfunc.assign_instr(
+            false_temp.clone(),
+            qbe::Type::Long,
+            qbe::Instr::Copy(qbe::Value::Const(0)),
+        );
+        qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
+
+        qfunc.add_block(end_label);
+        let result = qbe::Value::Temporary(self.new_temp());
+        qfunc.assign_instr(
+            result.clone(),
+            qbe::Type::Long,
+            qbe::Instr::Phi(rhs_label, right_temp, false_label, false_temp),
+        );
+
+        Ok(Some(result))
+    }
+
+    fn generate_logical_or(
+        &mut self,
+        qfunc: &mut qbe::Function<'static>,
+        left: &Expr,
+        right: &Expr,
+    ) -> Result<Option<qbe::Value>, CodeGenError> {
+        let left_val = self.generate_expression(qfunc, left)?.ok_or_else(|| {
+            CodeGenError::new("Left operand must produce a value".to_string(), left.span)
+        })?;
+
+        let label_id = self.new_label();
+        let rhs_label = format!("lor.{}.rhs", label_id);
+        let true_label = format!("lor.{}.true", label_id);
+        let end_label = format!("lor.{}.end", label_id);
+
+        qfunc.add_instr(qbe::Instr::Jnz(
+            left_val,
+            true_label.clone(),
+            rhs_label.clone(),
+        ));
+
+        qfunc.add_block(rhs_label.clone());
+        let right_val = self.generate_expression(qfunc, right)?.ok_or_else(|| {
+            CodeGenError::new("Right operand must produce a value".to_string(), right.span)
+        })?;
+        let right_temp = qbe::Value::Temporary(self.new_temp());
+        qfunc.assign_instr(
+            right_temp.clone(),
+            qbe::Type::Long,
+            qbe::Instr::Copy(right_val),
+        );
+        qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
+
+        qfunc.add_block(true_label.clone());
+        let true_temp = qbe::Value::Temporary(self.new_temp());
+        qfunc.assign_instr(
+            true_temp.clone(),
+            qbe::Type::Long,
+            qbe::Instr::Copy(qbe::Value::Const(1)),
+        );
+        qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
+
+        qfunc.add_block(end_label);
+        let result = qbe::Value::Temporary(self.new_temp());
+        qfunc.assign_instr(
+            result.clone(),
+            qbe::Type::Long,
+            qbe::Instr::Phi(rhs_label, right_temp, true_label, true_temp),
+        );
+
+        Ok(Some(result))
     }
 
     fn generate_expression(
@@ -1123,44 +1236,48 @@ impl CodeGen {
                     Ok(Some(result))
                 }
             },
-            ExprKind::Binary(binop, expr1, expr2) => {
-                let operand1 = self.generate_expression(qfunc, expr1)?.ok_or_else(|| {
-                    CodeGenError::new("Expression must produce a value".to_string(), expr1.span)
-                })?;
-                let operand2 = self.generate_expression(qfunc, expr2)?.ok_or_else(|| {
-                    CodeGenError::new("Expression must produce a value".to_string(), expr2.span)
-                })?;
-                let result = qbe::Value::Temporary(self.new_temp());
+            ExprKind::Binary(binop, expr1, expr2) => match binop {
+                BinaryOp::And => self.generate_logical_and(qfunc, expr1, expr2),
+                BinaryOp::Or => self.generate_logical_or(qfunc, expr1, expr2),
+                _ => {
+                    let operand1 = self.generate_expression(qfunc, expr1)?.ok_or_else(|| {
+                        CodeGenError::new("Expression must produce a value".to_string(), expr1.span)
+                    })?;
+                    let operand2 = self.generate_expression(qfunc, expr2)?.ok_or_else(|| {
+                        CodeGenError::new("Expression must produce a value".to_string(), expr2.span)
+                    })?;
+                    let result = qbe::Value::Temporary(self.new_temp());
 
-                let instr = match binop {
-                    BinaryOp::Add => qbe::Instr::Add(operand1, operand2),
-                    BinaryOp::Sub => qbe::Instr::Sub(operand1, operand2),
-                    BinaryOp::Mul => qbe::Instr::Mul(operand1, operand2),
-                    BinaryOp::Div => qbe::Instr::Div(operand1, operand2),
-                    BinaryOp::Rem => qbe::Instr::Rem(operand1, operand2),
+                    let instr = match binop {
+                        BinaryOp::Add => qbe::Instr::Add(operand1, operand2),
+                        BinaryOp::Sub => qbe::Instr::Sub(operand1, operand2),
+                        BinaryOp::Mul => qbe::Instr::Mul(operand1, operand2),
+                        BinaryOp::Div => qbe::Instr::Div(operand1, operand2),
+                        BinaryOp::Rem => qbe::Instr::Rem(operand1, operand2),
 
-                    BinaryOp::BitAnd => qbe::Instr::And(operand1, operand2),
-                    BinaryOp::BitOr => qbe::Instr::Or(operand1, operand2),
+                        BinaryOp::BitAnd => qbe::Instr::And(operand1, operand2),
+                        BinaryOp::BitOr => qbe::Instr::Or(operand1, operand2),
 
-                    cmp => qbe::Instr::Cmp(
-                        qbe::Type::Long,
-                        match cmp {
-                            BinaryOp::Lt => qbe::Cmp::Slt,
-                            BinaryOp::Le => qbe::Cmp::Sle,
-                            BinaryOp::Gt => qbe::Cmp::Sgt,
-                            BinaryOp::Ge => qbe::Cmp::Sge,
-                            BinaryOp::Eq => qbe::Cmp::Eq,
-                            BinaryOp::Ne => qbe::Cmp::Ne,
-                            _ => unreachable!(),
-                        },
-                        operand1,
-                        operand2,
-                    ),
-                };
+                        cmp => qbe::Instr::Cmp(
+                            qbe::Type::Long,
+                            match cmp {
+                                BinaryOp::Lt => qbe::Cmp::Slt,
+                                BinaryOp::Le => qbe::Cmp::Sle,
+                                BinaryOp::Gt => qbe::Cmp::Sgt,
+                                BinaryOp::Ge => qbe::Cmp::Sge,
+                                BinaryOp::Eq => qbe::Cmp::Eq,
+                                BinaryOp::Ne => qbe::Cmp::Ne,
+                                _ => unreachable!(),
+                            },
+                            operand1,
+                            operand2,
+                        ),
+                    };
 
-                qfunc.assign_instr(result.clone(), qbe::Type::Long, instr);
-                Ok(Some(result))
-            }
+                    qfunc.assign_instr(result.clone(), qbe::Type::Long, instr);
+                    Ok(Some(result))
+                }
+            },
             ExprKind::Assign(name, assign_expr) => {
                 let rhs_val = self
                     .generate_expression(qfunc, assign_expr)?
