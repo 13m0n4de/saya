@@ -1000,9 +1000,16 @@ impl CodeGen {
 
         self.insert_local(let_stmt.name.clone());
 
-        if let Some(init_val) = self.generate_expression(qfunc, &let_stmt.init)? {
-            qfunc.add_instr(qbe::Instr::Store(qbe_ty, addr, init_val));
-        }
+        let init_val = self
+            .generate_expression(qfunc, &let_stmt.init)?
+            .ok_or_else(|| {
+                CodeGenError::new(
+                    "Variable initialization requires a value".to_string(),
+                    let_stmt.init.span,
+                )
+            })?;
+        qfunc.add_instr(qbe::Instr::Store(qbe_ty, addr, init_val));
+
         Ok(())
     }
 
@@ -1155,10 +1162,16 @@ impl CodeGen {
                 Ok(Some(result))
             }
             ExprKind::Assign(name, assign_expr) => {
-                if let Some(rhs_val) = self.generate_expression(qfunc, assign_expr)? {
-                    let addr = qbe::Value::Temporary(name.clone());
-                    qfunc.add_instr(qbe::Instr::Store(qbe::Type::Long, addr, rhs_val));
-                }
+                let rhs_val = self
+                    .generate_expression(qfunc, assign_expr)?
+                    .ok_or_else(|| {
+                        CodeGenError::new(
+                            "Assignment requires a value".to_string(),
+                            assign_expr.span,
+                        )
+                    })?;
+                let addr = qbe::Value::Temporary(name.clone());
+                qfunc.add_instr(qbe::Instr::Store(qbe::Type::Long, addr, rhs_val));
                 Ok(None)
             }
             ExprKind::Return(ret_expr) => {
