@@ -1,4 +1,4 @@
-use std::{collections::HashSet, fs::read_to_string, str::Chars};
+use std::{collections::HashMap, fs::read_to_string, str::Chars};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
@@ -805,16 +805,22 @@ impl<'a> Parser<'a> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum VarKind {
+    Param,
+    Local,
+}
+
 pub struct CodeGen {
     temp_counter: usize,
-    locals: HashSet<String>,
+    scopes: Vec<HashMap<String, VarKind>>,
 }
 
 impl CodeGen {
     fn new() -> Self {
         Self {
             temp_counter: 0,
-            locals: HashSet::new(),
+            scopes: Vec::new(),
         }
     }
 
@@ -822,6 +828,37 @@ impl CodeGen {
         let name = format!("temp.{}", self.temp_counter);
         self.temp_counter += 1;
         name
+    }
+
+    fn push_scope(&mut self) {
+        self.scopes.push(HashMap::new());
+    }
+
+    fn pop_scope(&mut self) {
+        self.scopes
+            .pop()
+            .expect("ICE: cannot pop scope, scopes stack is empty");
+    }
+
+    fn insert_local(&mut self, name: String) {
+        self.scopes
+            .last_mut()
+            .expect("ICE: scopes stack should not be empty")
+            .insert(name, VarKind::Local);
+    }
+
+    fn insert_param(&mut self, name: String) {
+        self.scopes
+            .last_mut()
+            .expect("ICE: scopes stack should not be empty")
+            .insert(name, VarKind::Param);
+    }
+
+    fn lookup_var(&self, name: &str) -> Option<VarKind> {
+        self.scopes
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name).copied())
     }
 
     fn type_to_qbe(ty: &Ty) -> qbe::Type<'static> {
@@ -841,7 +878,11 @@ impl CodeGen {
     }
 
     fn generate_function(&mut self, func: &FunctionDef) -> qbe::Function<'static> {
-        self.locals.clear();
+        self.push_scope();
+
+        for param in &func.params {
+            self.insert_param(param.name.clone());
+        }
 
         let params = func
             .params
@@ -860,6 +901,8 @@ impl CodeGen {
 
         qfunc.add_block("start");
         self.generate_block(&mut qfunc, &func.body);
+
+        self.pop_scope();
 
         qfunc
     }
@@ -883,7 +926,7 @@ impl CodeGen {
         let addr = qbe::Value::Temporary(let_stmt.name.clone());
         qfunc.assign_instr(addr.clone(), qbe::Type::Long, qbe::Instr::Alloc8(8));
 
-        self.locals.insert(let_stmt.name.clone());
+        self.insert_local(let_stmt.name.clone());
 
         if let Some(init_val) = self.generate_expression(qfunc, &let_stmt.init) {
             qfunc.add_instr(qbe::Instr::Store(qbe_ty, addr, init_val));
@@ -897,8 +940,9 @@ impl CodeGen {
     ) -> Option<qbe::Value> {
         match &expr.kind {
             ExprKind::Literal(lit) => Some(qbe::Value::Const(*lit as u64)),
-            ExprKind::Ident(name) => {
-                if self.locals.contains(name) {
+            ExprKind::Ident(name) => match self.lookup_var(name) {
+                Some(VarKind::Param) => Some(qbe::Value::Temporary(name.clone())),
+                Some(VarKind::Local) => {
                     let addr = qbe::Value::Temporary(name.clone());
                     let result = qbe::Value::Temporary(self.new_temp());
                     qfunc.assign_instr(
@@ -907,10 +951,11 @@ impl CodeGen {
                         qbe::Instr::Load(qbe::Type::Long, addr),
                     );
                     Some(result)
-                } else {
-                    Some(qbe::Value::Temporary(name.clone()))
                 }
-            }
+                None => {
+                    panic!("Cannot find value `{}` in this scope", name);
+                }
+            },
             ExprKind::Unary(unop, expr) => match unop {
                 UnaryOp::Neg => {
                     let operand = self.generate_expression(qfunc, expr)?;
@@ -969,6 +1014,7 @@ impl CodeGen {
                 None
             }
             ExprKind::Block(block) => {
+                self.push_scope();
                 let mut result = None;
                 for stmt in &block.stmts {
                     match &stmt.kind {
@@ -983,6 +1029,7 @@ impl CodeGen {
                         }
                     }
                 }
+                self.pop_scope();
                 result
             }
         }
