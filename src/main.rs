@@ -779,6 +779,26 @@ impl<'a> Parser<'a> {
         Ok(lhs)
     }
 
+    fn parse_if(&mut self) -> Result<If, ParseError> {
+        let if_span = self.current.span;
+        self.expect(TokenKind::If)?;
+
+        let cond = Box::new(self.parse_expression()?);
+        let then_block = Box::new(self.parse_block()?);
+        let else_block = if self.eat(TokenKind::Else)? {
+            Some(Box::new(self.parse_block()?))
+        } else {
+            None
+        };
+
+        Ok(If {
+            cond,
+            then_block,
+            else_block,
+            span: if_span,
+        })
+    }
+
     fn parse_primary(&mut self) -> Result<Expr, ParseError> {
         let start_span = self.current.span;
 
@@ -803,25 +823,7 @@ impl<'a> Parser<'a> {
                 let block = self.parse_block()?;
                 ExprKind::Block(block)
             }
-            TokenKind::If => {
-                let if_span = self.current.span;
-                self.advance()?;
-
-                let cond = Box::new(self.parse_expression()?);
-                let then_block = Box::new(self.parse_block()?);
-                let else_block = if self.eat(TokenKind::Else)? {
-                    Some(Box::new(self.parse_block()?))
-                } else {
-                    None
-                };
-
-                ExprKind::If(If {
-                    cond,
-                    then_block,
-                    else_block,
-                    span: if_span,
-                })
-            }
+            TokenKind::If => ExprKind::If(self.parse_if()?),
             _ => {
                 return Err(ParseError::new(
                     format!("Expected expression, found {:?}", self.current.kind),
@@ -1004,6 +1006,82 @@ impl CodeGen {
         Ok(())
     }
 
+    fn generate_if(
+        &mut self,
+        qfunc: &mut qbe::Function<'static>,
+        if_expr: &If,
+    ) -> Result<Option<qbe::Value>, CodeGenError> {
+        let cond = self
+            .generate_expression(qfunc, &if_expr.cond)?
+            .ok_or_else(|| {
+                CodeGenError::new(
+                    "Condition must produce a value".to_string(),
+                    if_expr.cond.span,
+                )
+            })?;
+
+        let label_id = self.new_label();
+        let then_label = format!("if.{}.then", label_id);
+        let end_label = format!("if.{}.end", label_id);
+
+        match &if_expr.else_block {
+            None => {
+                // if without else: no return value
+                qfunc.add_instr(qbe::Instr::Jnz(cond, then_label.clone(), end_label.clone()));
+
+                qfunc.add_block(then_label);
+                self.generate_block(qfunc, &if_expr.then_block)?;
+
+                qfunc.add_block(end_label);
+                Ok(None)
+            }
+            Some(else_block) => {
+                // if-else: can return value
+                let else_label = format!("if.{}.else", label_id);
+
+                qfunc.add_instr(qbe::Instr::Jnz(
+                    cond,
+                    then_label.clone(),
+                    else_label.clone(),
+                ));
+
+                // Then block
+                qfunc.add_block(then_label.clone());
+                let then_result = self.generate_block(qfunc, &if_expr.then_block)?.map(|val| {
+                    let temp = qbe::Value::Temporary(self.new_temp());
+                    qfunc.assign_instr(temp.clone(), qbe::Type::Long, qbe::Instr::Copy(val));
+                    temp
+                });
+                qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
+
+                // Else block
+                qfunc.add_block(else_label.clone());
+                let else_result = self.generate_block(qfunc, else_block)?.map(|val| {
+                    let temp = qbe::Value::Temporary(self.new_temp());
+                    qfunc.assign_instr(temp.clone(), qbe::Type::Long, qbe::Instr::Copy(val));
+                    temp
+                });
+
+                // End block
+                qfunc.add_block(end_label);
+
+                // If both branches return a value, merge them with phi
+                match (then_result, else_result) {
+                    (Some(then_val), Some(else_val)) => {
+                        let result = qbe::Value::Temporary(self.new_temp());
+                        qfunc.assign_instr(
+                            result.clone(),
+                            qbe::Type::Long,
+                            qbe::Instr::Phi(then_label, then_val, else_label, else_val),
+                        );
+                        Ok(Some(result))
+                    }
+                    _ => Ok(None),
+                }
+            }
+        }
+    }
+
     fn generate_expression(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
@@ -1092,90 +1170,7 @@ impl CodeGen {
                 Ok(None)
             }
             ExprKind::Block(block) => self.generate_block(qfunc, block),
-            ExprKind::If(if_expr) => {
-                let cond = self
-                    .generate_expression(qfunc, &if_expr.cond)?
-                    .ok_or_else(|| {
-                        CodeGenError::new(
-                            "Condition must produce a value".to_string(),
-                            if_expr.cond.span,
-                        )
-                    })?;
-
-                let label_id = self.new_label();
-                let then_label = format!("if.{}.then", label_id);
-                let end_label = format!("if.{}.end", label_id);
-
-                match &if_expr.else_block {
-                    None => {
-                        // if without else: no return value
-                        qfunc.add_instr(qbe::Instr::Jnz(
-                            cond,
-                            then_label.clone(),
-                            end_label.clone(),
-                        ));
-
-                        qfunc.add_block(then_label);
-                        self.generate_block(qfunc, &if_expr.then_block)?;
-
-                        qfunc.add_block(end_label);
-                        Ok(None)
-                    }
-                    Some(else_block) => {
-                        // if-else: can return value
-                        let else_label = format!("if.{}.else", label_id);
-
-                        qfunc.add_instr(qbe::Instr::Jnz(
-                            cond,
-                            then_label.clone(),
-                            else_label.clone(),
-                        ));
-
-                        // Then block
-                        qfunc.add_block(then_label.clone());
-                        let then_result =
-                            self.generate_block(qfunc, &if_expr.then_block)?.map(|val| {
-                                let temp = qbe::Value::Temporary(self.new_temp());
-                                qfunc.assign_instr(
-                                    temp.clone(),
-                                    qbe::Type::Long,
-                                    qbe::Instr::Copy(val),
-                                );
-                                temp
-                            });
-                        qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
-
-                        // Else block
-                        qfunc.add_block(else_label.clone());
-                        let else_result = self.generate_block(qfunc, else_block)?.map(|val| {
-                            let temp = qbe::Value::Temporary(self.new_temp());
-                            qfunc.assign_instr(
-                                temp.clone(),
-                                qbe::Type::Long,
-                                qbe::Instr::Copy(val),
-                            );
-                            temp
-                        });
-
-                        // End block
-                        qfunc.add_block(end_label);
-
-                        // If both branches return a value, merge them with phi
-                        match (then_result, else_result) {
-                            (Some(then_val), Some(else_val)) => {
-                                let result = qbe::Value::Temporary(self.new_temp());
-                                qfunc.assign_instr(
-                                    result.clone(),
-                                    qbe::Type::Long,
-                                    qbe::Instr::Phi(then_label, then_val, else_label, else_val),
-                                );
-                                Ok(Some(result))
-                            }
-                            _ => Ok(None),
-                        }
-                    }
-                }
-            }
+            ExprKind::If(if_expr) => self.generate_if(qfunc, if_expr),
         }
     }
 }
