@@ -367,7 +367,15 @@ pub enum ExprKind {
     Assign(String, Box<Expr>),
     Return(Option<Box<Expr>>),
     Block(Block),
-    If(Box<Expr>, Box<Block>, Option<Box<Block>>),
+    If(If),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct If {
+    pub cond: Box<Expr>,
+    pub then_block: Box<Block>,
+    pub else_block: Option<Box<Block>>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -796,17 +804,23 @@ impl<'a> Parser<'a> {
                 ExprKind::Block(block)
             }
             TokenKind::If => {
+                let if_span = self.current.span;
                 self.advance()?;
 
-                let cond = self.parse_expression()?;
-                let then_block = self.parse_block()?;
+                let cond = Box::new(self.parse_expression()?);
+                let then_block = Box::new(self.parse_block()?);
                 let else_block = if self.eat(TokenKind::Else)? {
                     Some(Box::new(self.parse_block()?))
                 } else {
                     None
                 };
 
-                ExprKind::If(Box::new(cond), Box::new(then_block), else_block)
+                ExprKind::If(If {
+                    cond,
+                    then_block,
+                    else_block,
+                    span: if_span,
+                })
             }
             _ => {
                 return Err(ParseError::new(
@@ -1078,16 +1092,21 @@ impl CodeGen {
                 Ok(None)
             }
             ExprKind::Block(block) => self.generate_block(qfunc, block),
-            ExprKind::If(cond_expr, then_block, else_block) => {
-                let cond = self.generate_expression(qfunc, cond_expr)?.ok_or_else(|| {
-                    CodeGenError::new("Condition must produce a value".to_string(), cond_expr.span)
-                })?;
+            ExprKind::If(if_expr) => {
+                let cond = self
+                    .generate_expression(qfunc, &if_expr.cond)?
+                    .ok_or_else(|| {
+                        CodeGenError::new(
+                            "Condition must produce a value".to_string(),
+                            if_expr.cond.span,
+                        )
+                    })?;
 
                 let label_id = self.new_label();
                 let then_label = format!("if.{}.then", label_id);
                 let end_label = format!("if.{}.end", label_id);
 
-                match else_block {
+                match &if_expr.else_block {
                     None => {
                         // if without else: no return value
                         qfunc.add_instr(qbe::Instr::Jnz(
@@ -1097,7 +1116,7 @@ impl CodeGen {
                         ));
 
                         qfunc.add_block(then_label);
-                        self.generate_block(qfunc, then_block)?;
+                        self.generate_block(qfunc, &if_expr.then_block)?;
 
                         qfunc.add_block(end_label);
                         Ok(None)
@@ -1114,15 +1133,16 @@ impl CodeGen {
 
                         // Then block
                         qfunc.add_block(then_label.clone());
-                        let then_result = self.generate_block(qfunc, then_block)?.map(|val| {
-                            let temp = qbe::Value::Temporary(self.new_temp());
-                            qfunc.assign_instr(
-                                temp.clone(),
-                                qbe::Type::Long,
-                                qbe::Instr::Copy(val),
-                            );
-                            temp
-                        });
+                        let then_result =
+                            self.generate_block(qfunc, &if_expr.then_block)?.map(|val| {
+                                let temp = qbe::Value::Temporary(self.new_temp());
+                                qfunc.assign_instr(
+                                    temp.clone(),
+                                    qbe::Type::Long,
+                                    qbe::Instr::Copy(val),
+                                );
+                                temp
+                            });
                         qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
 
                         // Else block
