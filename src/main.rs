@@ -811,6 +811,18 @@ pub enum VarKind {
     Local,
 }
 
+#[derive(Debug)]
+pub struct CodeGenError {
+    pub message: String,
+    pub span: Span,
+}
+
+impl CodeGenError {
+    pub fn new(message: String, span: Span) -> Self {
+        Self { message, span }
+    }
+}
+
 pub struct CodeGen {
     temp_counter: usize,
     scopes: Vec<HashMap<String, VarKind>>,
@@ -867,17 +879,20 @@ impl CodeGen {
         }
     }
 
-    fn generate(&mut self, prog: &Program) -> String {
+    fn generate(&mut self, prog: &Program) -> Result<String, CodeGenError> {
         let mut module = qbe::Module::new();
 
         for func in &prog.functions {
-            module.add_function(self.generate_function(func));
+            module.add_function(self.generate_function(func)?);
         }
 
-        module.to_string()
+        Ok(module.to_string())
     }
 
-    fn generate_function(&mut self, func: &FunctionDef) -> qbe::Function<'static> {
+    fn generate_function(
+        &mut self,
+        func: &FunctionDef,
+    ) -> Result<qbe::Function<'static>, CodeGenError> {
         self.push_scope();
 
         for param in &func.params {
@@ -900,27 +915,36 @@ impl CodeGen {
             qbe::Function::new(qbe::Linkage::public(), func.name.clone(), params, return_ty);
 
         qfunc.add_block("start");
-        self.generate_block(&mut qfunc, &func.body);
+        self.generate_block(&mut qfunc, &func.body)?;
 
         self.pop_scope();
 
-        qfunc
+        Ok(qfunc)
     }
 
-    fn generate_block(&mut self, qfunc: &mut qbe::Function<'static>, block: &Block) {
+    fn generate_block(
+        &mut self,
+        qfunc: &mut qbe::Function<'static>,
+        block: &Block,
+    ) -> Result<(), CodeGenError> {
         for stmt in &block.stmts {
             match &stmt.kind {
                 StmtKind::Expr(expr) | StmtKind::Semi(expr) => {
-                    self.generate_expression(qfunc, expr);
+                    self.generate_expression(qfunc, expr)?;
                 }
                 StmtKind::Let(let_stmt) => {
-                    self.generate_let(qfunc, let_stmt);
+                    self.generate_let(qfunc, let_stmt)?;
                 }
             }
         }
+        Ok(())
     }
 
-    fn generate_let(&mut self, qfunc: &mut qbe::Function<'static>, let_stmt: &Let) {
+    fn generate_let(
+        &mut self,
+        qfunc: &mut qbe::Function<'static>,
+        let_stmt: &Let,
+    ) -> Result<(), CodeGenError> {
         let qbe_ty = Self::type_to_qbe(&let_stmt.ty);
 
         let addr = qbe::Value::Temporary(let_stmt.name.clone());
@@ -928,20 +952,21 @@ impl CodeGen {
 
         self.insert_local(let_stmt.name.clone());
 
-        if let Some(init_val) = self.generate_expression(qfunc, &let_stmt.init) {
+        if let Some(init_val) = self.generate_expression(qfunc, &let_stmt.init)? {
             qfunc.add_instr(qbe::Instr::Store(qbe_ty, addr, init_val));
         }
+        Ok(())
     }
 
     fn generate_expression(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
         expr: &Expr,
-    ) -> Option<qbe::Value> {
+    ) -> Result<Option<qbe::Value>, CodeGenError> {
         match &expr.kind {
-            ExprKind::Literal(lit) => Some(qbe::Value::Const(*lit as u64)),
+            ExprKind::Literal(lit) => Ok(Some(qbe::Value::Const(*lit as u64))),
             ExprKind::Ident(name) => match self.lookup_var(name) {
-                Some(VarKind::Param) => Some(qbe::Value::Temporary(name.clone())),
+                Some(VarKind::Param) => Ok(Some(qbe::Value::Temporary(name.clone()))),
                 Some(VarKind::Local) => {
                     let addr = qbe::Value::Temporary(name.clone());
                     let result = qbe::Value::Temporary(self.new_temp());
@@ -950,23 +975,30 @@ impl CodeGen {
                         qbe::Type::Long,
                         qbe::Instr::Load(qbe::Type::Long, addr),
                     );
-                    Some(result)
+                    Ok(Some(result))
                 }
-                None => {
-                    panic!("Cannot find value `{}` in this scope", name);
-                }
+                None => Err(CodeGenError::new(
+                    format!("Cannot find value `{}` in this scope", name),
+                    expr.span,
+                )),
             },
             ExprKind::Unary(unop, expr) => match unop {
                 UnaryOp::Neg => {
-                    let operand = self.generate_expression(qfunc, expr)?;
+                    let operand = self.generate_expression(qfunc, expr)?.ok_or_else(|| {
+                        CodeGenError::new("Expression must produce a value".to_string(), expr.span)
+                    })?;
                     let result = qbe::Value::Temporary(self.new_temp());
                     qfunc.assign_instr(result.clone(), qbe::Type::Long, qbe::Instr::Neg(operand));
-                    Some(result)
+                    Ok(Some(result))
                 }
             },
             ExprKind::Binary(binop, expr1, expr2) => {
-                let operand1 = self.generate_expression(qfunc, expr1)?;
-                let operand2 = self.generate_expression(qfunc, expr2)?;
+                let operand1 = self.generate_expression(qfunc, expr1)?.ok_or_else(|| {
+                    CodeGenError::new("Expression must produce a value".to_string(), expr1.span)
+                })?;
+                let operand2 = self.generate_expression(qfunc, expr2)?.ok_or_else(|| {
+                    CodeGenError::new("Expression must produce a value".to_string(), expr2.span)
+                })?;
                 let result = qbe::Value::Temporary(self.new_temp());
 
                 let instr = match binop {
@@ -996,22 +1028,22 @@ impl CodeGen {
                 };
 
                 qfunc.assign_instr(result.clone(), qbe::Type::Long, instr);
-                Some(result)
+                Ok(Some(result))
             }
             ExprKind::Assign(name, assign_expr) => {
-                if let Some(rhs_val) = self.generate_expression(qfunc, assign_expr) {
+                if let Some(rhs_val) = self.generate_expression(qfunc, assign_expr)? {
                     let addr = qbe::Value::Temporary(name.clone());
                     qfunc.add_instr(qbe::Instr::Store(qbe::Type::Long, addr, rhs_val));
                 }
-                None
+                Ok(None)
             }
             ExprKind::Return(ret_expr) => {
                 let value = match ret_expr {
-                    Some(expr) => self.generate_expression(qfunc, expr),
+                    Some(expr) => self.generate_expression(qfunc, expr)?,
                     None => None,
                 };
                 qfunc.add_instr(qbe::Instr::Ret(value));
-                None
+                Ok(None)
             }
             ExprKind::Block(block) => {
                 self.push_scope();
@@ -1019,18 +1051,18 @@ impl CodeGen {
                 for stmt in &block.stmts {
                     match &stmt.kind {
                         StmtKind::Semi(expr) => {
-                            self.generate_expression(qfunc, expr);
+                            self.generate_expression(qfunc, expr)?;
                         }
                         StmtKind::Expr(expr) => {
-                            result = self.generate_expression(qfunc, expr);
+                            result = self.generate_expression(qfunc, expr)?;
                         }
                         StmtKind::Let(let_stmt) => {
-                            self.generate_let(qfunc, let_stmt);
+                            self.generate_let(qfunc, let_stmt)?;
                         }
                     }
                 }
                 self.pop_scope();
-                result
+                Ok(result)
             }
         }
     }
@@ -1061,9 +1093,18 @@ fn main() {
         Ok(program) => {
             println!("{program:#?}");
             let mut code_gen = CodeGen::new();
-            let qbe_il = code_gen.generate(&program);
-            println!("{qbe_il}");
-            std::fs::write("out.ssa", qbe_il).unwrap();
+            match code_gen.generate(&program) {
+                Ok(qbe_il) => {
+                    println!("{qbe_il}");
+                    std::fs::write("out.ssa", qbe_il).unwrap();
+                }
+                Err(e) => {
+                    eprintln!(
+                        "Code generation error at {}:{}: {}",
+                        e.span.line, e.span.column, e.message
+                    );
+                }
+            }
         }
         Err(e) => {
             eprintln!(
