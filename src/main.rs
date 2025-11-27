@@ -2,11 +2,14 @@ use std::{collections::HashMap, fs::read_to_string, str::Chars};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
-    Fn,     // fn
-    Return, // return
-    Let,    // let
-    If,     // if
-    Else,   // else
+    Fn,       // fn
+    Return,   // return
+    Let,      // let
+    If,       // if
+    Else,     // else
+    While,    // while
+    Break,    // break
+    Continue, // continue
 
     Ident(String),
     Integer(i64),
@@ -294,6 +297,9 @@ impl<'a> Lexer<'a> {
             "let" => TokenKind::Let,
             "if" => TokenKind::If,
             "else" => TokenKind::Else,
+            "while" => TokenKind::While,
+            "break" => TokenKind::Break,
+            "continue" => TokenKind::Continue,
             _ => TokenKind::Ident(ident),
         }
     }
@@ -368,6 +374,9 @@ pub enum ExprKind {
     Return(Option<Box<Expr>>),
     Block(Block),
     If(If),
+    While(While),
+    Break,
+    Continue,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -376,6 +385,13 @@ pub struct If {
     pub then_block: Box<Block>,
     pub else_block: Option<Box<Block>>,
     pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct While {
+    cond: Box<Expr>,
+    body: Box<Block>,
+    span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -596,8 +612,11 @@ impl<'a> Parser<'a> {
                     span: expr_span,
                 });
                 break;
-            } else if matches!(expr.kind, ExprKind::Block(_)) {
-                // Block expressions can omit semicolons
+            } else if matches!(
+                expr.kind,
+                ExprKind::Block(_) | ExprKind::If(_) | ExprKind::While(_)
+            ) {
+                // `Block`, `If`, `While` can omit semicolons after `{ }`
                 stmts.push(Stmt {
                     kind: StmtKind::Semi(expr),
                     span: expr_span,
@@ -805,6 +824,20 @@ impl<'a> Parser<'a> {
         })
     }
 
+    fn parse_while(&mut self) -> Result<While, ParseError> {
+        let while_span = self.current.span;
+        self.expect(TokenKind::While)?;
+
+        let cond = Box::new(self.parse_expression()?);
+        let body = Box::new(self.parse_block()?);
+
+        Ok(While {
+            cond,
+            body,
+            span: while_span,
+        })
+    }
+
     fn parse_primary(&mut self) -> Result<Expr, ParseError> {
         let start_span = self.current.span;
 
@@ -830,6 +863,15 @@ impl<'a> Parser<'a> {
                 ExprKind::Block(block)
             }
             TokenKind::If => ExprKind::If(self.parse_if()?),
+            TokenKind::While => ExprKind::While(self.parse_while()?),
+            TokenKind::Break => {
+                self.advance()?;
+                ExprKind::Break
+            }
+            TokenKind::Continue => {
+                self.advance()?;
+                ExprKind::Continue
+            }
             _ => {
                 return Err(ParseError::new(
                     format!("Expected expression, found {:?}", self.current.kind),
@@ -863,10 +905,17 @@ impl CodeGenError {
     }
 }
 
+#[derive(Debug, Clone)]
+struct LoopContext {
+    continue_label: String,
+    break_label: String,
+}
+
 pub struct CodeGen {
     temp_counter: usize,
     label_counter: usize,
     scopes: Vec<HashMap<String, VarKind>>,
+    loops: Vec<LoopContext>,
 }
 
 impl CodeGen {
@@ -875,6 +924,7 @@ impl CodeGen {
             temp_counter: 0,
             label_counter: 0,
             scopes: Vec::new(),
+            loops: Vec::new(),
         }
     }
 
@@ -919,6 +969,23 @@ impl CodeGen {
             .iter()
             .rev()
             .find_map(|scope| scope.get(name).copied())
+    }
+
+    fn push_loop(&mut self, continue_label: String, break_label: String) {
+        self.loops.push(LoopContext {
+            continue_label,
+            break_label,
+        });
+    }
+
+    fn pop_loop(&mut self) {
+        self.loops
+            .pop()
+            .expect("ICE: cannot pop loop, loops stack is empty");
+    }
+
+    fn current_loop(&self) -> Option<&LoopContext> {
+        self.loops.last()
     }
 
     fn type_to_qbe(ty: &Ty) -> qbe::Type<'static> {
@@ -1094,6 +1161,50 @@ impl CodeGen {
                 }
             }
         }
+    }
+
+    fn generate_while(
+        &mut self,
+        qfunc: &mut qbe::Function<'static>,
+        while_expr: &While,
+    ) -> Result<Option<qbe::Value>, CodeGenError> {
+        let label_id = self.new_label();
+        let cond_label = format!("while.{}.cond", label_id);
+        let body_label = format!("while.{}.body", label_id);
+        let end_label = format!("while.{}.end", label_id);
+
+        // Condition block
+        qfunc.add_block(cond_label.clone());
+        let cond_val = self
+            .generate_expression(qfunc, &while_expr.cond)?
+            .ok_or_else(|| {
+                CodeGenError::new(
+                    "Condition must produce a value".to_string(),
+                    while_expr.cond.span,
+                )
+            })?;
+        qfunc.add_instr(qbe::Instr::Jnz(
+            cond_val,
+            body_label.clone(),
+            end_label.clone(),
+        ));
+
+        // Body block
+        self.push_loop(cond_label.clone(), end_label.clone());
+
+        qfunc.add_block(body_label);
+        self.generate_block(qfunc, &while_expr.body)?;
+
+        if !qfunc.blocks.last().is_some_and(|b| b.jumps()) {
+            qfunc.add_instr(qbe::Instr::Jmp(cond_label));
+        }
+
+        self.pop_loop();
+
+        // End block
+        qfunc.add_block(end_label);
+
+        Ok(None)
     }
 
     fn generate_logical_and(
@@ -1301,6 +1412,21 @@ impl CodeGen {
             }
             ExprKind::Block(block) => self.generate_block(qfunc, block),
             ExprKind::If(if_expr) => self.generate_if(qfunc, if_expr),
+            ExprKind::While(while_expr) => self.generate_while(qfunc, while_expr),
+            ExprKind::Break => {
+                let loop_ctx = self.current_loop().ok_or_else(|| {
+                    CodeGenError::new("break outside of loop".to_string(), expr.span)
+                })?;
+                qfunc.add_instr(qbe::Instr::Jmp(loop_ctx.break_label.clone()));
+                Ok(None)
+            }
+            ExprKind::Continue => {
+                let loop_ctx = self.current_loop().ok_or_else(|| {
+                    CodeGenError::new("continue outside of loop".to_string(), expr.span)
+                })?;
+                qfunc.add_instr(qbe::Instr::Jmp(loop_ctx.continue_label.clone()));
+                Ok(None)
+            }
         }
     }
 }
@@ -1328,7 +1454,7 @@ fn main() {
 
     match parser.parse() {
         Ok(program) => {
-            println!("{program:#?}");
+            // println!("{program:#?}");
             let mut code_gen = CodeGen::new();
             match code_gen.generate(&program) {
                 Ok(qbe_il) => {
