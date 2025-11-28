@@ -368,6 +368,7 @@ pub struct Expr {
 pub enum ExprKind {
     Literal(i64),
     Ident(String),
+    Call(Call),
     Unary(UnaryOp, Box<Expr>),
     Binary(BinaryOp, Box<Expr>, Box<Expr>),
     Assign(String, Box<Expr>),
@@ -377,6 +378,13 @@ pub enum ExprKind {
     While(While),
     Break,
     Continue,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Call {
+    callee: Box<Expr>,
+    args: Vec<Expr>,
+    span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -718,6 +726,13 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn prefix_binding_power(&self, token: &TokenKind) -> Option<u8> {
+        match token {
+            TokenKind::Minus => Some(90), // -
+            _ => None,
+        }
+    }
+
     fn infix_binding_power(&self, token: &TokenKind) -> Option<(u8, u8)> {
         let bp = match token {
             TokenKind::OrOr => (10, 11),                 // ||
@@ -733,9 +748,9 @@ impl<'a> Parser<'a> {
         Some(bp)
     }
 
-    fn prefix_binding_power(&self, token: &TokenKind) -> Option<u8> {
+    fn postfix_binding_power(&self, token: &TokenKind) -> Option<u8> {
         match token {
-            TokenKind::Minus => Some(90), // -
+            TokenKind::OpenParen => Some(100),
             _ => None,
         }
     }
@@ -759,49 +774,97 @@ impl<'a> Parser<'a> {
             self.parse_primary()?
         };
 
-        // Infix operators
         loop {
-            let op_token = &self.current.kind.clone();
+            let op_token = &self.current.kind;
 
-            let (left_bp, right_bp) = match self.infix_binding_power(op_token) {
-                Some(bp) => bp,
-                None => break,
-            };
+            // Postfix operators
+            if let Some(postfix_bp) = self.postfix_binding_power(op_token) {
+                if postfix_bp < min_bp {
+                    break;
+                }
 
-            if left_bp < min_bp {
-                break;
+                match op_token {
+                    TokenKind::OpenParen => {
+                        let span = lhs.span;
+                        lhs = Expr {
+                            kind: ExprKind::Call(self.parse_call(lhs)?),
+                            span,
+                        }
+                    }
+                    _ => unreachable!(),
+                }
+
+                continue;
             }
 
-            let op = match op_token {
-                TokenKind::Plus => BinaryOp::Add,
-                TokenKind::Minus => BinaryOp::Sub,
-                TokenKind::Star => BinaryOp::Mul,
-                TokenKind::Slash => BinaryOp::Div,
-                TokenKind::Percent => BinaryOp::Rem,
-                TokenKind::Lt => BinaryOp::Lt,
-                TokenKind::Le => BinaryOp::Le,
-                TokenKind::Gt => BinaryOp::Gt,
-                TokenKind::Ge => BinaryOp::Ge,
-                TokenKind::EqEq => BinaryOp::Eq,
-                TokenKind::Ne => BinaryOp::Ne,
-                TokenKind::And => BinaryOp::BitAnd,
-                TokenKind::Or => BinaryOp::BitOr,
-                TokenKind::AndAnd => BinaryOp::And,
-                TokenKind::OrOr => BinaryOp::Or,
-                _ => unreachable!(),
-            };
+            // Infix operators
+            if let Some((left_bp, right_bp)) = self.infix_binding_power(op_token) {
+                if left_bp < min_bp {
+                    break;
+                }
 
-            let span = lhs.span;
-            self.advance()?;
-            let rhs = self.parse_expr_bp(right_bp)?;
+                let op = match op_token {
+                    TokenKind::Plus => BinaryOp::Add,
+                    TokenKind::Minus => BinaryOp::Sub,
+                    TokenKind::Star => BinaryOp::Mul,
+                    TokenKind::Slash => BinaryOp::Div,
+                    TokenKind::Percent => BinaryOp::Rem,
+                    TokenKind::Lt => BinaryOp::Lt,
+                    TokenKind::Le => BinaryOp::Le,
+                    TokenKind::Gt => BinaryOp::Gt,
+                    TokenKind::Ge => BinaryOp::Ge,
+                    TokenKind::EqEq => BinaryOp::Eq,
+                    TokenKind::Ne => BinaryOp::Ne,
+                    TokenKind::And => BinaryOp::BitAnd,
+                    TokenKind::Or => BinaryOp::BitOr,
+                    TokenKind::AndAnd => BinaryOp::And,
+                    TokenKind::OrOr => BinaryOp::Or,
+                    _ => unreachable!(),
+                };
 
-            lhs = Expr {
-                kind: ExprKind::Binary(op, Box::new(lhs), Box::new(rhs)),
-                span,
-            };
+                let span = lhs.span;
+                self.advance()?;
+                let rhs = self.parse_expr_bp(right_bp)?;
+
+                lhs = Expr {
+                    kind: ExprKind::Binary(op, Box::new(lhs), Box::new(rhs)),
+                    span,
+                };
+
+                continue;
+            }
+
+            // Neither postfix nor infix, stop parsing
+            break;
         }
 
         Ok(lhs)
+    }
+
+    fn parse_call(&mut self, callee: Expr) -> Result<Call, ParseError> {
+        let start_span = callee.span;
+
+        self.expect(TokenKind::OpenParen)?;
+
+        let mut args = Vec::new();
+        if self.current.kind != TokenKind::CloseParen {
+            loop {
+                args.push(self.parse_expression()?);
+                if self.current.kind == TokenKind::Comma {
+                    self.advance()?;
+                } else {
+                    break;
+                }
+            }
+        }
+
+        self.expect(TokenKind::CloseParen)?;
+
+        Ok(Call {
+            callee: Box::new(callee),
+            args,
+            span: start_span,
+        })
     }
 
     fn parse_if(&mut self) -> Result<If, ParseError> {
@@ -1042,7 +1105,13 @@ impl CodeGen {
             qbe::Function::new(qbe::Linkage::public(), func.name.clone(), params, return_ty);
 
         qfunc.add_block("start");
-        self.generate_block(&mut qfunc, &func.body)?;
+        let block_value = self.generate_block(&mut qfunc, &func.body)?;
+
+        // If block produces a value, return it
+        // Otherwise, the block ends with return/break/continue
+        if block_value.is_some() {
+            qfunc.add_instr(qbe::Instr::Ret(block_value));
+        }
 
         self.pop_scope();
 
@@ -1104,9 +1173,9 @@ impl CodeGen {
         if_expr: &If,
     ) -> Result<Option<qbe::Value>, CodeGenError> {
         let label_id = self.new_label();
-        let cond_label = format!("if.{}.cond", label_id);
-        let then_label = format!("if.{}.then", label_id);
-        let end_label = format!("if.{}.end", label_id);
+        let cond_label = format!("if.{label_id}.cond");
+        let then_label = format!("if.{label_id}.then");
+        let end_label = format!("if.{label_id}.end");
 
         // Condition block
         qfunc.add_block(cond_label);
@@ -1127,7 +1196,7 @@ impl CodeGen {
                 qfunc.add_block(then_label);
                 self.generate_block(qfunc, &if_expr.then_block)?;
 
-                if !qfunc.blocks.last().is_some_and(|b| b.jumps()) {
+                if !qfunc.blocks.last().is_some_and(qbe::Block::jumps) {
                     qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
                 }
 
@@ -1136,7 +1205,7 @@ impl CodeGen {
             }
             Some(else_expr) => {
                 // if-else: can return value
-                let else_label = format!("if.{}.else", label_id);
+                let else_label = format!("if.{label_id}.else");
 
                 qfunc.add_instr(qbe::Instr::Jnz(
                     cond,
@@ -1152,7 +1221,7 @@ impl CodeGen {
                     temp
                 });
 
-                if !qfunc.blocks.last().is_some_and(|b| b.jumps()) {
+                if !qfunc.blocks.last().is_some_and(qbe::Block::jumps) {
                     qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
                 }
 
@@ -1164,7 +1233,7 @@ impl CodeGen {
                     temp
                 });
 
-                if !qfunc.blocks.last().is_some_and(|b| b.jumps()) {
+                if !qfunc.blocks.last().is_some_and(qbe::Block::jumps) {
                     qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
                 }
 
@@ -1194,9 +1263,9 @@ impl CodeGen {
         while_expr: &While,
     ) -> Result<Option<qbe::Value>, CodeGenError> {
         let label_id = self.new_label();
-        let cond_label = format!("while.{}.cond", label_id);
-        let body_label = format!("while.{}.body", label_id);
-        let end_label = format!("while.{}.end", label_id);
+        let cond_label = format!("while.{label_id}.cond");
+        let body_label = format!("while.{label_id}.body");
+        let end_label = format!("while.{label_id}.end");
 
         // Condition block
         qfunc.add_block(cond_label.clone());
@@ -1220,7 +1289,7 @@ impl CodeGen {
         qfunc.add_block(body_label);
         self.generate_block(qfunc, &while_expr.body)?;
 
-        if !qfunc.blocks.last().is_some_and(|b| b.jumps()) {
+        if !qfunc.blocks.last().is_some_and(qbe::Block::jumps) {
             qfunc.add_instr(qbe::Instr::Jmp(cond_label));
         }
 
@@ -1243,9 +1312,9 @@ impl CodeGen {
         })?;
 
         let label_id = self.new_label();
-        let rhs_label = format!("land.{}.rhs", label_id);
-        let false_label = format!("land.{}.false", label_id);
-        let end_label = format!("land.{}.end", label_id);
+        let rhs_label = format!("land.{label_id}.rhs");
+        let false_label = format!("land.{label_id}.false");
+        let end_label = format!("land.{label_id}.end");
 
         qfunc.add_instr(qbe::Instr::Jnz(
             left_val,
@@ -1296,9 +1365,9 @@ impl CodeGen {
         })?;
 
         let label_id = self.new_label();
-        let rhs_label = format!("lor.{}.rhs", label_id);
-        let true_label = format!("lor.{}.true", label_id);
-        let end_label = format!("lor.{}.end", label_id);
+        let rhs_label = format!("lor.{label_id}.rhs");
+        let true_label = format!("lor.{label_id}.true");
+        let end_label = format!("lor.{label_id}.end");
 
         qfunc.add_instr(qbe::Instr::Jnz(
             left_val,
@@ -1338,13 +1407,54 @@ impl CodeGen {
         Ok(Some(result))
     }
 
+    fn generate_call(
+        &mut self,
+        qfunc: &mut qbe::Function<'static>,
+        call: &Call,
+    ) -> Result<Option<qbe::Value>, CodeGenError> {
+        let func_name = match &call.callee.kind {
+            ExprKind::Ident(name) => name.clone(),
+            _ => {
+                return Err(CodeGenError::new(
+                    "Complex callee expressions not yet supported".to_string(),
+                    call.callee.span,
+                ));
+            }
+        };
+
+        let mut arg_values = Vec::new();
+        for arg in &call.args {
+            let arg_val = self.generate_expression(qfunc, arg)?.ok_or_else(|| {
+                CodeGenError::new(
+                    "Function argument must produce a value".to_string(),
+                    arg.span,
+                )
+            })?;
+            arg_values.push(arg_val);
+        }
+
+        let qbe_args: Vec<(qbe::Type, qbe::Value)> = arg_values
+            .into_iter()
+            .map(|val| (qbe::Type::Long, val))
+            .collect();
+
+        let result = qbe::Value::Temporary(self.new_temp());
+        qfunc.assign_instr(
+            result.clone(),
+            qbe::Type::Long,
+            qbe::Instr::Call(func_name, qbe_args, None),
+        );
+
+        Ok(Some(result))
+    }
+
     fn generate_expression(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
         expr: &Expr,
     ) -> Result<Option<qbe::Value>, CodeGenError> {
         match &expr.kind {
-            ExprKind::Literal(lit) => Ok(Some(qbe::Value::Const(*lit as u64))),
+            ExprKind::Literal(lit) => Ok(Some(qbe::Value::Const((*lit).cast_unsigned()))),
             ExprKind::Ident(name) => match self.lookup_var(name) {
                 Some(VarKind::Param) => Ok(Some(qbe::Value::Temporary(name.clone()))),
                 Some(VarKind::Local) => {
@@ -1358,10 +1468,11 @@ impl CodeGen {
                     Ok(Some(result))
                 }
                 None => Err(CodeGenError::new(
-                    format!("Cannot find value `{}` in this scope", name),
+                    format!("Cannot find value `{name}` in this scope"),
                     expr.span,
                 )),
             },
+            ExprKind::Call(call) => self.generate_call(qfunc, call),
             ExprKind::Unary(unop, expr) => match unop {
                 UnaryOp::Neg => {
                     let operand = self.generate_expression(qfunc, expr)?.ok_or_else(|| {

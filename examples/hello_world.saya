@@ -1,20 +1,45 @@
-fn main(argc: i64) -> i64 {
-    let i: i64 = 0;
-    let sum: i64 = 0;
+fn add(a: i64, b: i64) -> i64 {
+    a + b
+}
 
-    while i < 5 {
-        i = i + 1;
-        let j: i64 = 0;
-        while j < 5 {
-            j = j + 1;
-            if j == 2 {
-                continue;
-            } else if j == 4 {
-                break;
-            }
-            sum = sum + 1;
-        }
+fn multiply(a: i64, b: i64) -> i64 {
+    a * b
+}
+
+fn factorial(n: i64) -> i64 {
+    if n <= 1 {
+        1
+    } else {
+        multiply(n, factorial(n - 1))
+    }
+}
+
+fn fib(n: i64) -> i64 {
+    if n <= 1 {
+        n
+    } else {
+        add(fib(n - 1), fib(n - 2))
+    }
+}
+
+fn sumrange(start: i64, end: i64) -> i64 {
+    let sum: i64 = 0;
+    let i: i64 = start;
+
+    while i < end {
+        sum = add(sum, i);
+        i = add(i, 1);
     }
 
-    return sum;
+    sum
+}
+
+fn main() -> i64 {
+    let a: i64 = add(10, 20);
+    let b: i64 = multiply(3, 4);
+    let c: i64 = factorial(5);
+    let d: i64 = fib(8);
+    let e: i64 = sumrange(1, 11);
+
+    add(add(add(add(a, b), c), d), e)
 }

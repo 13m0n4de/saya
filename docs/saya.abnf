@@ -47,7 +47,12 @@ multiplicative-op = "*" / "/" / "%"
 unary-expr = unary-op unary-expr / primary-expr
 unary-op = "-"
 
-primary-expr = literal / identifier / block / "(" expression ")" / if-expr / while-expr / break-expr / continue-expr
+primary-expr = literal / call-expr / identifier
+             / if-expr / while-expr / break-expr / continue-expr
+             / block / "(" expression ")"
+
+call-expr = identifier "(" [arg-list] ")"
+arg-list = expression *("," expression)
 
 if-expr = "if" expression block ["else" (if-expr / block)]
 while-expr = "while" expression block
