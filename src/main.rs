@@ -1112,6 +1112,10 @@ impl CodeGen {
                 qfunc.add_block(then_label);
                 self.generate_block(qfunc, &if_expr.then_block)?;
 
+                if !qfunc.blocks.last().is_some_and(|b| b.jumps()) {
+                    qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
+                }
+
                 qfunc.add_block(end_label);
                 Ok(None)
             }
@@ -1132,7 +1136,10 @@ impl CodeGen {
                     qfunc.assign_instr(temp.clone(), qbe::Type::Long, qbe::Instr::Copy(val));
                     temp
                 });
-                qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
+
+                if !qfunc.blocks.last().is_some_and(|b| b.jumps()) {
+                    qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
+                }
 
                 // Else block
                 qfunc.add_block(else_label.clone());
@@ -1141,7 +1148,10 @@ impl CodeGen {
                     qfunc.assign_instr(temp.clone(), qbe::Type::Long, qbe::Instr::Copy(val));
                     temp
                 });
-                qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
+
+                if !qfunc.blocks.last().is_some_and(|b| b.jumps()) {
+                    qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
+                }
 
                 // End block
                 qfunc.add_block(end_label);
