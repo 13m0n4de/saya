@@ -735,7 +735,7 @@ impl<'a> Parser<'a> {
 
     fn prefix_binding_power(&self, token: &TokenKind) -> Option<u8> {
         match token {
-            TokenKind::Minus => Some(70), // -
+            TokenKind::Minus => Some(90), // -
             _ => None,
         }
     }
