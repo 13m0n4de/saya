@@ -383,7 +383,7 @@ pub enum ExprKind {
 pub struct If {
     pub cond: Box<Expr>,
     pub then_block: Box<Block>,
-    pub else_block: Option<Box<Block>>,
+    pub else_block: Option<Box<Expr>>,
     pub span: Span,
 }
 
@@ -811,7 +811,19 @@ impl<'a> Parser<'a> {
         let cond = Box::new(self.parse_expression()?);
         let then_block = Box::new(self.parse_block()?);
         let else_block = if self.eat(TokenKind::Else)? {
-            Some(Box::new(self.parse_block()?))
+            if self.current.kind == TokenKind::If {
+                let else_if = self.parse_if()?;
+                Some(Box::new(Expr {
+                    kind: ExprKind::If(else_if),
+                    span: self.current.span,
+                }))
+            } else {
+                let block = self.parse_block()?;
+                Some(Box::new(Expr {
+                    kind: ExprKind::Block(block),
+                    span: self.current.span,
+                }))
+            }
         } else {
             None
         };
@@ -1091,6 +1103,13 @@ impl CodeGen {
         qfunc: &mut qbe::Function<'static>,
         if_expr: &If,
     ) -> Result<Option<qbe::Value>, CodeGenError> {
+        let label_id = self.new_label();
+        let cond_label = format!("if.{}.cond", label_id);
+        let then_label = format!("if.{}.then", label_id);
+        let end_label = format!("if.{}.end", label_id);
+
+        // Condition block
+        qfunc.add_block(cond_label);
         let cond = self
             .generate_expression(qfunc, &if_expr.cond)?
             .ok_or_else(|| {
@@ -1099,10 +1118,6 @@ impl CodeGen {
                     if_expr.cond.span,
                 )
             })?;
-
-        let label_id = self.new_label();
-        let then_label = format!("if.{}.then", label_id);
-        let end_label = format!("if.{}.end", label_id);
 
         match &if_expr.else_block {
             None => {
@@ -1119,7 +1134,7 @@ impl CodeGen {
                 qfunc.add_block(end_label);
                 Ok(None)
             }
-            Some(else_block) => {
+            Some(else_expr) => {
                 // if-else: can return value
                 let else_label = format!("if.{}.else", label_id);
 
@@ -1141,9 +1156,9 @@ impl CodeGen {
                     qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
                 }
 
-                // Else block
+                // Else expression (can be a block or another if)
                 qfunc.add_block(else_label.clone());
-                let else_result = self.generate_block(qfunc, else_block)?.map(|val| {
+                let else_result = self.generate_expression(qfunc, else_expr)?.map(|val| {
                     let temp = qbe::Value::Temporary(self.new_temp());
                     qfunc.assign_instr(temp.clone(), qbe::Type::Long, qbe::Instr::Copy(val));
                     temp
