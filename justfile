@@ -1,8 +1,9 @@
 build:
     cargo build
 
-run:
-    cargo run
+run file:
+    cargo run {{file}}
+    @cat out.ssa
 
 check:
     cargo check
@@ -18,11 +19,11 @@ lint:
 
 clean:
     cargo clean
-    rm out.ssa out.s a.out
+    -rm -f out.ssa out.s a.out
 
-compile: run
+compile file: (run file)
     qbe out.ssa -o out.s
     cc out.s -o a.out
 
-exec: compile
+exec file: (compile file)
     -./a.out; echo "Exit code: $?"
