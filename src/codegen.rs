@@ -432,7 +432,13 @@ impl CodeGen {
                     temp
                 });
 
-                if !qfunc.blocks.last().is_some_and(qbe::Block::jumps) {
+                // Record the actual predecessor block for then branch and add jump if needed
+                let last_block = qfunc
+                    .blocks
+                    .last()
+                    .expect("ICE: blocks should not be empty after generating then block");
+                let then_predecessor = last_block.label.clone();
+                if !last_block.jumps() {
                     qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
                 }
 
@@ -444,7 +450,13 @@ impl CodeGen {
                     temp
                 });
 
-                if !qfunc.blocks.last().is_some_and(qbe::Block::jumps) {
+                // Record the actual predecessor block for else branch and add jump if needed
+                let last_block = qfunc
+                    .blocks
+                    .last()
+                    .expect("ICE: blocks should not be empty after generating else block");
+                let else_predecessor = last_block.label.clone();
+                if !last_block.jumps() {
                     qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
                 }
 
@@ -458,7 +470,7 @@ impl CodeGen {
                         qfunc.assign_instr(
                             result.clone(),
                             qbe::Type::Long,
-                            qbe::Instr::Phi(then_label, then_val, else_label, else_val),
+                            qbe::Instr::Phi(then_predecessor, then_val, else_predecessor, else_val),
                         );
                         Ok(Some(result))
                     }
