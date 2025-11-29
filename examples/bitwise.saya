@@ -1,0 +1,9 @@
+fn main() -> i64 {
+    let a: i64 = 12;
+    let b: i64 = 10;
+
+    let and: i64 = a & b;
+    let or: i64 = a | b;
+
+    and + or
+}

@@ -1,0 +1,22 @@
+fn main() -> i64 {
+    let x: i64 = 10;
+
+    let y: i64 = if x > 5 {
+        x * 2
+    } else {
+        x / 2
+    };
+
+    let z: i64 = {
+        let tmp: i64 = y + 3;
+        tmp * tmp
+    };
+
+    x = if z > 100 {
+        z - 100
+    } else {
+        z + 100
+    };
+
+    x + y + z
+}
