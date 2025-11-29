@@ -1,3 +1,5 @@
+use std::{error::Error, fmt};
+
 use crate::{
     ast::*,
     lexer::{LexError, Lexer, Token, TokenKind},
@@ -24,6 +26,18 @@ impl From<LexError> for ParseError {
         }
     }
 }
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "parse error at {}:{}: {}",
+            self.span.line, self.span.column, self.message
+        )
+    }
+}
+
+impl Error for ParseError {}
 
 pub struct Parser<'a> {
     lexer: Lexer<'a>,

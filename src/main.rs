@@ -1,4 +1,4 @@
-use std::fs::read_to_string;
+use std::{env, error::Error, fs::read_to_string, process};
 
 use codegen::CodeGen;
 use lexer::Lexer;
@@ -10,49 +10,32 @@ mod lexer;
 mod parser;
 mod span;
 
-fn main() {
-    let code = match read_to_string("examples/hello_world.saya") {
-        Ok(code) => code,
-        Err(e) => {
-            eprintln!("Failed to read file: {e}");
-            return;
-        }
-    };
+fn run() -> Result<(), Box<dyn Error>> {
+    let args: Vec<String> = env::args().collect();
+
+    if args.len() < 2 {
+        return Err("no saya file provided".into());
+    }
+
+    let input_file = &args[1];
+
+    let code = read_to_string(input_file)?;
 
     let lexer = Lexer::new(&code);
-    let mut parser = match Parser::new(lexer) {
-        Ok(parser) => parser,
-        Err(e) => {
-            eprintln!(
-                "Parse error at {}:{}: {}",
-                e.span.line, e.span.column, e.message
-            );
-            return;
-        }
-    };
+    let mut parser = Parser::new(lexer)?;
+    let program = parser.parse()?;
 
-    match parser.parse() {
-        Ok(program) => {
-            // println!("{program:#?}");
-            let mut code_gen = CodeGen::new();
-            match code_gen.generate(&program) {
-                Ok(qbe_il) => {
-                    println!("{qbe_il}");
-                    std::fs::write("out.ssa", qbe_il).unwrap();
-                }
-                Err(e) => {
-                    eprintln!(
-                        "Code generation error at {}:{}: {}",
-                        e.span.line, e.span.column, e.message
-                    );
-                }
-            }
-        }
-        Err(e) => {
-            eprintln!(
-                "Parse error at {}:{}: {}",
-                e.span.line, e.span.column, e.message
-            );
-        }
+    let mut code_gen = CodeGen::new();
+    let qbe_il = code_gen.generate(&program)?;
+
+    std::fs::write("out.ssa", qbe_il)?;
+
+    Ok(())
+}
+
+fn main() {
+    if let Err(e) = run() {
+        eprintln!("Error: {e}");
+        process::exit(1);
     }
 }

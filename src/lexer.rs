@@ -1,4 +1,4 @@
-use std::str::Chars;
+use std::{error::Error, fmt, str::Chars};
 
 use crate::span::Span;
 
@@ -67,6 +67,18 @@ impl LexError {
         Self { message, span }
     }
 }
+
+impl fmt::Display for LexError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "lex error at {}:{}: {}",
+            self.span.line, self.span.column, self.message
+        )
+    }
+}
+
+impl Error for LexError {}
 
 pub struct Lexer<'a> {
     chars: Chars<'a>,

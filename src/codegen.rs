@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, error::Error, fmt};
 
 use crate::{ast::*, span::Span};
 
@@ -25,6 +25,18 @@ impl CodeGenError {
         Self { message, span }
     }
 }
+
+impl fmt::Display for CodeGenError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "codegen error at {}:{}: {}",
+            self.span.line, self.span.column, self.message
+        )
+    }
+}
+
+impl Error for CodeGenError {}
 
 pub struct CodeGen {
     temp_counter: usize,
