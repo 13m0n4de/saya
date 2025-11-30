@@ -110,6 +110,7 @@ impl CodeGen {
     fn type_to_qbe(ty: &Ty) -> qbe::Type<'static> {
         match ty {
             Ty::I64 => qbe::Type::Long,
+            Ty::Array(_, _) => qbe::Type::Long,
         }
     }
 
@@ -159,6 +160,13 @@ impl CodeGen {
 
     fn current_loop(&self) -> Option<&LoopContext> {
         self.loops.last()
+    }
+
+    fn type_size(ty: &Ty) -> usize {
+        match ty {
+            Ty::I64 => 8,
+            Ty::Array(elem_ty, len) => Self::type_size(elem_ty) * len,
+        }
     }
 
     fn eval_const_expr(&self, expr: &Expr) -> Result<i64, CodeGenError> {
@@ -464,6 +472,37 @@ impl CodeGen {
                 })?;
                 qfunc.add_instr(qbe::Instr::Jmp(loop_ctx.continue_label.clone()));
                 Ok(None)
+            }
+            ExprKind::Array(elements) => {
+                let elem_size = Self::type_size(&Ty::I64);
+                let array_size = elements.len() * elem_size;
+                let base = qbe::Value::Temporary(self.new_temp());
+                qfunc.assign_instr(
+                    base.clone(),
+                    qbe::Type::Long,
+                    qbe::Instr::Alloc8(array_size as u64),
+                );
+
+                for (i, elem) in elements.iter().enumerate() {
+                    let elem_val = self.generate_expression(qfunc, elem)?.ok_or_else(|| {
+                        CodeGenError::new(
+                            "Array element must produce a value".to_string(),
+                            elem.span,
+                        )
+                    })?;
+
+                    let offset = (i * Self::type_size(&Ty::I64)) as u64;
+                    let addr = qbe::Value::Temporary(self.new_temp());
+                    qfunc.assign_instr(
+                        addr.clone(),
+                        qbe::Type::Long,
+                        qbe::Instr::Add(base.clone(), qbe::Value::Const(offset)),
+                    );
+
+                    qfunc.add_instr(qbe::Instr::Store(qbe::Type::Long, addr, elem_val));
+                }
+
+                Ok(Some(base))
             }
         }
     }

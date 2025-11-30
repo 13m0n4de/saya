@@ -40,14 +40,16 @@ pub enum TokenKind {
     AndAnd, // &&
     OrOr,   // ||
 
-    OpenParen,  // (
-    CloseParen, // )
-    OpenBrace,  // {
-    CloseBrace, // }
-    Comma,      // ,
-    Colon,      // :
-    Semi,       // ;
-    Arrow,      // ->
+    OpenParen,    // (
+    CloseParen,   // )
+    OpenBrace,    // {
+    CloseBrace,   // }
+    OpenBracket,  // [
+    CloseBracket, // ]
+    Comma,        // ,
+    Colon,        // :
+    Semi,         // ;
+    Arrow,        // ->
 
     Eof,
 }
@@ -131,6 +133,14 @@ impl<'a> Lexer<'a> {
             Some('}') => {
                 self.advance();
                 TokenKind::CloseBrace
+            }
+            Some('[') => {
+                self.advance();
+                TokenKind::OpenBracket
+            }
+            Some(']') => {
+                self.advance();
+                TokenKind::CloseBracket
             }
             Some(',') => {
                 self.advance();

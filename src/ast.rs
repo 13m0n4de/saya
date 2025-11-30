@@ -47,6 +47,7 @@ pub struct Param {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Ty {
     I64,
+    Array(Box<Ty>, usize),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -86,6 +87,7 @@ pub struct Expr {
 pub enum ExprKind {
     Literal(i64),
     Ident(String),
+    Array(Vec<Expr>),
     Call(Call),
     Unary(UnaryOp, Box<Expr>),
     Binary(BinaryOp, Box<Expr>, Box<Expr>),

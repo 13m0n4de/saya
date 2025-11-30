@@ -93,11 +93,45 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_type(&mut self) -> Result<Ty, ParseError> {
-        let type_span = self.current.span;
-        let name = self.expect_identifier()?;
-        match name.as_str() {
-            "i64" => Ok(Ty::I64),
-            _ => Err(ParseError::new(format!("Unknown type: {name}"), type_span)),
+        match self.current.kind.clone() {
+            TokenKind::Ident(name) => {
+                self.advance()?;
+                match name.as_str() {
+                    "i64" => Ok(Ty::I64),
+                    _ => Err(ParseError::new(
+                        format!("Unknown type: {name}"),
+                        self.current.span,
+                    )),
+                }
+            }
+            TokenKind::OpenBracket => {
+                self.advance()?;
+                let elem_ty = Box::new(self.parse_type()?);
+                self.expect(TokenKind::Semi)?;
+
+                let size = if let TokenKind::Integer(n) = self.current.kind {
+                    if n < 0 {
+                        return Err(ParseError::new(
+                            "Array size cannot be negative".to_string(),
+                            self.current.span,
+                        ));
+                    }
+                    n as usize
+                } else {
+                    return Err(ParseError::new(
+                        "Expected array size".to_string(),
+                        self.current.span,
+                    ));
+                };
+
+                self.advance()?;
+                self.expect(TokenKind::CloseBracket)?;
+                Ok(Ty::Array(elem_ty, size))
+            }
+            _ => Err(ParseError::new(
+                format!("Unknown type: {:?}", self.current.kind),
+                self.current.span,
+            )),
         }
     }
 
@@ -470,6 +504,7 @@ impl<'a> Parser<'a> {
                 self.advance()?;
                 ExprKind::Ident(name)
             }
+
             TokenKind::OpenParen => {
                 self.advance()?;
                 let expr = self.parse_expression()?;
@@ -480,6 +515,7 @@ impl<'a> Parser<'a> {
                 let block = self.parse_block()?;
                 ExprKind::Block(block)
             }
+
             TokenKind::If => ExprKind::If(self.parse_if()?),
             TokenKind::While => ExprKind::While(self.parse_while()?),
             TokenKind::Break => {
@@ -490,6 +526,21 @@ impl<'a> Parser<'a> {
                 self.advance()?;
                 ExprKind::Continue
             }
+
+            TokenKind::OpenBracket => {
+                self.advance()?;
+                let mut elements = Vec::new();
+
+                while !self.eat(TokenKind::CloseBracket)? {
+                    elements.push(self.parse_expression()?);
+                    if !self.eat(TokenKind::Comma)? {
+                        self.expect(TokenKind::CloseBracket)?;
+                        break;
+                    }
+                }
+                ExprKind::Array(elements)
+            }
+
             _ => {
                 return Err(ParseError::new(
                     format!("Expected expression, found {:?}", self.current.kind),
