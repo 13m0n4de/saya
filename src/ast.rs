@@ -92,7 +92,7 @@ pub enum ExprKind {
     Call(Call),
     Unary(UnaryOp, Box<Expr>),
     Binary(BinaryOp, Box<Expr>, Box<Expr>),
-    Assign(String, Box<Expr>),
+    Assign(Box<Expr>, Box<Expr>),
     Return(Option<Box<Expr>>),
     Block(Block),
     If(If),

@@ -380,24 +380,15 @@ impl<'a> Parser<'a> {
 
     fn parse_expr_assign(&mut self) -> Result<Expr, ParseError> {
         let lhs = self.parse_expr_bp(0)?;
+        let start_span = lhs.span;
 
         if self.current.kind == TokenKind::Eq {
-            let name = match &lhs.kind {
-                ExprKind::Ident(n) => n.clone(),
-                _ => {
-                    return Err(ParseError::new(
-                        "Left side of assignment must be an identifier".to_string(),
-                        lhs.span,
-                    ));
-                }
-            };
-
             self.advance()?;
             let rhs = self.parse_expr_assign()?;
 
             Ok(Expr {
-                kind: ExprKind::Assign(name, Box::new(rhs)),
-                span: lhs.span,
+                kind: ExprKind::Assign(Box::new(lhs), Box::new(rhs)),
+                span: start_span,
             })
         } else {
             Ok(lhs)

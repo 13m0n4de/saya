@@ -169,6 +169,60 @@ impl CodeGen {
         }
     }
 
+    fn address_of(
+        &mut self,
+        qfunc: &mut qbe::Function<'static>,
+        expr: &Expr,
+    ) -> Result<qbe::Value, CodeGenError> {
+        match &expr.kind {
+            ExprKind::Ident(name) => {
+                if self.globals.contains(name) {
+                    Ok(qbe::Value::Global(name.clone()))
+                } else {
+                    Ok(qbe::Value::Temporary(name.clone()))
+                }
+            }
+            ExprKind::Index(base, index) => {
+                let base_val = self.generate_expression(qfunc, base)?.ok_or_else(|| {
+                    CodeGenError::new(
+                        "Array expression must produce a value".to_string(),
+                        base.span,
+                    )
+                })?;
+
+                let index_val = self.generate_expression(qfunc, index)?.ok_or_else(|| {
+                    CodeGenError::new(
+                        "Index expression must produce a value".to_string(),
+                        index.span,
+                    )
+                })?;
+
+                let offset = qbe::Value::Temporary(self.new_temp());
+                qfunc.assign_instr(
+                    offset.clone(),
+                    qbe::Type::Long,
+                    qbe::Instr::Mul(
+                        index_val,
+                        qbe::Value::Const(Self::type_size(&Ty::I64) as u64),
+                    ),
+                );
+
+                let addr = qbe::Value::Temporary(self.new_temp());
+                qfunc.assign_instr(
+                    addr.clone(),
+                    qbe::Type::Long,
+                    qbe::Instr::Add(base_val, offset),
+                );
+
+                Ok(addr)
+            }
+            _ => Err(CodeGenError::new(
+                "Invalid left-hand side of assignment".to_string(),
+                expr.span,
+            )),
+        }
+    }
+
     fn eval_const_expr(&self, expr: &Expr) -> Result<i64, CodeGenError> {
         match &expr.kind {
             ExprKind::Literal(n) => Ok(*n),
@@ -429,22 +483,12 @@ impl CodeGen {
                     Ok(Some(result))
                 }
             },
-            ExprKind::Assign(name, assign_expr) => {
-                let rhs_val = self
-                    .generate_expression(qfunc, assign_expr)?
-                    .ok_or_else(|| {
-                        CodeGenError::new(
-                            "Assignment requires a value".to_string(),
-                            assign_expr.span,
-                        )
-                    })?;
-
-                let addr = if self.globals.contains(name) {
-                    qbe::Value::Global(name.clone())
-                } else {
-                    qbe::Value::Temporary(name.clone())
-                };
-                qfunc.add_instr(qbe::Instr::Store(qbe::Type::Long, addr, rhs_val));
+            ExprKind::Assign(lhs, rhs) => {
+                let addr = self.address_of(qfunc, lhs)?;
+                let value = self.generate_expression(qfunc, rhs)?.ok_or_else(|| {
+                    CodeGenError::new("Assignment requires a value".to_string(), rhs.span)
+                })?;
+                qfunc.add_instr(qbe::Instr::Store(qbe::Type::Long, addr, value));
 
                 Ok(None)
             }
@@ -504,42 +548,8 @@ impl CodeGen {
 
                 Ok(Some(base))
             }
-            ExprKind::Index(array_expr, index_expr) => {
-                let base_val = self
-                    .generate_expression(qfunc, array_expr)?
-                    .ok_or_else(|| {
-                        CodeGenError::new(
-                            "Array expression must produce a value".to_string(),
-                            array_expr.span,
-                        )
-                    })?;
-
-                let index_val = self
-                    .generate_expression(qfunc, index_expr)?
-                    .ok_or_else(|| {
-                        CodeGenError::new(
-                            "Index expression must produce a value".to_string(),
-                            index_expr.span,
-                        )
-                    })?;
-
-                let offset = qbe::Value::Temporary(self.new_temp());
-                qfunc.assign_instr(
-                    offset.clone(),
-                    qbe::Type::Long,
-                    qbe::Instr::Mul(
-                        index_val,
-                        qbe::Value::Const(Self::type_size(&Ty::I64) as u64),
-                    ),
-                );
-
-                let addr = qbe::Value::Temporary(self.new_temp());
-                qfunc.assign_instr(
-                    addr.clone(),
-                    qbe::Type::Long,
-                    qbe::Instr::Add(base_val, offset),
-                );
-
+            ExprKind::Index(..) => {
+                let addr = self.address_of(qfunc, expr)?;
                 let result = qbe::Value::Temporary(self.new_temp());
                 qfunc.assign_instr(
                     result.clone(),
