@@ -88,6 +88,7 @@ pub enum ExprKind {
     Literal(i64),
     Ident(String),
     Array(Vec<Expr>),
+    Repeat(Box<Expr>, Box<Expr>),
     Index(Box<Expr>, Box<Expr>),
     Call(Call),
     Unary(UnaryOp, Box<Expr>),

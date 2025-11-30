@@ -548,6 +548,36 @@ impl CodeGen {
 
                 Ok(Some(base))
             }
+            ExprKind::Repeat(elem, count) => {
+                let count_num = self.eval_const_expr(count)? as usize;
+
+                let elem_size = Self::type_size(&Ty::I64);
+                let array_size = count_num * elem_size;
+                let base = qbe::Value::Temporary(self.new_temp());
+                qfunc.assign_instr(
+                    base.clone(),
+                    qbe::Type::Long,
+                    qbe::Instr::Alloc8(array_size as u64),
+                );
+
+                let elem_val = self.generate_expression(qfunc, elem)?.ok_or_else(|| {
+                    CodeGenError::new("Array element must produce a value".to_string(), elem.span)
+                })?;
+
+                for i in 0..count_num {
+                    let offset = (i * elem_size) as u64;
+                    let addr = qbe::Value::Temporary(self.new_temp());
+                    qfunc.assign_instr(
+                        addr.clone(),
+                        qbe::Type::Long,
+                        qbe::Instr::Add(base.clone(), qbe::Value::Const(offset)),
+                    );
+
+                    qfunc.add_instr(qbe::Instr::Store(qbe::Type::Long, addr, elem_val.clone()));
+                }
+
+                Ok(Some(base))
+            }
             ExprKind::Index(..) => {
                 let addr = self.address_of(qfunc, expr)?;
                 let result = qbe::Value::Temporary(self.new_temp());

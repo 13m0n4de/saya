@@ -530,16 +530,27 @@ impl<'a> Parser<'a> {
 
             TokenKind::OpenBracket => {
                 self.advance()?;
-                let mut elements = Vec::new();
 
-                while !self.eat(TokenKind::CloseBracket)? {
-                    elements.push(self.parse_expression()?);
-                    if !self.eat(TokenKind::Comma)? {
+                if self.eat(TokenKind::CloseBracket)? {
+                    ExprKind::Array(Vec::new())
+                } else {
+                    let first_expr = self.parse_expression()?;
+
+                    // [expr; count]
+                    if self.eat(TokenKind::Semi)? {
+                        let count = self.parse_expression()?;
                         self.expect(TokenKind::CloseBracket)?;
-                        break;
+                        ExprKind::Repeat(Box::new(first_expr), Box::new(count))
+                    } else {
+                        // [expr, expr, ...]
+                        let mut elements = vec![first_expr];
+                        while self.eat(TokenKind::Comma)? {
+                            elements.push(self.parse_expression()?);
+                        }
+                        self.expect(TokenKind::CloseBracket)?;
+                        ExprKind::Array(elements)
                     }
                 }
-                ExprKind::Array(elements)
             }
 
             _ => {
