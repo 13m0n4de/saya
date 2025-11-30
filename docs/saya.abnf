@@ -52,15 +52,18 @@ additive-op = "+" / "-"
 multiplicative-expr = unary-expr *(multiplicative-op unary-expr)
 multiplicative-op = "*" / "/" / "%"
 
-unary-expr = unary-op unary-expr / primary-expr
+unary-expr = unary-op unary-expr / postfix-expr
 unary-op = "-"
 
-primary-expr = literal / identifier / call-expr / array-expr
+postfix-expr = primary-expr *postfix-op
+postfix-op = index-op / call-op
+
+index-op = "[" expression "]"
+call-op = "(" [expression *("," expression)] ")"
+
+primary-expr = literal / identifier / array-expr
              / if-expr / while-expr / break-expr / continue-expr
              / block / "(" expression ")"
-
-call-expr = identifier "(" [arg-list] ")"
-arg-list = expression *("," expression)
 
 if-expr = "if" expression block ["else" (if-expr / block)]
 while-expr = "while" expression block
