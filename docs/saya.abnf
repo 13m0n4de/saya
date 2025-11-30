@@ -2,7 +2,7 @@ program = *(const-def / static-def / function-def)
 
 const-def = "const" identifier ":" type-name "=" expression ";"
 
-static-def = "static" identifer ":" type-name "=" expression ";"
+static-def = "static" identifier ":" type-name "=" expression ";"
 
 function-def = "fn" identifier "(" [param-list] ")" "->" type-name block
 
@@ -66,4 +66,4 @@ continue-expr = "continue"
 literal = integer
 integer = 1*DIGIT
 
-identifier = ALPHA *(ALPHA / DIGIT)
+identifier = (ALPHA / "_") *(ALPHA / "_" / DIGIT)
