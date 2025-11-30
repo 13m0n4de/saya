@@ -70,7 +70,9 @@ while-expr = "while" expression block
 break-expr = "break"
 continue-expr = "continue"
 
-array-expr = "[" [expression *("," expression)] "]"
+array-expr = "[" (array-list / array-repeat) "]"
+array-list = [expression *("," expression)]
+array-repeat = expression ";" expression
 
 literal = integer
 integer = 1*DIGIT
