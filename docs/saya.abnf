@@ -2,6 +2,8 @@ program = *(const-def / function-def)
 
 const-def = "const" identifier ":" type-name "=" expression ";"
 
+static-def = "static" identifer ":" type-name "=" expression ";"
+
 function-def = "fn" identifier "(" [param-list] ")" "->" type-name block
 
 param-list = param *("," param)

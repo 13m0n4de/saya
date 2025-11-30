@@ -1,4 +1,8 @@
-use std::{collections::HashMap, error::Error, fmt};
+use std::{
+    collections::{HashMap, HashSet},
+    error::Error,
+    fmt,
+};
 
 use crate::{ast::*, span::Span};
 
@@ -44,6 +48,8 @@ pub struct CodeGen {
     scopes: Vec<HashMap<String, VarKind>>,
     loops: Vec<LoopContext>,
     constants: HashMap<String, i64>,
+    data_defs: Vec<qbe::DataDef<'static>>,
+    globals: HashSet<String>,
 }
 
 impl CodeGen {
@@ -54,6 +60,8 @@ impl CodeGen {
             scopes: Vec::new(),
             loops: Vec::new(),
             constants: HashMap::new(),
+            data_defs: Vec::new(),
+            globals: HashSet::new(),
         }
     }
 
@@ -68,9 +76,20 @@ impl CodeGen {
         }
 
         for item in &prog.items {
+            if let Item::Static(static_def) = item {
+                self.generate_static(static_def)?;
+                self.globals.insert(static_def.name.clone());
+            }
+        }
+
+        for item in &prog.items {
             if let Item::Function(func) = item {
                 module.add_function(self.generate_function(func)?);
             }
+        }
+
+        for data_def in &self.data_defs {
+            module.add_data(data_def.clone());
         }
 
         Ok(module.to_string())
@@ -202,6 +221,19 @@ impl CodeGen {
         }
     }
 
+    fn generate_static(&mut self, static_def: &StaticDef) -> Result<(), CodeGenError> {
+        let value = self.eval_const_expr(&static_def.init)?;
+
+        self.data_defs.push(qbe::DataDef::new(
+            qbe::Linkage::private(),
+            static_def.name.clone(),
+            None,
+            vec![(qbe::Type::Long, qbe::DataItem::Const(value.cast_unsigned()))],
+        ));
+
+        Ok(())
+    }
+
     fn generate_function(
         &mut self,
         func: &FunctionDef,
@@ -302,23 +334,39 @@ impl CodeGen {
                     return Ok(Some(qbe::Value::Const(value.cast_unsigned())));
                 }
 
-                match self.lookup_var(name) {
-                    Some(VarKind::Param) => Ok(Some(qbe::Value::Temporary(name.clone()))),
-                    Some(VarKind::Local) => {
-                        let addr = qbe::Value::Temporary(name.clone());
-                        let result = qbe::Value::Temporary(self.new_temp());
-                        qfunc.assign_instr(
-                            result.clone(),
-                            qbe::Type::Long,
-                            qbe::Instr::Load(qbe::Type::Long, addr),
-                        );
-                        Ok(Some(result))
+                if let Some(var_kind) = self.lookup_var(name) {
+                    match var_kind {
+                        VarKind::Param => {
+                            return Ok(Some(qbe::Value::Temporary(name.clone())));
+                        }
+                        VarKind::Local => {
+                            let addr = qbe::Value::Temporary(name.clone());
+                            let result = qbe::Value::Temporary(self.new_temp());
+                            qfunc.assign_instr(
+                                result.clone(),
+                                qbe::Type::Long,
+                                qbe::Instr::Load(qbe::Type::Long, addr),
+                            );
+                            return Ok(Some(result));
+                        }
                     }
-                    None => Err(CodeGenError::new(
-                        format!("Cannot find value `{name}` in this scope"),
-                        expr.span,
-                    )),
                 }
+
+                if self.globals.contains(name) {
+                    let addr = qbe::Value::Global(name.clone());
+                    let result = qbe::Value::Temporary(self.new_temp());
+                    qfunc.assign_instr(
+                        result.clone(),
+                        qbe::Type::Long,
+                        qbe::Instr::Load(qbe::Type::Long, addr),
+                    );
+                    return Ok(Some(result));
+                }
+
+                Err(CodeGenError::new(
+                    format!("Cannot find value `{name}` in this scope"),
+                    expr.span,
+                ))
             }
             ExprKind::Call(call) => self.generate_call(qfunc, call),
             ExprKind::Unary(unop, expr) => match unop {
@@ -382,8 +430,14 @@ impl CodeGen {
                             assign_expr.span,
                         )
                     })?;
-                let addr = qbe::Value::Temporary(name.clone());
+
+                let addr = if self.globals.contains(name) {
+                    qbe::Value::Global(name.clone())
+                } else {
+                    qbe::Value::Temporary(name.clone())
+                };
                 qfunc.add_instr(qbe::Instr::Store(qbe::Type::Long, addr, rhs_val));
+
                 Ok(None)
             }
             ExprKind::Return(ret_expr) => {

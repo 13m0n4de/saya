@@ -107,6 +107,7 @@ impl<'a> Parser<'a> {
         loop {
             match self.current.kind {
                 TokenKind::Const => items.push(Item::Const(self.parse_const()?)),
+                TokenKind::Static => items.push(Item::Static(self.parse_static()?)),
                 TokenKind::Fn => items.push(Item::Function(self.parse_function()?)),
                 TokenKind::Eof => break,
                 _ => {
@@ -146,6 +147,31 @@ impl<'a> Parser<'a> {
         })
     }
 
+    fn parse_static(&mut self) -> Result<StaticDef, ParseError> {
+        let start_span = self.current.span;
+
+        self.expect(TokenKind::Static)?;
+
+        let name = self.expect_identifier()?;
+
+        self.expect(TokenKind::Colon)?;
+
+        let ty = self.parse_type()?;
+
+        self.expect(TokenKind::Eq)?;
+
+        let init = Box::new(self.parse_expression()?);
+
+        self.expect(TokenKind::Semi)?;
+
+        Ok(StaticDef {
+            name,
+            ty,
+            init,
+            span: start_span,
+        })
+    }
+
     fn parse_function(&mut self) -> Result<FunctionDef, ParseError> {
         let start_span = self.current.span;
 
@@ -155,10 +181,10 @@ impl<'a> Parser<'a> {
 
         self.expect(TokenKind::OpenParen)?;
 
-        let params = if self.current.kind != TokenKind::CloseParen {
-            self.parse_param_list()?
-        } else {
+        let params = if self.current.kind == TokenKind::CloseParen {
             Vec::new()
+        } else {
+            self.parse_param_list()?
         };
 
         self.expect(TokenKind::CloseParen)?;

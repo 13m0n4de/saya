@@ -8,11 +8,20 @@ pub struct Program {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Item {
     Const(ConstDef),
+    Static(StaticDef),
     Function(FunctionDef),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConstDef {
+    pub name: String,
+    pub ty: Ty,
+    pub init: Box<Expr>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StaticDef {
     pub name: String,
     pub ty: Ty,
     pub init: Box<Expr>,

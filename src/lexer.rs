@@ -13,6 +13,7 @@ pub enum TokenKind {
     Break,    // break
     Continue, // continue
     Const,    // const
+    Static,   // static
 
     Ident(String),
     Integer(i64),
@@ -289,6 +290,7 @@ impl<'a> Lexer<'a> {
             "break" => TokenKind::Break,
             "continue" => TokenKind::Continue,
             "const" => TokenKind::Const,
+            "static" => TokenKind::Static,
             _ => TokenKind::Ident(ident),
         }
     }
