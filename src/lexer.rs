@@ -112,7 +112,7 @@ impl<'a> Lexer<'a> {
         self.start_span = self.span;
 
         let kind = match self.current {
-            Some(ch) if ch.is_ascii_alphabetic() => self.read_identifier(),
+            Some(ch) if ch.is_ascii_alphabetic() || ch == '_' => self.read_identifier(),
             Some(ch) if ch.is_ascii_digit() => self.read_number()?,
 
             Some('(') => {
@@ -271,7 +271,7 @@ impl<'a> Lexer<'a> {
         let mut ident = String::new();
 
         while let Some(ch) = self.current {
-            if ch.is_ascii_alphanumeric() {
+            if ch.is_ascii_alphanumeric() || ch == '_' {
                 ident.push(ch);
                 self.advance();
             } else {
