@@ -174,6 +174,13 @@ impl<'a> Lexer<'a> {
             }
             Some('/') => {
                 self.advance();
+                if self.current == Some('/') {
+                    self.advance();
+                    while matches!(self.current, Some(ch) if ch != '\n') {
+                        self.advance();
+                    }
+                    return self.next_token();
+                }
                 TokenKind::Slash
             }
             Some('%') => {
