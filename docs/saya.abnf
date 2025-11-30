@@ -1,4 +1,4 @@
-program = *(const-def / function-def)
+program = *(const-def / static-def / function-def)
 
 const-def = "const" identifier ":" type-name "=" expression ";"
 
