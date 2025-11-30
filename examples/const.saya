@@ -1,0 +1,22 @@
+const A: i64 = 10;
+const B: i64 = 3;
+
+const ADD: i64 = A + B;
+const SUB: i64 = A - B;
+const MUL: i64 = A * B;
+
+const DIV: i64 = A / B;
+const REM: i64 = A % B;
+
+const BIT_AND: i64 = A & B;
+const BIT_OR: i64 = A | B;
+
+const CMP_LT: i64 = A < B;
+const CMP_GT: i64 = A > B;
+
+const LOGIC_AND: i64 = A && B;
+const LOGIC_OR: i64 = CMP_LT || CMP_GT;
+
+fn main() -> i64 {
+    return ADD + SUB + MUL + DIV + REM + BIT_AND + BIT_OR + LOGIC_OR;
+}
