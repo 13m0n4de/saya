@@ -102,11 +102,12 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_program(&mut self) -> Result<Program, ParseError> {
-        let mut functions = Vec::new();
+        let mut items = Vec::new();
 
         loop {
             match self.current.kind {
-                TokenKind::Fn => functions.push(self.parse_function()?),
+                TokenKind::Const => items.push(Item::Const(self.parse_const()?)),
+                TokenKind::Fn => items.push(Item::Function(self.parse_function()?)),
                 TokenKind::Eof => break,
                 _ => {
                     return Err(ParseError::new(
@@ -117,7 +118,32 @@ impl<'a> Parser<'a> {
             }
         }
 
-        Ok(Program { functions })
+        Ok(Program { items })
+    }
+
+    fn parse_const(&mut self) -> Result<ConstDef, ParseError> {
+        let start_span = self.current.span;
+
+        self.expect(TokenKind::Const)?;
+
+        let name = self.expect_identifier()?;
+
+        self.expect(TokenKind::Colon)?;
+
+        let ty = self.parse_type()?;
+
+        self.expect(TokenKind::Eq)?;
+
+        let init = Box::new(self.parse_expression()?);
+
+        self.expect(TokenKind::Semi)?;
+
+        Ok(ConstDef {
+            name,
+            ty,
+            init,
+            span: start_span,
+        })
     }
 
     fn parse_function(&mut self) -> Result<FunctionDef, ParseError> {

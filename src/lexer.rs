@@ -12,6 +12,7 @@ pub enum TokenKind {
     While,    // while
     Break,    // break
     Continue, // continue
+    Const,    // const
 
     Ident(String),
     Integer(i64),
@@ -287,6 +288,7 @@ impl<'a> Lexer<'a> {
             "while" => TokenKind::While,
             "break" => TokenKind::Break,
             "continue" => TokenKind::Continue,
+            "const" => TokenKind::Const,
             _ => TokenKind::Ident(ident),
         }
     }

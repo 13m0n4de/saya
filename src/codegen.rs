@@ -43,6 +43,7 @@ pub struct CodeGen {
     label_counter: usize,
     scopes: Vec<HashMap<String, VarKind>>,
     loops: Vec<LoopContext>,
+    constants: HashMap<String, i64>,
 }
 
 impl CodeGen {
@@ -52,14 +53,24 @@ impl CodeGen {
             label_counter: 0,
             scopes: Vec::new(),
             loops: Vec::new(),
+            constants: HashMap::new(),
         }
     }
 
     pub fn generate(&mut self, prog: &Program) -> Result<String, CodeGenError> {
         let mut module = qbe::Module::new();
 
-        for func in &prog.functions {
-            module.add_function(self.generate_function(func)?);
+        for item in &prog.items {
+            if let Item::Const(const_def) = item {
+                let value = self.eval_const_expr(&const_def.init)?;
+                self.constants.insert(const_def.name.clone(), value);
+            }
+        }
+
+        for item in &prog.items {
+            if let Item::Function(func) = item {
+                module.add_function(self.generate_function(func)?);
+            }
         }
 
         Ok(module.to_string())
@@ -129,6 +140,66 @@ impl CodeGen {
 
     fn current_loop(&self) -> Option<&LoopContext> {
         self.loops.last()
+    }
+
+    fn eval_const_expr(&self, expr: &Expr) -> Result<i64, CodeGenError> {
+        match &expr.kind {
+            ExprKind::Literal(n) => Ok(*n),
+            ExprKind::Ident(name) => self.constants.get(name).copied().ok_or_else(|| {
+                CodeGenError::new(
+                    format!("Constant `{name}` not found or is not a constant expression"),
+                    expr.span,
+                )
+            }),
+            ExprKind::Unary(op, operand) => match op {
+                UnaryOp::Neg => Ok(-self.eval_const_expr(operand)?),
+            },
+            ExprKind::Binary(op, left, right) => {
+                let l = self.eval_const_expr(left)?;
+                let r = self.eval_const_expr(right)?;
+
+                Ok(match op {
+                    BinaryOp::Add => l + r,
+                    BinaryOp::Sub => l - r,
+                    BinaryOp::Mul => l * r,
+                    BinaryOp::Div => {
+                        if r == 0 {
+                            return Err(CodeGenError::new(
+                                "Division by zero in constant expression".to_string(),
+                                expr.span,
+                            ));
+                        }
+                        l / r
+                    }
+                    BinaryOp::Rem => {
+                        if r == 0 {
+                            return Err(CodeGenError::new(
+                                "Division by zero in constant expression".to_string(),
+                                expr.span,
+                            ));
+                        }
+                        l % r
+                    }
+
+                    BinaryOp::BitAnd => l & r,
+                    BinaryOp::BitOr => l | r,
+
+                    BinaryOp::Lt => i64::from(l < r),
+                    BinaryOp::Le => i64::from(l <= r),
+                    BinaryOp::Gt => i64::from(l > r),
+                    BinaryOp::Ge => i64::from(l >= r),
+                    BinaryOp::Eq => i64::from(l == r),
+                    BinaryOp::Ne => i64::from(l != r),
+
+                    BinaryOp::And => i64::from(l != 0 && r != 0),
+                    BinaryOp::Or => i64::from(l != 0 || r != 0),
+                })
+            }
+            _ => Err(CodeGenError::new(
+                "Not a constant expression".to_string(),
+                expr.span,
+            )),
+        }
     }
 
     fn generate_function(
@@ -226,23 +297,29 @@ impl CodeGen {
     ) -> Result<Option<qbe::Value>, CodeGenError> {
         match &expr.kind {
             ExprKind::Literal(lit) => Ok(Some(qbe::Value::Const((*lit).cast_unsigned()))),
-            ExprKind::Ident(name) => match self.lookup_var(name) {
-                Some(VarKind::Param) => Ok(Some(qbe::Value::Temporary(name.clone()))),
-                Some(VarKind::Local) => {
-                    let addr = qbe::Value::Temporary(name.clone());
-                    let result = qbe::Value::Temporary(self.new_temp());
-                    qfunc.assign_instr(
-                        result.clone(),
-                        qbe::Type::Long,
-                        qbe::Instr::Load(qbe::Type::Long, addr),
-                    );
-                    Ok(Some(result))
+            ExprKind::Ident(name) => {
+                if let Some(value) = self.constants.get(name) {
+                    return Ok(Some(qbe::Value::Const(value.cast_unsigned())));
                 }
-                None => Err(CodeGenError::new(
-                    format!("Cannot find value `{name}` in this scope"),
-                    expr.span,
-                )),
-            },
+
+                match self.lookup_var(name) {
+                    Some(VarKind::Param) => Ok(Some(qbe::Value::Temporary(name.clone()))),
+                    Some(VarKind::Local) => {
+                        let addr = qbe::Value::Temporary(name.clone());
+                        let result = qbe::Value::Temporary(self.new_temp());
+                        qfunc.assign_instr(
+                            result.clone(),
+                            qbe::Type::Long,
+                            qbe::Instr::Load(qbe::Type::Long, addr),
+                        );
+                        Ok(Some(result))
+                    }
+                    None => Err(CodeGenError::new(
+                        format!("Cannot find value `{name}` in this scope"),
+                        expr.span,
+                    )),
+                }
+            }
             ExprKind::Call(call) => self.generate_call(qfunc, call),
             ExprKind::Unary(unop, expr) => match unop {
                 UnaryOp::Neg => {

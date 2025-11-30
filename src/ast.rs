@@ -2,7 +2,21 @@ use crate::span::Span;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
-    pub functions: Vec<FunctionDef>,
+    pub items: Vec<Item>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Item {
+    Const(ConstDef),
+    Function(FunctionDef),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConstDef {
+    pub name: String,
+    pub ty: Ty,
+    pub init: Box<Expr>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]

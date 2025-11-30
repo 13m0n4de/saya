@@ -1,4 +1,6 @@
-program = *function-def
+program = *(const-def / function-def)
+
+const-def = "const" identifier ":" type-name "=" expression ";"
 
 function-def = "fn" identifier "(" [param-list] ")" "->" type-name block
 
