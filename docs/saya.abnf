@@ -9,7 +9,11 @@ function-def = "fn" identifier "(" [param-list] ")" "->" type-name block
 param-list = param *("," param)
 param = identifier ":" type-name
 
-type-name = "i64"
+type-name = base-type / array-type
+
+base-type = "i64"
+
+array-type = "[" type-name ";" integer "]"
 
 block = "{" *statement [expression] "}"
 
@@ -51,7 +55,7 @@ multiplicative-op = "*" / "/" / "%"
 unary-expr = unary-op unary-expr / primary-expr
 unary-op = "-"
 
-primary-expr = literal / call-expr / identifier
+primary-expr = literal / identifier / call-expr / array-expr
              / if-expr / while-expr / break-expr / continue-expr
              / block / "(" expression ")"
 
@@ -62,6 +66,8 @@ if-expr = "if" expression block ["else" (if-expr / block)]
 while-expr = "while" expression block
 break-expr = "break"
 continue-expr = "continue"
+
+array-expr = "[" [expression *("," expression)] "]"
 
 literal = integer
 integer = 1*DIGIT
