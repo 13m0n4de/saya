@@ -440,6 +440,16 @@ impl<'a> Parser<'a> {
                             span,
                         }
                     }
+                    TokenKind::OpenBracket => {
+                        let span = lhs.span;
+                        self.advance()?;
+                        let index = self.parse_expression()?;
+                        self.expect(TokenKind::CloseBracket)?;
+                        lhs = Expr {
+                            kind: ExprKind::Index(Box::new(lhs), Box::new(index)),
+                            span,
+                        }
+                    }
                     _ => unreachable!(),
                 }
 
@@ -651,7 +661,8 @@ impl<'a> Parser<'a> {
 
     fn postfix_binding_power(&self, token: &TokenKind) -> Option<u8> {
         match token {
-            TokenKind::OpenParen => Some(100),
+            TokenKind::OpenParen => Some(100),   // function call
+            TokenKind::OpenBracket => Some(100), // array index
             _ => None,
         }
     }

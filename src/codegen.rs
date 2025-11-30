@@ -504,6 +504,51 @@ impl CodeGen {
 
                 Ok(Some(base))
             }
+            ExprKind::Index(array_expr, index_expr) => {
+                let base_val = self
+                    .generate_expression(qfunc, array_expr)?
+                    .ok_or_else(|| {
+                        CodeGenError::new(
+                            "Array expression must produce a value".to_string(),
+                            array_expr.span,
+                        )
+                    })?;
+
+                let index_val = self
+                    .generate_expression(qfunc, index_expr)?
+                    .ok_or_else(|| {
+                        CodeGenError::new(
+                            "Index expression must produce a value".to_string(),
+                            index_expr.span,
+                        )
+                    })?;
+
+                let offset = qbe::Value::Temporary(self.new_temp());
+                qfunc.assign_instr(
+                    offset.clone(),
+                    qbe::Type::Long,
+                    qbe::Instr::Mul(
+                        index_val,
+                        qbe::Value::Const(Self::type_size(&Ty::I64) as u64),
+                    ),
+                );
+
+                let addr = qbe::Value::Temporary(self.new_temp());
+                qfunc.assign_instr(
+                    addr.clone(),
+                    qbe::Type::Long,
+                    qbe::Instr::Add(base_val, offset),
+                );
+
+                let result = qbe::Value::Temporary(self.new_temp());
+                qfunc.assign_instr(
+                    result.clone(),
+                    qbe::Type::Long,
+                    qbe::Instr::Load(qbe::Type::Long, addr),
+                );
+
+                Ok(Some(result))
+            }
         }
     }
 
