@@ -1,0 +1,15 @@
+fn main() -> i64 {
+    let matrix: [[i64; 3]; 2] = [
+        [1, 2, 3],
+        [4, 5, 6]
+    ];
+
+    let a: i64 = matrix[0][1];
+    let b: i64 = matrix[1][2];
+
+    matrix[1][0] = 100;
+
+    let result: i64 = a + b + matrix[1][0];
+
+    result
+}
