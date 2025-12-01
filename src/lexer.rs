@@ -17,6 +17,7 @@ pub enum TokenKind {
 
     Ident(String),
     Integer(i64),
+    String(String),
 
     Plus,    // +
     Minus,   // -
@@ -245,6 +246,8 @@ impl<'a> Lexer<'a> {
                 }
             }
 
+            Some('"') => self.read_string()?,
+
             Some(ch) => {
                 return Err(LexError::new(
                     format!("Unexpected character: '{ch}'"),
@@ -331,5 +334,58 @@ impl<'a> Lexer<'a> {
                 self.start_span,
             )),
         }
+    }
+
+    fn read_string(&mut self) -> Result<TokenKind, LexError> {
+        if self.current != Some('"') {
+            return Err(LexError::new(
+                "Expected '\"' at start of string".to_string(),
+                self.span,
+            ));
+        }
+
+        self.advance();
+
+        let mut string = String::new();
+
+        while let Some(ch) = self.current {
+            match ch {
+                '"' => {
+                    self.advance();
+                    return Ok(TokenKind::String(string));
+                }
+                '\\' => {
+                    self.advance();
+                    string.push('\\');
+                    match self.current {
+                        Some(c) => {
+                            string.push(c);
+                            self.advance();
+                        }
+                        None => {
+                            return Err(LexError::new(
+                                "Unexpected EOF in escape sequence".to_string(),
+                                self.span,
+                            ));
+                        }
+                    }
+                }
+                '\n' => {
+                    return Err(LexError::new(
+                        "Unterminated string literal".to_string(),
+                        self.start_span,
+                    ));
+                }
+                _ => {
+                    string.push(ch);
+                    self.advance();
+                }
+            }
+        }
+
+        Err(LexError::new(
+            "Unterminated string literal".to_string(),
+            self.start_span,
+        ))
     }
 }

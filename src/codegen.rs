@@ -45,9 +45,10 @@ impl Error for CodeGenError {}
 pub struct CodeGen {
     temp_counter: usize,
     label_counter: usize,
+    string_counter: usize,
     scopes: Vec<HashMap<String, VarKind>>,
     loops: Vec<LoopContext>,
-    constants: HashMap<String, i64>,
+    constants: HashMap<String, qbe::DataItem>,
     data_defs: Vec<qbe::DataDef<'static>>,
     globals: HashSet<String>,
 }
@@ -57,6 +58,7 @@ impl CodeGen {
         Self {
             temp_counter: 0,
             label_counter: 0,
+            string_counter: 0,
             scopes: Vec::new(),
             loops: Vec::new(),
             constants: HashMap::new(),
@@ -110,6 +112,7 @@ impl CodeGen {
     fn type_to_qbe(ty: &Ty) -> qbe::Type<'static> {
         match ty {
             Ty::I64 => qbe::Type::Long,
+            Ty::Str => qbe::Type::Long,
             Ty::Array(_, _) => qbe::Type::Long,
         }
     }
@@ -165,6 +168,7 @@ impl CodeGen {
     fn type_size(ty: &Ty) -> usize {
         match ty {
             Ty::I64 => 8,
+            Ty::Str => 8,
             Ty::Array(elem_ty, len) => Self::type_size(elem_ty) * len,
         }
     }
@@ -223,61 +227,58 @@ impl CodeGen {
         }
     }
 
-    fn eval_const_expr(&self, expr: &Expr) -> Result<i64, CodeGenError> {
+    fn eval_const_expr(&mut self, expr: &Expr) -> Result<qbe::DataItem, CodeGenError> {
         match &expr.kind {
-            ExprKind::Literal(n) => Ok(*n),
-            ExprKind::Ident(name) => self.constants.get(name).copied().ok_or_else(|| {
-                CodeGenError::new(
-                    format!("Constant `{name}` not found or is not a constant expression"),
-                    expr.span,
-                )
+            ExprKind::Literal(lit) => match lit {
+                Literal::Integer(n) => Ok(qbe::DataItem::Const(n.cast_unsigned())),
+                Literal::String(s) => {
+                    let label = self.emit_string_data(s);
+                    Ok(qbe::DataItem::Symbol(label, None))
+                }
+            },
+            ExprKind::Ident(name) => self.constants.get(name).cloned().ok_or_else(|| {
+                CodeGenError::new(format!("Constant `{name}` not found"), expr.span)
             }),
-            ExprKind::Unary(op, operand) => match op {
-                UnaryOp::Neg => Ok(-self.eval_const_expr(operand)?),
+            ExprKind::Unary(UnaryOp::Neg, operand) => match self.eval_const_expr(operand)? {
+                qbe::DataItem::Const(val) => {
+                    Ok(qbe::DataItem::Const((-(val as i64)).cast_unsigned()))
+                }
+                _ => Err(CodeGenError::new(
+                    "Cannot negate a non-integer value".to_string(),
+                    expr.span,
+                )),
             },
             ExprKind::Binary(op, left, right) => {
-                let l = self.eval_const_expr(left)?;
-                let r = self.eval_const_expr(right)?;
+                let left_val = self.eval_const_expr(left)?;
+                let right_val = self.eval_const_expr(right)?;
 
-                Ok(match op {
-                    BinaryOp::Add => l + r,
-                    BinaryOp::Sub => l - r,
-                    BinaryOp::Mul => l * r,
-                    BinaryOp::Div => {
-                        if r == 0 {
-                            return Err(CodeGenError::new(
-                                "Division by zero in constant expression".to_string(),
-                                expr.span,
-                            ));
-                        }
-                        l / r
+                match (left_val, right_val) {
+                    (qbe::DataItem::Const(l), qbe::DataItem::Const(r)) => {
+                        let l = l as i64;
+                        let r = r as i64;
+                        let result = match op {
+                            BinaryOp::Add => l + r,
+                            BinaryOp::Sub => l - r,
+                            BinaryOp::Mul => l * r,
+                            BinaryOp::Div => l / r,
+                            BinaryOp::Rem => l % r,
+                            _ => {
+                                return Err(CodeGenError::new(
+                                    "Invalid operator in constant expression".to_string(),
+                                    expr.span,
+                                ));
+                            }
+                        };
+                        Ok(qbe::DataItem::Const(result.cast_unsigned()))
                     }
-                    BinaryOp::Rem => {
-                        if r == 0 {
-                            return Err(CodeGenError::new(
-                                "Division by zero in constant expression".to_string(),
-                                expr.span,
-                            ));
-                        }
-                        l % r
-                    }
-
-                    BinaryOp::BitAnd => l & r,
-                    BinaryOp::BitOr => l | r,
-
-                    BinaryOp::Lt => i64::from(l < r),
-                    BinaryOp::Le => i64::from(l <= r),
-                    BinaryOp::Gt => i64::from(l > r),
-                    BinaryOp::Ge => i64::from(l >= r),
-                    BinaryOp::Eq => i64::from(l == r),
-                    BinaryOp::Ne => i64::from(l != r),
-
-                    BinaryOp::And => i64::from(l != 0 && r != 0),
-                    BinaryOp::Or => i64::from(l != 0 || r != 0),
-                })
+                    _ => Err(CodeGenError::new(
+                        "Invalid operands in constant expression".to_string(),
+                        expr.span,
+                    )),
+                }
             }
             _ => Err(CodeGenError::new(
-                "Not a constant expression".to_string(),
+                "Invalid constant expression".to_string(),
                 expr.span,
             )),
         }
@@ -290,7 +291,7 @@ impl CodeGen {
             qbe::Linkage::private(),
             static_def.name.clone(),
             None,
-            vec![(qbe::Type::Long, qbe::DataItem::Const(value.cast_unsigned()))],
+            vec![(qbe::Type::Long, value)],
         ));
 
         Ok(())
@@ -365,9 +366,10 @@ impl CodeGen {
         let_stmt: &Let,
     ) -> Result<(), CodeGenError> {
         let qbe_ty = Self::type_to_qbe(&let_stmt.ty);
+        let size = qbe_ty.size();
 
         let addr = qbe::Value::Temporary(let_stmt.name.clone());
-        qfunc.assign_instr(addr.clone(), qbe::Type::Long, qbe::Instr::Alloc8(8));
+        qfunc.assign_instr(addr.clone(), qbe::Type::Long, qbe::Instr::Alloc8(size));
 
         self.insert_local(let_stmt.name.clone());
 
@@ -390,10 +392,32 @@ impl CodeGen {
         expr: &Expr,
     ) -> Result<Option<qbe::Value>, CodeGenError> {
         match &expr.kind {
-            ExprKind::Literal(lit) => Ok(Some(qbe::Value::Const((*lit).cast_unsigned()))),
+            ExprKind::Literal(lit) => match lit {
+                Literal::Integer(n) => Ok(Some(qbe::Value::Const(n.cast_unsigned()))),
+                Literal::String(s) => {
+                    let label = self.emit_string_data(s);
+                    Ok(Some(qbe::Value::Global(label)))
+                }
+            },
             ExprKind::Ident(name) => {
-                if let Some(value) = self.constants.get(name) {
-                    return Ok(Some(qbe::Value::Const(value.cast_unsigned())));
+                if let Some(data_item) = self.constants.get(name) {
+                    return match data_item {
+                        qbe::DataItem::Const(n) => Ok(Some(qbe::Value::Const(*n))),
+                        qbe::DataItem::Symbol(label, offset) => {
+                            if offset.is_some() {
+                                return Err(CodeGenError::new(
+                                    "Symbol with offset not supported in expression context"
+                                        .to_string(),
+                                    expr.span,
+                                ));
+                            }
+                            Ok(Some(qbe::Value::Global(label.clone())))
+                        }
+                        _ => Err(CodeGenError::new(
+                            "Unsupported constant type".to_string(),
+                            expr.span,
+                        )),
+                    };
                 }
 
                 if let Some(var_kind) = self.lookup_var(name) {
@@ -549,7 +573,15 @@ impl CodeGen {
                 Ok(Some(base))
             }
             ExprKind::Repeat(elem, count) => {
-                let count_num = self.eval_const_expr(count)? as usize;
+                let count_num = match self.eval_const_expr(count)? {
+                    qbe::DataItem::Const(n) => n as usize,
+                    _ => {
+                        return Err(CodeGenError::new(
+                            "Expected integer constant".to_string(),
+                            expr.span,
+                        ));
+                    }
+                };
 
                 let elem_size = Self::type_size(&Ty::I64);
                 let array_size = count_num * elem_size;
@@ -590,6 +622,23 @@ impl CodeGen {
                 Ok(Some(result))
             }
         }
+    }
+
+    fn emit_string_data(&mut self, s: &str) -> String {
+        let label = format!("str.{}", self.string_counter);
+        self.string_counter += 1;
+
+        self.data_defs.push(qbe::DataDef::new(
+            qbe::Linkage::private(),
+            label.clone(),
+            None,
+            vec![
+                (qbe::Type::Byte, qbe::DataItem::Str(s.to_string())),
+                (qbe::Type::Byte, qbe::DataItem::Const(0)),
+            ],
+        ));
+
+        label
     }
 
     fn generate_call(

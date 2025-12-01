@@ -47,6 +47,7 @@ pub struct Param {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Ty {
     I64,
+    Str,
     Array(Box<Ty>, usize),
 }
 
@@ -85,7 +86,7 @@ pub struct Expr {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExprKind {
-    Literal(i64),
+    Literal(Literal),
     Ident(String),
     Array(Vec<Expr>),
     Repeat(Box<Expr>, Box<Expr>),
@@ -100,6 +101,12 @@ pub enum ExprKind {
     While(While),
     Break,
     Continue,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Literal {
+    Integer(i64),
+    String(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
