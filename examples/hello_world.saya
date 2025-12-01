@@ -1,0 +1,4 @@
+fn main() -> i64 {
+    puts("Hello, world!");
+    0
+}
