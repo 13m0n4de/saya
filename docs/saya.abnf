@@ -70,11 +70,16 @@ while-expr = "while" expression block
 break-expr = "break"
 continue-expr = "continue"
 
-array-expr = "[" (array-list / array-repeat) "]"
-array-list = [expression *("," expression)]
+array-expr = "[" [array-list / array-repeat] "]"
+array-list = expression *("," expression)
 array-repeat = expression ";" expression
 
-literal = integer
+literal = integer / string
 integer = 1*DIGIT
+string = DQUOTE *string-char DQUOTE
+string-char = unescaped-char / escape-sequence
+unescaped-char = %x20-21 / %x23-5B / %x5D-7E
+escape-sequence = "\" escape-code
+escape-code = DQUOTE / "\" / "n" / "r" / "t" / "0"
 
 identifier = (ALPHA / "_") *(ALPHA / "_" / DIGIT)
