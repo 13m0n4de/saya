@@ -180,11 +180,25 @@ impl CodeGen {
     ) -> Result<qbe::Value, CodeGenError> {
         match &expr.kind {
             ExprKind::Ident(name) => {
-                if self.globals.contains(name) {
-                    Ok(qbe::Value::Global(name.clone()))
-                } else {
-                    Ok(qbe::Value::Temporary(name.clone()))
+                if self.constants.contains_key(name) {
+                    return Err(CodeGenError::new(
+                        format!("Cannot assign to constant `{name}`"),
+                        expr.span,
+                    ));
                 }
+
+                if self.globals.contains(name) {
+                    return Ok(qbe::Value::Global(name.clone()));
+                }
+
+                if self.lookup_var(name).is_some() {
+                    return Ok(qbe::Value::Temporary(name.clone()));
+                }
+
+                Err(CodeGenError::new(
+                    format!("Cannot find value `{name}` in this scope"),
+                    expr.span,
+                ))
             }
             ExprKind::Index(base, index) => {
                 let base_val = self.generate_expression(qfunc, base)?.ok_or_else(|| {
