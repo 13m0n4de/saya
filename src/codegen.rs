@@ -67,7 +67,7 @@ impl CodeGen {
         }
     }
 
-    pub fn generate(&mut self, prog: &Program) -> Result<String, CodeGenError> {
+    pub fn generate(&mut self, prog: &Program<Type>) -> Result<String, CodeGenError> {
         let mut module = qbe::Module::new();
 
         for item in &prog.items {
@@ -109,11 +109,13 @@ impl CodeGen {
         id
     }
 
-    fn type_to_qbe(ty: &Ty) -> qbe::Type<'static> {
+    fn type_to_qbe(ty: &Type) -> qbe::Type<'static> {
         match ty {
-            Ty::I64 => qbe::Type::Long,
-            Ty::Str => qbe::Type::Long,
-            Ty::Array(_, _) => qbe::Type::Long,
+            Type::I64 => qbe::Type::Long,
+            Type::Str => qbe::Type::Long,
+            Type::Array(_, _) => qbe::Type::Long,
+            Type::Unit => qbe::Type::Long,
+            Type::Never => unreachable!("Never type should not need QBE type conversion"),
         }
     }
 
@@ -165,18 +167,30 @@ impl CodeGen {
         self.loops.last()
     }
 
-    fn type_size(ty: &Ty) -> usize {
+    fn type_size(ty: &Type) -> usize {
         match ty {
-            Ty::I64 => 8,
-            Ty::Str => 8,
-            Ty::Array(elem_ty, len) => Self::type_size(elem_ty) * len,
+            Type::I64 => 8,
+            Type::Str => 8,
+            Type::Array(elem_ty, len) => Self::type_size(elem_ty) * len,
+            Type::Unit => 0,
+            Type::Never => unreachable!("Never type should not need size calculation"),
+        }
+    }
+
+    fn type_ann_to_type(ty: &TypeAnn) -> Type {
+        match ty {
+            TypeAnn::I64 => Type::I64,
+            TypeAnn::Str => Type::Str,
+            TypeAnn::Array(elem, size) => {
+                Type::Array(Box::new(Self::type_ann_to_type(elem)), *size)
+            }
         }
     }
 
     fn address_of(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
-        expr: &Expr,
+        expr: &Expr<Type>,
     ) -> Result<qbe::Value, CodeGenError> {
         match &expr.kind {
             ExprKind::Ident(name) => {
@@ -221,7 +235,7 @@ impl CodeGen {
                     qbe::Type::Long,
                     qbe::Instr::Mul(
                         index_val,
-                        qbe::Value::Const(Self::type_size(&Ty::I64) as u64),
+                        qbe::Value::Const(Self::type_size(&base.ty) as u64),
                     ),
                 );
 
@@ -241,7 +255,7 @@ impl CodeGen {
         }
     }
 
-    fn eval_const_expr(&mut self, expr: &Expr) -> Result<qbe::DataItem, CodeGenError> {
+    fn eval_const_expr(&mut self, expr: &Expr<Type>) -> Result<qbe::DataItem, CodeGenError> {
         match &expr.kind {
             ExprKind::Literal(lit) => match lit {
                 Literal::Integer(n) => Ok(qbe::DataItem::Const(n.cast_unsigned())),
@@ -255,7 +269,7 @@ impl CodeGen {
             }),
             ExprKind::Unary(UnaryOp::Neg, operand) => match self.eval_const_expr(operand)? {
                 qbe::DataItem::Const(val) => {
-                    Ok(qbe::DataItem::Const((-(val as i64)).cast_unsigned()))
+                    Ok(qbe::DataItem::Const((-(val.cast_signed())).cast_unsigned()))
                 }
                 _ => Err(CodeGenError::new(
                     "Cannot negate a non-integer value".to_string(),
@@ -268,8 +282,8 @@ impl CodeGen {
 
                 match (left_val, right_val) {
                     (qbe::DataItem::Const(l), qbe::DataItem::Const(r)) => {
-                        let l = l as i64;
-                        let r = r as i64;
+                        let l = l.cast_signed();
+                        let r = r.cast_signed();
                         let result = match op {
                             BinaryOp::Add => l + r,
                             BinaryOp::Sub => l - r,
@@ -298,7 +312,7 @@ impl CodeGen {
         }
     }
 
-    fn generate_static(&mut self, static_def: &StaticDef) -> Result<(), CodeGenError> {
+    fn generate_static(&mut self, static_def: &StaticDef<Type>) -> Result<(), CodeGenError> {
         let value = self.eval_const_expr(&static_def.init)?;
 
         self.data_defs.push(qbe::DataDef::new(
@@ -313,7 +327,7 @@ impl CodeGen {
 
     fn generate_function(
         &mut self,
-        func: &FunctionDef,
+        func: &FunctionDef<Type>,
     ) -> Result<qbe::Function<'static>, CodeGenError> {
         self.push_scope();
 
@@ -325,13 +339,15 @@ impl CodeGen {
             .params
             .iter()
             .map(|param| {
-                let ty = Self::type_to_qbe(&param.type_name);
+                let ty = Self::type_to_qbe(&Self::type_ann_to_type(&param.type_ann));
                 let value = qbe::Value::Temporary(param.name.clone());
                 (ty, value)
             })
             .collect();
 
-        let return_ty = Some(Self::type_to_qbe(&func.return_type));
+        let return_ty = Some(Self::type_to_qbe(&Self::type_ann_to_type(
+            &func.return_type_ann,
+        )));
 
         let mut qfunc =
             qbe::Function::new(qbe::Linkage::public(), func.name.clone(), params, return_ty);
@@ -353,7 +369,7 @@ impl CodeGen {
     fn generate_block(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
-        block: &Block,
+        block: &Block<Type>,
     ) -> Result<Option<qbe::Value>, CodeGenError> {
         self.push_scope();
         let mut result = None;
@@ -377,9 +393,9 @@ impl CodeGen {
     fn generate_let(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
-        let_stmt: &Let,
+        let_stmt: &Let<Type>,
     ) -> Result<(), CodeGenError> {
-        let qbe_ty = Self::type_to_qbe(&let_stmt.ty);
+        let qbe_ty = Self::type_to_qbe(&Self::type_ann_to_type(&let_stmt.type_ann));
         let size = qbe_ty.size();
 
         let addr = qbe::Value::Temporary(let_stmt.name.clone());
@@ -403,7 +419,7 @@ impl CodeGen {
     fn generate_expression(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
-        expr: &Expr,
+        expr: &Expr<Type>,
     ) -> Result<Option<qbe::Value>, CodeGenError> {
         match &expr.kind {
             ExprKind::Literal(lit) => match lit {
@@ -556,7 +572,18 @@ impl CodeGen {
                 Ok(None)
             }
             ExprKind::Array(elements) => {
-                let elem_size = Self::type_size(&Ty::I64);
+                // Get element type from the array type
+                let elem_ty = match &expr.ty {
+                    Type::Array(elem_ty, _) => elem_ty.as_ref(),
+                    _ => {
+                        return Err(CodeGenError::new(
+                            format!("Expected array type, found {:?}", expr.ty),
+                            expr.span,
+                        ));
+                    }
+                };
+
+                let elem_size = Self::type_size(elem_ty);
                 let array_size = elements.len() * elem_size;
                 let base = qbe::Value::Temporary(self.new_temp());
                 qfunc.assign_instr(
@@ -573,7 +600,7 @@ impl CodeGen {
                         )
                     })?;
 
-                    let offset = (i * Self::type_size(&Ty::I64)) as u64;
+                    let offset = (i * elem_size) as u64;
                     let addr = qbe::Value::Temporary(self.new_temp());
                     qfunc.assign_instr(
                         addr.clone(),
@@ -597,7 +624,18 @@ impl CodeGen {
                     }
                 };
 
-                let elem_size = Self::type_size(&Ty::I64);
+                // Get element type from the array type
+                let elem_ty = match &expr.ty {
+                    Type::Array(elem_ty, _) => elem_ty.as_ref(),
+                    _ => {
+                        return Err(CodeGenError::new(
+                            format!("Expected array type, found {:?}", expr.ty),
+                            expr.span,
+                        ));
+                    }
+                };
+
+                let elem_size = Self::type_size(elem_ty);
                 let array_size = count_num * elem_size;
                 let base = qbe::Value::Temporary(self.new_temp());
                 qfunc.assign_instr(
@@ -658,7 +696,7 @@ impl CodeGen {
     fn generate_call(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
-        call: &Call,
+        call: &Call<Type>,
     ) -> Result<Option<qbe::Value>, CodeGenError> {
         let func_name = match &call.callee.kind {
             ExprKind::Ident(name) => name.clone(),
@@ -699,7 +737,7 @@ impl CodeGen {
     fn generate_if(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
-        if_expr: &If,
+        if_expr: &If<Type>,
     ) -> Result<Option<qbe::Value>, CodeGenError> {
         let label_id = self.new_label();
         let cond_label = format!("if.{label_id}.cond");
@@ -717,13 +755,13 @@ impl CodeGen {
                 )
             })?;
 
-        match &if_expr.else_block {
+        match &if_expr.else_body {
             None => {
                 // if without else: no return value
                 qfunc.add_instr(qbe::Instr::Jnz(cond, then_label.clone(), end_label.clone()));
 
                 qfunc.add_block(then_label);
-                self.generate_block(qfunc, &if_expr.then_block)?;
+                self.generate_block(qfunc, &if_expr.then_body)?;
 
                 if !qfunc.blocks.last().is_some_and(qbe::Block::jumps) {
                     qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
@@ -744,7 +782,7 @@ impl CodeGen {
 
                 // Then block
                 qfunc.add_block(then_label.clone());
-                let then_result = self.generate_block(qfunc, &if_expr.then_block)?.map(|val| {
+                let then_result = self.generate_block(qfunc, &if_expr.then_body)?.map(|val| {
                     let temp = qbe::Value::Temporary(self.new_temp());
                     qfunc.assign_instr(temp.clone(), qbe::Type::Long, qbe::Instr::Copy(val));
                     temp
@@ -801,7 +839,7 @@ impl CodeGen {
     fn generate_while(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
-        while_expr: &While,
+        while_expr: &While<Type>,
     ) -> Result<Option<qbe::Value>, CodeGenError> {
         let label_id = self.new_label();
         let cond_label = format!("while.{label_id}.cond");
@@ -845,8 +883,8 @@ impl CodeGen {
     fn generate_logical_and(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
-        left: &Expr,
-        right: &Expr,
+        left: &Expr<Type>,
+        right: &Expr<Type>,
     ) -> Result<Option<qbe::Value>, CodeGenError> {
         let left_val = self.generate_expression(qfunc, left)?.ok_or_else(|| {
             CodeGenError::new("Left operand must produce a value".to_string(), left.span)
@@ -898,8 +936,8 @@ impl CodeGen {
     fn generate_logical_or(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
-        left: &Expr,
-        right: &Expr,
+        left: &Expr<Type>,
+        right: &Expr<Type>,
     ) -> Result<Option<qbe::Value>, CodeGenError> {
         let left_val = self.generate_expression(qfunc, left)?.ok_or_else(|| {
             CodeGenError::new("Left operand must produce a value".to_string(), left.span)

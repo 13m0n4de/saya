@@ -3,12 +3,14 @@ use std::{env, error::Error, fs::read_to_string, process};
 use codegen::CodeGen;
 use lexer::Lexer;
 use parser::Parser;
+use type_checker::TypeChecker;
 
 mod ast;
 mod codegen;
 mod lexer;
 mod parser;
 mod span;
+mod type_checker;
 
 fn run() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = env::args().collect();
@@ -25,8 +27,11 @@ fn run() -> Result<(), Box<dyn Error>> {
     let mut parser = Parser::new(lexer)?;
     let program = parser.parse()?;
 
+    let mut type_checker = TypeChecker::new();
+    let typed_program = type_checker.check_program(&program)?;
+
     let mut code_gen = CodeGen::new();
-    let qbe_il = code_gen.generate(&program)?;
+    let qbe_il = code_gen.generate(&typed_program)?;
 
     std::fs::write("out.ssa", qbe_il)?;
 

@@ -50,7 +50,7 @@ impl<'a> Parser<'a> {
         Ok(Self { lexer, current })
     }
 
-    pub fn parse(&mut self) -> Result<Program, ParseError> {
+    pub fn parse(&mut self) -> Result<Program<()>, ParseError> {
         self.parse_program()
     }
 
@@ -92,13 +92,13 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_type(&mut self) -> Result<Ty, ParseError> {
+    fn parse_type_ann(&mut self) -> Result<TypeAnn, ParseError> {
         match self.current.kind.clone() {
             TokenKind::Ident(name) => {
                 self.advance()?;
                 match name.as_str() {
-                    "i64" => Ok(Ty::I64),
-                    "str" => Ok(Ty::Str),
+                    "i64" => Ok(TypeAnn::I64),
+                    "str" => Ok(TypeAnn::Str),
                     _ => Err(ParseError::new(
                         format!("Unknown type: {name}"),
                         self.current.span,
@@ -107,7 +107,7 @@ impl<'a> Parser<'a> {
             }
             TokenKind::OpenBracket => {
                 self.advance()?;
-                let elem_ty = Box::new(self.parse_type()?);
+                let elem_type_ann = Box::new(self.parse_type_ann()?);
                 self.expect(TokenKind::Semi)?;
 
                 let size = if let TokenKind::Integer(n) = self.current.kind {
@@ -127,7 +127,7 @@ impl<'a> Parser<'a> {
 
                 self.advance()?;
                 self.expect(TokenKind::CloseBracket)?;
-                Ok(Ty::Array(elem_ty, size))
+                Ok(TypeAnn::Array(elem_type_ann, size))
             }
             _ => Err(ParseError::new(
                 format!("Unknown type: {:?}", self.current.kind),
@@ -166,7 +166,7 @@ impl<'a> Parser<'a> {
 
         self.expect(TokenKind::Colon)?;
 
-        let ty = self.parse_type()?;
+        let type_ann = self.parse_type_ann()?;
 
         self.expect(TokenKind::Eq)?;
 
@@ -176,7 +176,7 @@ impl<'a> Parser<'a> {
 
         Ok(ConstDef {
             name,
-            ty,
+            type_ann,
             init,
             span: start_span,
         })
@@ -191,7 +191,7 @@ impl<'a> Parser<'a> {
 
         self.expect(TokenKind::Colon)?;
 
-        let ty = self.parse_type()?;
+        let type_ann = self.parse_type_ann()?;
 
         self.expect(TokenKind::Eq)?;
 
@@ -201,7 +201,7 @@ impl<'a> Parser<'a> {
 
         Ok(StaticDef {
             name,
-            ty,
+            type_ann,
             init,
             span: start_span,
         })
@@ -226,14 +226,14 @@ impl<'a> Parser<'a> {
 
         self.expect(TokenKind::Arrow)?;
 
-        let return_type = self.parse_type()?;
+        let return_type_ann = self.parse_type_ann()?;
 
         let body = self.parse_block()?;
 
         Ok(FunctionDef {
             name,
             params,
-            return_type,
+            return_type_ann,
             body,
             span: start_span,
         })
@@ -256,11 +256,11 @@ impl<'a> Parser<'a> {
 
         let name = self.expect_identifier()?;
         self.expect(TokenKind::Colon)?;
-        let type_name = self.parse_type()?;
+        let type_ann = self.parse_type_ann()?;
 
         Ok(Param {
             name,
-            type_name,
+            type_ann,
             span: start_span,
         })
     }
@@ -323,6 +323,7 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::CloseBrace)?;
 
         Ok(Block {
+            ty: (),
             stmts,
             span: start_span,
         })
@@ -337,7 +338,7 @@ impl<'a> Parser<'a> {
 
         self.expect(TokenKind::Colon)?;
 
-        let ty = self.parse_type()?;
+        let type_ann = self.parse_type_ann()?;
 
         self.expect(TokenKind::Eq)?;
 
@@ -348,7 +349,7 @@ impl<'a> Parser<'a> {
         Ok(Stmt {
             kind: StmtKind::Let(Let {
                 name,
-                ty,
+                type_ann,
                 init,
                 span: start_span,
             }),
@@ -371,6 +372,7 @@ impl<'a> Parser<'a> {
             };
 
             return Ok(Expr {
+                ty: (),
                 kind: ExprKind::Return(ret_expr),
                 span: start_span,
             });
@@ -388,6 +390,7 @@ impl<'a> Parser<'a> {
             let rhs = self.parse_expr_assign()?;
 
             Ok(Expr {
+                ty: (),
                 kind: ExprKind::Assign(Box::new(lhs), Box::new(rhs)),
                 span: start_span,
             })
@@ -407,12 +410,24 @@ impl<'a> Parser<'a> {
             self.advance()?;
             let rhs = self.parse_expr_bp(prefix_bp)?;
             Expr {
+                ty: (),
                 kind: ExprKind::Unary(op, Box::new(rhs)),
                 span: start_span,
             }
         } else {
             // Primary expression
-            self.parse_primary()?
+            let primary = self.parse_primary()?;
+
+            // Structural expressions (if, while, block) should not participate in infix operators
+            // to avoid parsing "if x { } - y" as "(if x { }) minus y"
+            if matches!(
+                primary.kind,
+                ExprKind::If(_) | ExprKind::While(_) | ExprKind::Block(_)
+            ) {
+                return Ok(primary);
+            }
+
+            primary
         };
 
         loop {
@@ -428,6 +443,7 @@ impl<'a> Parser<'a> {
                     TokenKind::OpenParen => {
                         let span = lhs.span;
                         lhs = Expr {
+                            ty: (),
                             kind: ExprKind::Call(self.parse_call(lhs)?),
                             span,
                         }
@@ -438,6 +454,7 @@ impl<'a> Parser<'a> {
                         let index = self.parse_expression()?;
                         self.expect(TokenKind::CloseBracket)?;
                         lhs = Expr {
+                            ty: (),
                             kind: ExprKind::Index(Box::new(lhs), Box::new(index)),
                             span,
                         }
@@ -478,6 +495,7 @@ impl<'a> Parser<'a> {
                 let rhs = self.parse_expr_bp(right_bp)?;
 
                 lhs = Expr {
+                    ty: (),
                     kind: ExprKind::Binary(op, Box::new(lhs), Box::new(rhs)),
                     span,
                 };
@@ -568,6 +586,7 @@ impl<'a> Parser<'a> {
         };
 
         Ok(Expr {
+            ty: (),
             kind,
             span: start_span,
         })
@@ -604,19 +623,23 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::If)?;
 
         let cond = Box::new(self.parse_expression()?);
-        let then_block = Box::new(self.parse_block()?);
-        let else_block = if self.eat(TokenKind::Else)? {
+        let then_body = Box::new(self.parse_block()?);
+        let else_body = if self.eat(TokenKind::Else)? {
             if self.current.kind == TokenKind::If {
+                let else_if_span = self.current.span;
                 let else_if = self.parse_if()?;
                 Some(Box::new(Expr {
+                    ty: (),
                     kind: ExprKind::If(else_if),
-                    span: self.current.span,
+                    span: else_if_span,
                 }))
             } else {
+                let else_span = self.current.span;
                 let block = self.parse_block()?;
                 Some(Box::new(Expr {
+                    ty: (),
                     kind: ExprKind::Block(block),
-                    span: self.current.span,
+                    span: else_span,
                 }))
             }
         } else {
@@ -625,8 +648,8 @@ impl<'a> Parser<'a> {
 
         Ok(If {
             cond,
-            then_block,
-            else_block,
+            then_body,
+            else_body,
             span: if_span,
         })
     }
