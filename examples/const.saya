@@ -11,12 +11,20 @@ const REM: i64 = A % B;
 const BIT_AND: i64 = A & B;
 const BIT_OR: i64 = A | B;
 
-const CMP_LT: i64 = A < B;
-const CMP_GT: i64 = A > B;
+const CMP_LT: bool = A < B;
+const CMP_GT: bool = A > B;
+const CMP_EQ: bool = A == B;
 
-const LOGIC_AND: i64 = A && B;
-const LOGIC_OR: i64 = CMP_LT || CMP_GT;
+const LOGIC_AND: bool = CMP_LT && CMP_GT;
+const LOGIC_OR: bool = CMP_LT || CMP_GT;
+
+const TRUE_VAL: bool = true;
+const FALSE_VAL: bool = false;
 
 fn main() -> i64 {
-    return ADD + SUB + MUL + DIV + REM + BIT_AND + BIT_OR + LOGIC_OR;
+    if LOGIC_OR {
+        return ADD + SUB + MUL + DIV + REM + BIT_AND + BIT_OR;
+    } else {
+        return 0;
+    }
 }
