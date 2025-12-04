@@ -296,6 +296,9 @@ impl TypeChecker {
             ExprKind::Literal(Literal::String(s)) => {
                 (Type::Str, ExprKind::Literal(Literal::String(s.clone())))
             }
+            ExprKind::Literal(Literal::Bool(b)) => {
+                (Type::Bool, ExprKind::Literal(Literal::Bool(*b)))
+            }
             ExprKind::Ident(name) => {
                 let ty = self
                     .lookup_var(name)
@@ -500,7 +503,7 @@ impl TypeChecker {
                             ));
                         }
                         (
-                            Type::I64,
+                            Type::Bool,
                             ExprKind::Binary(
                                 op.clone(),
                                 Box::new(typed_left),
@@ -519,7 +522,7 @@ impl TypeChecker {
                             ));
                         }
                         (
-                            Type::I64,
+                            Type::Bool,
                             ExprKind::Binary(
                                 op.clone(),
                                 Box::new(typed_left),
@@ -528,17 +531,17 @@ impl TypeChecker {
                         )
                     }
                     BinaryOp::And | BinaryOp::Or => {
-                        if typed_left.ty != Type::I64 || typed_right.ty != Type::I64 {
+                        if typed_left.ty != Type::Bool || typed_right.ty != Type::Bool {
                             return Err(TypeError::new(
                                 format!(
-                                    "logical operator requires i64 operands, found {:?} and {:?}",
+                                    "logical operator requires bool operands, found {:?} and {:?}",
                                     typed_left.ty, typed_right.ty
                                 ),
                                 expr.span,
                             ));
                         }
                         (
-                            Type::I64,
+                            Type::Bool,
                             ExprKind::Binary(
                                 op.clone(),
                                 Box::new(typed_left),
@@ -602,10 +605,9 @@ impl TypeChecker {
             ExprKind::If(if_expr) => {
                 let typed_cond = self.check_expr(&if_expr.cond)?;
 
-                // TODO: Bool
-                if typed_cond.ty != Type::I64 {
+                if typed_cond.ty != Type::Bool {
                     return Err(TypeError::new(
-                        format!("if condition must be i64, found {:?}", typed_cond.ty),
+                        format!("if condition must be bool, found {:?}", typed_cond.ty),
                         if_expr.cond.span,
                     ));
                 }
@@ -650,10 +652,9 @@ impl TypeChecker {
             ExprKind::While(while_expr) => {
                 let typed_cond = self.check_expr(&while_expr.cond)?;
 
-                // TODO: Bool
-                if typed_cond.ty != Type::I64 {
+                if typed_cond.ty != Type::Bool {
                     return Err(TypeError::new(
-                        format!("while condition must be i64, found {:?}", typed_cond.ty),
+                        format!("while condition must be bool, found {:?}", typed_cond.ty),
                         while_expr.cond.span,
                     ));
                 }

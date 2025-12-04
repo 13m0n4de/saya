@@ -14,6 +14,8 @@ pub enum TokenKind {
     Continue, // continue
     Const,    // const
     Static,   // static
+    True,     // true
+    False,    // false
 
     Ident(String),
     Integer(i64),
@@ -311,6 +313,8 @@ impl<'a> Lexer<'a> {
             "continue" => TokenKind::Continue,
             "const" => TokenKind::Const,
             "static" => TokenKind::Static,
+            "true" => TokenKind::True,
+            "false" => TokenKind::False,
             _ => TokenKind::Ident(ident),
         }
     }

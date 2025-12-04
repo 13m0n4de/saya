@@ -233,6 +233,7 @@ impl CodeGen {
                     let label = self.emit_string_data(s);
                     Ok(qbe::DataItem::Symbol(label, None))
                 }
+                Literal::Bool(b) => Ok(qbe::DataItem::Const(u64::from(*b))),
             },
             ExprKind::Ident(name) => self.constants.get(name).cloned().ok_or_else(|| {
                 CodeGenError::new(format!("Constant `{name}` not found"), expr.span)
@@ -260,12 +261,16 @@ impl CodeGen {
                             BinaryOp::Mul => l * r,
                             BinaryOp::Div => l / r,
                             BinaryOp::Rem => l % r,
-                            _ => {
-                                return Err(CodeGenError::new(
-                                    "Invalid operator in constant expression".to_string(),
-                                    expr.span,
-                                ));
-                            }
+                            BinaryOp::BitAnd => l & r,
+                            BinaryOp::BitOr => l | r,
+                            BinaryOp::Lt => i64::from(l < r),
+                            BinaryOp::Le => i64::from(l <= r),
+                            BinaryOp::Gt => i64::from(l > r),
+                            BinaryOp::Ge => i64::from(l >= r),
+                            BinaryOp::Eq => i64::from(l == r),
+                            BinaryOp::Ne => i64::from(l != r),
+                            BinaryOp::And => i64::from(l != 0 && r != 0),
+                            BinaryOp::Or => i64::from(l != 0 || r != 0),
                         };
                         Ok(qbe::DataItem::Const(result.cast_unsigned()))
                     }
@@ -379,7 +384,7 @@ impl CodeGen {
         let size = qbe_ty.size();
 
         let addr = qbe::Value::Temporary(let_stmt.name.clone());
-        qfunc.assign_instr(addr.clone(), qbe_ty.clone(), qbe::Instr::Alloc8(size));
+        qfunc.assign_instr(addr.clone(), qbe::Type::Long, qbe::Instr::Alloc8(size));
 
         self.insert_local(let_stmt.name.clone());
 
@@ -406,6 +411,7 @@ impl CodeGen {
                 let label = self.emit_string_data(s);
                 qbe::Value::Global(label)
             }
+            Literal::Bool(b) => qbe::Value::Const(u64::from(*b)),
         }
     }
 
@@ -616,7 +622,9 @@ impl CodeGen {
                 Ok(None)
             }
 
-            _ => unreachable!("ICE: generate_expr_control called with non-control-flow expression (expected Break or Continue)"),
+            _ => unreachable!(
+                "ICE: generate_expr_control called with non-control-flow expression (expected Break or Continue)"
+            ),
         }
     }
 
@@ -1042,7 +1050,7 @@ impl CodeGen {
         let right_temp = qbe::Value::Temporary(self.new_temp());
         qfunc.assign_instr(
             right_temp.clone(),
-            qbe::Type::Long,
+            qbe::Type::Word,
             qbe::Instr::Copy(right_val),
         );
         qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
@@ -1051,7 +1059,7 @@ impl CodeGen {
         let false_temp = qbe::Value::Temporary(self.new_temp());
         qfunc.assign_instr(
             false_temp.clone(),
-            qbe::Type::Long,
+            qbe::Type::Word,
             qbe::Instr::Copy(qbe::Value::Const(0)),
         );
         qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
@@ -1060,7 +1068,7 @@ impl CodeGen {
         let result = qbe::Value::Temporary(self.new_temp());
         qfunc.assign_instr(
             result.clone(),
-            qbe::Type::Long,
+            qbe::Type::Word,
             qbe::Instr::Phi(rhs_label, right_temp, false_label, false_temp),
         );
 
@@ -1095,7 +1103,7 @@ impl CodeGen {
         let right_temp = qbe::Value::Temporary(self.new_temp());
         qfunc.assign_instr(
             right_temp.clone(),
-            qbe::Type::Long,
+            qbe::Type::Word,
             qbe::Instr::Copy(right_val),
         );
         qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
@@ -1104,7 +1112,7 @@ impl CodeGen {
         let true_temp = qbe::Value::Temporary(self.new_temp());
         qfunc.assign_instr(
             true_temp.clone(),
-            qbe::Type::Long,
+            qbe::Type::Word,
             qbe::Instr::Copy(qbe::Value::Const(1)),
         );
         qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
@@ -1113,7 +1121,7 @@ impl CodeGen {
         let result = qbe::Value::Temporary(self.new_temp());
         qfunc.assign_instr(
             result.clone(),
-            qbe::Type::Long,
+            qbe::Type::Word,
             qbe::Instr::Phi(rhs_label, right_temp, true_label, true_temp),
         );
 
