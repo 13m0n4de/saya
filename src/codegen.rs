@@ -48,7 +48,7 @@ pub struct CodeGen {
     string_counter: usize,
     scopes: Vec<HashMap<String, VarKind>>,
     loops: Vec<LoopContext>,
-    constants: HashMap<String, qbe::DataItem>,
+    constants: HashMap<String, Literal>,
     data_defs: Vec<qbe::DataDef<'static>>,
     globals: HashSet<String>,
 }
@@ -225,22 +225,25 @@ impl CodeGen {
         }
     }
 
-    fn eval_const_expr(&mut self, expr: &Expr<Type>) -> Result<qbe::DataItem, CodeGenError> {
+    fn literal_to_data_item(&mut self, lit: &Literal) -> qbe::DataItem {
+        match lit {
+            Literal::Integer(n) => qbe::DataItem::Const(n.cast_unsigned()),
+            Literal::Bool(b) => qbe::DataItem::Const(u64::from(*b)),
+            Literal::String(s) => {
+                let label = self.emit_string_data(s);
+                qbe::DataItem::Symbol(label, None)
+            }
+        }
+    }
+
+    fn eval_const_expr(&mut self, expr: &Expr<Type>) -> Result<Literal, CodeGenError> {
         match &expr.kind {
-            ExprKind::Literal(lit) => match lit {
-                Literal::Integer(n) => Ok(qbe::DataItem::Const(n.cast_unsigned())),
-                Literal::String(s) => {
-                    let label = self.emit_string_data(s);
-                    Ok(qbe::DataItem::Symbol(label, None))
-                }
-            },
+            ExprKind::Literal(lit) => Ok(lit.clone()),
             ExprKind::Ident(name) => self.constants.get(name).cloned().ok_or_else(|| {
                 CodeGenError::new(format!("Constant `{name}` not found"), expr.span)
             }),
             ExprKind::Unary(UnaryOp::Neg, operand) => match self.eval_const_expr(operand)? {
-                qbe::DataItem::Const(val) => {
-                    Ok(qbe::DataItem::Const((-(val.cast_signed())).cast_unsigned()))
-                }
+                Literal::Integer(n) => Ok(Literal::Integer(-n)),
                 _ => Err(CodeGenError::new(
                     "Cannot negate a non-integer value".to_string(),
                     expr.span,
@@ -251,26 +254,42 @@ impl CodeGen {
                 let right_val = self.eval_const_expr(right)?;
 
                 match (left_val, right_val) {
-                    (qbe::DataItem::Const(l), qbe::DataItem::Const(r)) => {
-                        let l = l.cast_signed();
-                        let r = r.cast_signed();
-                        let result = match op {
-                            BinaryOp::Add => l + r,
-                            BinaryOp::Sub => l - r,
-                            BinaryOp::Mul => l * r,
-                            BinaryOp::Div => l / r,
-                            BinaryOp::Rem => l % r,
-                            _ => {
-                                return Err(CodeGenError::new(
-                                    "Invalid operator in constant expression".to_string(),
-                                    expr.span,
-                                ));
-                            }
-                        };
-                        Ok(qbe::DataItem::Const(result.cast_unsigned()))
-                    }
+                    (Literal::Integer(l), Literal::Integer(r)) => match op {
+                        // Arithmetic operators
+                        BinaryOp::Add => Ok(Literal::Integer(l + r)),
+                        BinaryOp::Sub => Ok(Literal::Integer(l - r)),
+                        BinaryOp::Mul => Ok(Literal::Integer(l * r)),
+                        BinaryOp::Div => Ok(Literal::Integer(l / r)),
+                        BinaryOp::Rem => Ok(Literal::Integer(l % r)),
+                        // Bitwise operators
+                        BinaryOp::BitAnd => Ok(Literal::Integer(l & r)),
+                        BinaryOp::BitOr => Ok(Literal::Integer(l | r)),
+                        // Comparison operators
+                        BinaryOp::Lt => Ok(Literal::Bool(l < r)),
+                        BinaryOp::Le => Ok(Literal::Bool(l <= r)),
+                        BinaryOp::Gt => Ok(Literal::Bool(l > r)),
+                        BinaryOp::Ge => Ok(Literal::Bool(l >= r)),
+                        BinaryOp::Eq => Ok(Literal::Bool(l == r)),
+                        BinaryOp::Ne => Ok(Literal::Bool(l != r)),
+                        _ => Err(CodeGenError::new(
+                            "Invalid operator for integer operands".to_string(),
+                            expr.span,
+                        )),
+                    },
+                    (Literal::Bool(l), Literal::Bool(r)) => match op {
+                        // Logical operators
+                        BinaryOp::And => Ok(Literal::Bool(l && r)),
+                        BinaryOp::Or => Ok(Literal::Bool(l || r)),
+                        // Equality operators
+                        BinaryOp::Eq => Ok(Literal::Bool(l == r)),
+                        BinaryOp::Ne => Ok(Literal::Bool(l != r)),
+                        _ => Err(CodeGenError::new(
+                            "Invalid operator for boolean operands".to_string(),
+                            expr.span,
+                        )),
+                    },
                     _ => Err(CodeGenError::new(
-                        "Invalid operands in constant expression".to_string(),
+                        "Type mismatch in constant expression".to_string(),
                         expr.span,
                     )),
                 }
@@ -283,14 +302,15 @@ impl CodeGen {
     }
 
     fn generate_static(&mut self, static_def: &StaticDef<Type>) -> Result<(), CodeGenError> {
-        let value = self.eval_const_expr(&static_def.init)?;
+        let literal = self.eval_const_expr(&static_def.init)?;
         let qbe_ty = qbe::Type::from(&Type::from(&static_def.type_ann));
+        let data_item = self.literal_to_data_item(&literal);
 
         self.data_defs.push(qbe::DataDef::new(
             qbe::Linkage::private(),
             static_def.name.clone(),
             None,
-            vec![(qbe_ty, value)],
+            vec![(qbe_ty, data_item)],
         ));
 
         Ok(())
@@ -379,7 +399,7 @@ impl CodeGen {
         let size = qbe_ty.size();
 
         let addr = qbe::Value::Temporary(let_stmt.name.clone());
-        qfunc.assign_instr(addr.clone(), qbe_ty.clone(), qbe::Instr::Alloc8(size));
+        qfunc.assign_instr(addr.clone(), qbe::Type::Long, qbe::Instr::Alloc8(size));
 
         self.insert_local(let_stmt.name.clone());
 
@@ -406,6 +426,7 @@ impl CodeGen {
                 let label = self.emit_string_data(s);
                 qbe::Value::Global(label)
             }
+            Literal::Bool(b) => qbe::Value::Const(u64::from(*b)),
         }
     }
 
@@ -418,22 +439,14 @@ impl CodeGen {
             unreachable!("ICE: generate_expr_ident called with non-Ident expression")
         };
 
-        if let Some(data_item) = self.constants.get(name) {
-            return match data_item {
-                qbe::DataItem::Const(n) => Ok(Some(qbe::Value::Const(*n))),
-                qbe::DataItem::Symbol(label, offset) => {
-                    if offset.is_some() {
-                        return Err(CodeGenError::new(
-                            "Symbol with offset not supported in expression context".to_string(),
-                            expr.span,
-                        ));
-                    }
-                    Ok(Some(qbe::Value::Global(label.clone())))
+        if let Some(literal) = self.constants.get(name).cloned() {
+            return match literal {
+                Literal::Integer(n) => Ok(Some(qbe::Value::Const(n.cast_unsigned()))),
+                Literal::Bool(b) => Ok(Some(qbe::Value::Const(u64::from(b)))),
+                Literal::String(s) => {
+                    let label = self.emit_string_data(&s);
+                    Ok(Some(qbe::Value::Global(label)))
                 }
-                _ => Err(CodeGenError::new(
-                    "Unsupported constant type".to_string(),
-                    expr.span,
-                )),
             };
         }
 
@@ -511,8 +524,8 @@ impl CodeGen {
         };
 
         match binop {
-            BinaryOp::And => self.generate_logical_and(qfunc, expr1, expr2),
-            BinaryOp::Or => self.generate_logical_or(qfunc, expr1, expr2),
+            BinaryOp::And => self.generate_expr_land(qfunc, expr),
+            BinaryOp::Or => self.generate_expr_lor(qfunc, expr),
             _ => {
                 let operand1 = self.generate_expression(qfunc, expr1)?.ok_or_else(|| {
                     CodeGenError::new("Expression must produce a value".to_string(), expr1.span)
@@ -616,7 +629,9 @@ impl CodeGen {
                 Ok(None)
             }
 
-            _ => unreachable!("ICE: generate_expr_control called with non-control-flow expression (expected Break or Continue)"),
+            _ => unreachable!(
+                "ICE: generate_expr_control called with non-control-flow expression (expected Break or Continue)"
+            ),
         }
     }
 
@@ -679,7 +694,7 @@ impl CodeGen {
         };
 
         let count_num = match self.eval_const_expr(count)? {
-            qbe::DataItem::Const(n) => n as usize,
+            Literal::Integer(n) => n as usize,
             _ => {
                 return Err(CodeGenError::new(
                     "Expected integer constant".to_string(),
@@ -1014,12 +1029,17 @@ impl CodeGen {
         Ok(None)
     }
 
-    fn generate_logical_and(
+    fn generate_expr_land(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
-        left: &Expr<Type>,
-        right: &Expr<Type>,
+        expr: &Expr<Type>,
     ) -> Result<Option<qbe::Value>, CodeGenError> {
+        let ExprKind::Binary(BinaryOp::And, left, right) = &expr.kind else {
+            unreachable!("ICE: generate_logical_and called with non-And expression")
+        };
+
+        let result_ty = qbe::Type::from(&expr.ty);
+
         let left_val = self.generate_expression(qfunc, left)?.ok_or_else(|| {
             CodeGenError::new("Left operand must produce a value".to_string(), left.span)
         })?;
@@ -1042,7 +1062,7 @@ impl CodeGen {
         let right_temp = qbe::Value::Temporary(self.new_temp());
         qfunc.assign_instr(
             right_temp.clone(),
-            qbe::Type::Long,
+            result_ty.clone(),
             qbe::Instr::Copy(right_val),
         );
         qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
@@ -1051,7 +1071,7 @@ impl CodeGen {
         let false_temp = qbe::Value::Temporary(self.new_temp());
         qfunc.assign_instr(
             false_temp.clone(),
-            qbe::Type::Long,
+            result_ty.clone(),
             qbe::Instr::Copy(qbe::Value::Const(0)),
         );
         qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
@@ -1060,19 +1080,24 @@ impl CodeGen {
         let result = qbe::Value::Temporary(self.new_temp());
         qfunc.assign_instr(
             result.clone(),
-            qbe::Type::Long,
+            result_ty,
             qbe::Instr::Phi(rhs_label, right_temp, false_label, false_temp),
         );
 
         Ok(Some(result))
     }
 
-    fn generate_logical_or(
+    fn generate_expr_lor(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
-        left: &Expr<Type>,
-        right: &Expr<Type>,
+        expr: &Expr<Type>,
     ) -> Result<Option<qbe::Value>, CodeGenError> {
+        let ExprKind::Binary(BinaryOp::Or, left, right) = &expr.kind else {
+            unreachable!("ICE: generate_logical_or called with non-Or expression")
+        };
+
+        let result_ty = qbe::Type::from(&expr.ty);
+
         let left_val = self.generate_expression(qfunc, left)?.ok_or_else(|| {
             CodeGenError::new("Left operand must produce a value".to_string(), left.span)
         })?;
@@ -1095,7 +1120,7 @@ impl CodeGen {
         let right_temp = qbe::Value::Temporary(self.new_temp());
         qfunc.assign_instr(
             right_temp.clone(),
-            qbe::Type::Long,
+            result_ty.clone(),
             qbe::Instr::Copy(right_val),
         );
         qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
@@ -1104,7 +1129,7 @@ impl CodeGen {
         let true_temp = qbe::Value::Temporary(self.new_temp());
         qfunc.assign_instr(
             true_temp.clone(),
-            qbe::Type::Long,
+            result_ty.clone(),
             qbe::Instr::Copy(qbe::Value::Const(1)),
         );
         qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
@@ -1113,7 +1138,7 @@ impl CodeGen {
         let result = qbe::Value::Temporary(self.new_temp());
         qfunc.assign_instr(
             result.clone(),
-            qbe::Type::Long,
+            result_ty,
             qbe::Instr::Phi(rhs_label, right_temp, true_label, true_temp),
         );
 

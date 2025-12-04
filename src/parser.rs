@@ -99,6 +99,7 @@ impl<'a> Parser<'a> {
                 match name.as_str() {
                     "i64" => Ok(TypeAnn::I64),
                     "str" => Ok(TypeAnn::Str),
+                    "bool" => Ok(TypeAnn::Bool),
                     _ => Err(ParseError::new(
                         format!("Unknown type: {name}"),
                         self.current.span,
@@ -523,6 +524,14 @@ impl<'a> Parser<'a> {
                 let val = str.to_owned();
                 self.advance()?;
                 ExprKind::Literal(Literal::String(val))
+            }
+            TokenKind::True => {
+                self.advance()?;
+                ExprKind::Literal(Literal::Bool(true))
+            }
+            TokenKind::False => {
+                self.advance()?;
+                ExprKind::Literal(Literal::Bool(false))
             }
             TokenKind::Ident(name) => {
                 let name = name.clone();

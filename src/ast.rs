@@ -4,6 +4,7 @@ use crate::span::Span;
 pub enum TypeAnn {
     I64,
     Str,
+    Bool,
     Array(Box<TypeAnn>, usize),
 }
 
@@ -11,6 +12,7 @@ pub enum TypeAnn {
 pub enum Type {
     I64,
     Str,
+    Bool,
     Array(Box<Type>, usize),
     Unit,
     Never,
@@ -21,6 +23,7 @@ impl From<&TypeAnn> for Type {
         match ty {
             TypeAnn::I64 => Type::I64,
             TypeAnn::Str => Type::Str,
+            TypeAnn::Bool => Type::Bool,
             TypeAnn::Array(elem, size) => Type::Array(Box::new(Type::from(elem.as_ref())), *size),
         }
     }
@@ -31,6 +34,7 @@ impl From<&Type> for qbe::Type<'static> {
         match ty {
             Type::I64 => qbe::Type::Long,
             Type::Str => qbe::Type::Long,
+            Type::Bool => qbe::Type::Word,
             Type::Array(_, _) => qbe::Type::Long,
             Type::Unit => qbe::Type::Zero,
             Type::Never => unreachable!("Never type should not need QBE type conversion"),
@@ -140,6 +144,7 @@ pub enum ExprKind<T = ()> {
 pub enum Literal {
     Integer(i64),
     String(String),
+    Bool(bool),
 }
 
 #[derive(Debug, Clone, PartialEq)]
