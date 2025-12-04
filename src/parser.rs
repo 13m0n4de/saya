@@ -305,7 +305,7 @@ impl<'a> Parser<'a> {
             ) {
                 // `Block`, `If`, `While` can omit semicolons after `{ }`
                 stmts.push(Stmt {
-                    kind: StmtKind::Semi(expr),
+                    kind: StmtKind::Expr(expr),
                     span: expr_span,
                 });
             } else {

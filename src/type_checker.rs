@@ -194,7 +194,7 @@ impl TypeChecker {
         let mut typed_stmts = Vec::new();
         let mut has_never = false;
 
-        for stmt in &block.stmts {
+        for (idx, stmt) in block.stmts.iter().enumerate() {
             if has_never {
                 return Err(TypeError::new(
                     "unreachable statement after diverging expression".to_string(),
@@ -203,8 +203,25 @@ impl TypeChecker {
             }
 
             let typed_stmt = self.check_stmt(stmt)?;
+            let is_last = idx == block.stmts.len() - 1;
 
-            has_never = matches!(&typed_stmt.kind, StmtKind::Expr(expr) | StmtKind::Semi(expr) if expr.ty == Type::Never);
+            match &typed_stmt.kind {
+                StmtKind::Expr(expr)
+                    if !is_last && expr.ty != Type::Unit && expr.ty != Type::Never =>
+                {
+                    return Err(TypeError::new(
+                        format!(
+                            "expected `;` after expression: expected type `()`, found type `{:?}`",
+                            expr.ty
+                        ),
+                        expr.span,
+                    ));
+                }
+                StmtKind::Expr(expr) | StmtKind::Semi(expr) if expr.ty == Type::Never => {
+                    has_never = true;
+                }
+                _ => {}
+            }
 
             typed_stmts.push(typed_stmt);
         }
