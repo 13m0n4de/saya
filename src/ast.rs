@@ -16,6 +16,28 @@ pub enum Type {
     Never,
 }
 
+impl From<&TypeAnn> for Type {
+    fn from(ty: &TypeAnn) -> Self {
+        match ty {
+            TypeAnn::I64 => Type::I64,
+            TypeAnn::Str => Type::Str,
+            TypeAnn::Array(elem, size) => Type::Array(Box::new(Type::from(elem.as_ref())), *size),
+        }
+    }
+}
+
+impl From<&Type> for qbe::Type<'static> {
+    fn from(ty: &Type) -> Self {
+        match ty {
+            Type::I64 => qbe::Type::Long,
+            Type::Str => qbe::Type::Long,
+            Type::Array(_, _) => qbe::Type::Long,
+            Type::Unit => qbe::Type::Zero,
+            Type::Never => unreachable!("Never type should not need QBE type conversion"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program<T = ()> {
     pub items: Vec<Item<T>>,

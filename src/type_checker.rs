@@ -76,20 +76,20 @@ impl TypeChecker {
         for item in &prog.items {
             match item {
                 Item::Const(def) => {
-                    let ty = Self::type_ann_to_type(&def.type_ann);
+                    let ty = Type::from(&def.type_ann);
                     self.globals.insert(def.name.clone(), ty);
                 }
                 Item::Static(def) => {
-                    let ty = Self::type_ann_to_type(&def.type_ann);
+                    let ty = Type::from(&def.type_ann);
                     self.globals.insert(def.name.clone(), ty);
                 }
                 Item::Function(def) => {
                     let params = def
                         .params
                         .iter()
-                        .map(|param| Self::type_ann_to_type(&param.type_ann))
+                        .map(|param| Type::from(&param.type_ann))
                         .collect();
-                    let return_ty = Self::type_ann_to_type(&def.return_type_ann);
+                    let return_ty = Type::from(&def.return_type_ann);
 
                     self.functions
                         .insert(def.name.clone(), FunctionSig { params, return_ty });
@@ -101,7 +101,7 @@ impl TypeChecker {
         for item in &prog.items {
             match item {
                 Item::Const(def) => {
-                    let expected_ty = Self::type_ann_to_type(&def.type_ann);
+                    let expected_ty = Type::from(&def.type_ann);
                     let typed_init = self.check_expr(&def.init)?;
 
                     if typed_init.ty != expected_ty {
@@ -122,7 +122,7 @@ impl TypeChecker {
                     }));
                 }
                 Item::Static(def) => {
-                    let expected_ty = Self::type_ann_to_type(&def.type_ann);
+                    let expected_ty = Type::from(&def.type_ann);
                     let typed_init = self.check_expr(&def.init)?;
 
                     if typed_init.ty != expected_ty {
@@ -153,19 +153,19 @@ impl TypeChecker {
     }
 
     fn check_function(&mut self, func: &FunctionDef<()>) -> Result<FunctionDef<Type>, TypeError> {
-        let return_ty = Self::type_ann_to_type(&func.return_type_ann);
+        let return_ty = Type::from(&func.return_type_ann);
         self.current_fn_return_ty = Some(return_ty.clone());
 
         self.push_scope();
 
         for param in &func.params {
-            let param_ty = Self::type_ann_to_type(&param.type_ann);
+            let param_ty = Type::from(&param.type_ann);
             self.insert_var(param.name.clone(), param_ty);
         }
 
         let typed_body = self.check_block(&func.body)?;
 
-        // The `Never` type is compatible with any return type (the function does not return normally).
+        // The `Never` type is compatible with any return type
         if typed_body.ty != return_ty && typed_body.ty != Type::Never {
             return Err(TypeError::new(
                 format!(
@@ -186,16 +186,6 @@ impl TypeChecker {
             body: typed_body,
             span: func.span,
         })
-    }
-
-    fn type_ann_to_type(ty: &TypeAnn) -> Type {
-        match ty {
-            TypeAnn::I64 => Type::I64,
-            TypeAnn::Str => Type::Str,
-            TypeAnn::Array(elem, size) => {
-                Type::Array(Box::new(Self::type_ann_to_type(elem)), *size)
-            }
-        }
     }
 
     fn check_block(&mut self, block: &Block) -> Result<Block<Type>, TypeError> {
@@ -243,7 +233,7 @@ impl TypeChecker {
     fn check_stmt(&mut self, stmt: &Stmt<()>) -> Result<Stmt<Type>, TypeError> {
         let kind = match &stmt.kind {
             StmtKind::Let(let_stmt) => {
-                let expected_ty = Self::type_ann_to_type(&let_stmt.type_ann);
+                let expected_ty = Type::from(&let_stmt.type_ann);
                 let typed_init = self.check_expr(&let_stmt.init)?;
 
                 if typed_init.ty != expected_ty {
