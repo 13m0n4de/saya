@@ -76,20 +76,20 @@ impl TypeChecker {
         for item in &prog.items {
             match item {
                 Item::Const(def) => {
-                    let ty = self.type_ann_to_type(&def.type_ann);
+                    let ty = Self::type_ann_to_type(&def.type_ann);
                     self.globals.insert(def.name.clone(), ty);
                 }
                 Item::Static(def) => {
-                    let ty = self.type_ann_to_type(&def.type_ann);
+                    let ty = Self::type_ann_to_type(&def.type_ann);
                     self.globals.insert(def.name.clone(), ty);
                 }
                 Item::Function(def) => {
                     let params = def
                         .params
                         .iter()
-                        .map(|param| self.type_ann_to_type(&param.type_ann))
+                        .map(|param| Self::type_ann_to_type(&param.type_ann))
                         .collect();
-                    let return_ty = self.type_ann_to_type(&def.return_type_ann);
+                    let return_ty = Self::type_ann_to_type(&def.return_type_ann);
 
                     self.functions
                         .insert(def.name.clone(), FunctionSig { params, return_ty });
@@ -101,7 +101,7 @@ impl TypeChecker {
         for item in &prog.items {
             match item {
                 Item::Const(def) => {
-                    let expected_ty = self.type_ann_to_type(&def.type_ann);
+                    let expected_ty = Self::type_ann_to_type(&def.type_ann);
                     let typed_init = self.check_expr(&def.init)?;
 
                     if typed_init.ty != expected_ty {
@@ -122,7 +122,7 @@ impl TypeChecker {
                     }));
                 }
                 Item::Static(def) => {
-                    let expected_ty = self.type_ann_to_type(&def.type_ann);
+                    let expected_ty = Self::type_ann_to_type(&def.type_ann);
                     let typed_init = self.check_expr(&def.init)?;
 
                     if typed_init.ty != expected_ty {
@@ -153,19 +153,20 @@ impl TypeChecker {
     }
 
     fn check_function(&mut self, func: &FunctionDef<()>) -> Result<FunctionDef<Type>, TypeError> {
-        let return_ty = self.type_ann_to_type(&func.return_type_ann);
+        let return_ty = Self::type_ann_to_type(&func.return_type_ann);
         self.current_fn_return_ty = Some(return_ty.clone());
 
         self.push_scope();
 
         for param in &func.params {
-            let param_ty = self.type_ann_to_type(&param.type_ann);
+            let param_ty = Self::type_ann_to_type(&param.type_ann);
             self.insert_var(param.name.clone(), param_ty);
         }
 
         let typed_body = self.check_block(&func.body)?;
 
-        if typed_body.ty != return_ty {
+        // The `Never` type is compatible with any return type (the function does not return normally).
+        if typed_body.ty != return_ty && typed_body.ty != Type::Never {
             return Err(TypeError::new(
                 format!(
                     "function '{}' has mismatched return type: expected {:?}, found {:?}",
@@ -187,11 +188,13 @@ impl TypeChecker {
         })
     }
 
-    fn type_ann_to_type(&self, ty: &TypeAnn) -> Type {
+    fn type_ann_to_type(ty: &TypeAnn) -> Type {
         match ty {
             TypeAnn::I64 => Type::I64,
             TypeAnn::Str => Type::Str,
-            TypeAnn::Array(elem, size) => Type::Array(Box::new(self.type_ann_to_type(elem)), *size),
+            TypeAnn::Array(elem, size) => {
+                Type::Array(Box::new(Self::type_ann_to_type(elem)), *size)
+            }
         }
     }
 
@@ -199,27 +202,32 @@ impl TypeChecker {
         self.push_scope();
 
         let mut typed_stmts = Vec::new();
+        let mut has_never = false;
+
         for stmt in &block.stmts {
-            typed_stmts.push(self.check_stmt(stmt)?);
+            if has_never {
+                return Err(TypeError::new(
+                    "unreachable statement after diverging expression".to_string(),
+                    stmt.span,
+                ));
+            }
+
+            let typed_stmt = self.check_stmt(stmt)?;
+
+            has_never = matches!(&typed_stmt.kind, StmtKind::Expr(expr) | StmtKind::Semi(expr) if expr.ty == Type::Never);
+
+            typed_stmts.push(typed_stmt);
         }
 
         let block_ty = match typed_stmts.last() {
             Some(Stmt {
                 kind: StmtKind::Expr(expr),
                 ..
-            }) => {
-                if matches!(expr.kind, ExprKind::Return(_)) {
-                    self.current_fn_return_ty.clone().unwrap_or(Type::Unit)
-                } else {
-                    expr.ty.clone()
-                }
-            }
+            }) => expr.ty.clone(),
             Some(Stmt {
                 kind: StmtKind::Semi(expr),
                 ..
-            }) if matches!(expr.kind, ExprKind::Return(_)) => {
-                self.current_fn_return_ty.clone().unwrap_or(Type::Unit)
-            }
+            }) if expr.ty == Type::Never => Type::Never,
             _ => Type::Unit,
         };
 
@@ -235,7 +243,7 @@ impl TypeChecker {
     fn check_stmt(&mut self, stmt: &Stmt<()>) -> Result<Stmt<Type>, TypeError> {
         let kind = match &stmt.kind {
             StmtKind::Let(let_stmt) => {
-                let expected_ty = self.type_ann_to_type(&let_stmt.type_ann);
+                let expected_ty = Self::type_ann_to_type(&let_stmt.type_ann);
                 let typed_init = self.check_expr(&let_stmt.init)?;
 
                 if typed_init.ty != expected_ty {
@@ -600,18 +608,25 @@ impl TypeChecker {
                 let (ty, typed_else) = if let Some(else_expr) = &if_expr.else_body {
                     let typed_else_expr = self.check_expr(else_expr)?;
 
-                    if typed_then.ty != typed_else_expr.ty {
-                        return Err(TypeError::new(
-                            format!(
-                                "if-else branches have different types: {:?} and {:?}",
-                                typed_then.ty, typed_else_expr.ty
-                            ),
-                            else_expr.span,
-                        ));
-                    }
+                    let result_ty = match (&typed_then.ty, &typed_else_expr.ty) {
+                        (Type::Never, Type::Never) => Type::Never,
+                        (Type::Never, other) | (other, Type::Never) => other.clone(),
+                        (then_ty, else_ty) if then_ty == else_ty => then_ty.clone(),
+                        (then_ty, else_ty) => {
+                            return Err(TypeError::new(
+                                format!(
+                                    "if-else branches have different types: {then_ty:?} and {else_ty:?}",
+                                ),
+                                else_expr.span,
+                            ));
+                        }
+                    };
 
-                    (typed_then.ty.clone(), Some(Box::new(typed_else_expr)))
+                    (result_ty, Some(Box::new(typed_else_expr)))
                 } else {
+                    // when there is no else-branch, the implicit else branch returns `Unit`,
+                    // so the entire `Expr` is always `Unit`
+                    // (even if the then-branch is `Never`)
                     (Type::Unit, None)
                 };
 

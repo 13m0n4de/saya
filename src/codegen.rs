@@ -567,7 +567,7 @@ impl CodeGen {
                 Ok(None)
             }
             ExprKind::Block(block) => self.generate_block(qfunc, block),
-            ExprKind::If(if_expr) => self.generate_if(qfunc, if_expr),
+            ExprKind::If(_) => self.generate_if(qfunc, expr),
             ExprKind::While(while_expr) => self.generate_while(qfunc, while_expr),
             ExprKind::Break => {
                 let loop_ctx = self.current_loop().ok_or_else(|| {
@@ -756,8 +756,12 @@ impl CodeGen {
     fn generate_if(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
-        if_expr: &If<Type>,
+        expr: &Expr<Type>,
     ) -> Result<Option<qbe::Value>, CodeGenError> {
+        let ExprKind::If(if_expr) = &expr.kind else {
+            unreachable!("ICE: generate_if called with non-If expression")
+        };
+
         let label_id = self.new_label();
         let cond_label = format!("if.{label_id}.cond");
         let then_label = format!("if.{label_id}.then");
@@ -798,7 +802,20 @@ impl CodeGen {
                     else_label.clone(),
                 ));
 
-                let qbe_ty = Self::type_to_qbe(&else_expr.ty);
+                // if the result type is `Never`, no `Instr::Jmp` or `Instr::Phi` need to be
+                // generated
+                if expr.ty == Type::Never {
+                    qfunc.add_block(then_label.clone());
+                    self.generate_block(qfunc, &if_expr.then_body)?;
+
+                    qfunc.add_block(else_label.clone());
+                    self.generate_expression(qfunc, else_expr)?;
+
+                    qfunc.add_block(end_label);
+                    return Ok(None);
+                }
+
+                let qbe_ty = Self::type_to_qbe(&expr.ty);
 
                 // Then block
                 qfunc.add_block(then_label.clone());
@@ -839,9 +856,15 @@ impl CodeGen {
                 // End block
                 qfunc.add_block(end_label);
 
-                // If both branches return a value, merge them with phi
-                match (then_result, else_result) {
-                    (Some(then_val), Some(else_val)) => {
+                // If a branch is `Never`, use the value from another branch.
+                // If both branches have values, use phi.
+                match (
+                    then_result,
+                    else_result,
+                    &if_expr.then_body.ty,
+                    &else_expr.ty,
+                ) {
+                    (Some(then_val), Some(else_val), _, _) => {
                         let result = qbe::Value::Temporary(self.new_temp());
                         qfunc.assign_instr(
                             result.clone(),
@@ -850,6 +873,8 @@ impl CodeGen {
                         );
                         Ok(Some(result))
                     }
+                    (Some(then_val), None, _, Type::Never) => Ok(Some(then_val)),
+                    (None, Some(else_val), Type::Never, _) => Ok(Some(else_val)),
                     _ => Ok(None),
                 }
             }
