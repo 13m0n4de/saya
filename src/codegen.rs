@@ -336,19 +336,27 @@ impl CodeGen {
             })
             .collect();
 
-        let return_ty = Some(Self::type_to_qbe(&Self::type_ann_to_type(
-            &func.return_type_ann,
-        )));
+        let return_type = Self::type_ann_to_type(&func.return_type_ann);
 
-        let mut qfunc =
-            qbe::Function::new(qbe::Linkage::public(), func.name.clone(), params, return_ty);
+        let mut qfunc = qbe::Function::new(
+            qbe::Linkage::public(),
+            func.name.clone(),
+            params,
+            Some(Self::type_to_qbe(&return_type)),
+        );
 
         qfunc.add_block("start");
         let block_value = self.generate_block(&mut qfunc, &func.body)?;
 
-        // If block produces a value, return it
-        // Otherwise, the block ends with return/break/continue
-        if block_value.is_some() {
+        if return_type == Type::Never {
+            qfunc.add_instr(qbe::Instr::Hlt);
+        } else if func.body.ty == Type::Never {
+            if let Some(last_block) = qfunc.blocks.last()
+                && !last_block.jumps()
+            {
+                qfunc.add_instr(qbe::Instr::Hlt);
+            }
+        } else {
             qfunc.add_instr(qbe::Instr::Ret(block_value));
         }
 
@@ -412,7 +420,7 @@ impl CodeGen {
         qfunc: &mut qbe::Function<'static>,
         expr: &Expr<Type>,
     ) -> Result<Option<qbe::Value>, CodeGenError> {
-        match &expr.kind {
+        let result = match &expr.kind {
             ExprKind::Literal(lit) => match lit {
                 Literal::Integer(n) => Ok(Some(qbe::Value::Const(n.cast_unsigned()))),
                 Literal::String(s) => {
@@ -680,7 +688,14 @@ impl CodeGen {
 
                 Ok(Some(result))
             }
+        }?;
+
+        if expr.ty == Type::Never {
+            let cont_label = format!("never.{}", self.new_label());
+            qfunc.add_block(cont_label);
         }
+
+        Ok(result)
     }
 
     fn emit_string_data(&mut self, s: &str) -> String {
@@ -766,8 +781,7 @@ impl CodeGen {
 
                 qfunc.add_block(then_label);
                 self.generate_block(qfunc, &if_expr.then_body)?;
-
-                if !qfunc.blocks.last().is_some_and(qbe::Block::jumps) {
+                if if_expr.then_body.ty != Type::Never {
                     qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
                 }
 
@@ -800,7 +814,7 @@ impl CodeGen {
                     .last()
                     .expect("ICE: blocks should not be empty after generating then block");
                 let then_predecessor = last_block.label.clone();
-                if !last_block.jumps() {
+                if if_expr.then_body.ty != Type::Never {
                     qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
                 }
 
@@ -818,7 +832,7 @@ impl CodeGen {
                     .last()
                     .expect("ICE: blocks should not be empty after generating else block");
                 let else_predecessor = last_block.label.clone();
-                if !last_block.jumps() {
+                if else_expr.ty != Type::Never {
                     qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
                 }
 
