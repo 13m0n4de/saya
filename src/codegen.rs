@@ -616,7 +616,7 @@ impl CodeGen {
                 Ok(None)
             }
 
-            _ => unreachable!("ICE: "),
+            _ => unreachable!("ICE: generate_expr_control called with non-control-flow expression (expected Break or Continue)"),
         }
     }
 
@@ -626,7 +626,7 @@ impl CodeGen {
         expr: &Expr<Type>,
     ) -> Result<Option<qbe::Value>, CodeGenError> {
         let ExprKind::Array(elements) = &expr.kind else {
-            unreachable!("ICE: ")
+            unreachable!("ICE: generate_expr_array called with non-Array expression")
         };
 
         // Get element type from the array type
@@ -675,7 +675,7 @@ impl CodeGen {
         expr: &Expr<Type>,
     ) -> Result<Option<qbe::Value>, CodeGenError> {
         let ExprKind::Repeat(elem, count) = &expr.kind else {
-            unreachable!("ICE: ")
+            unreachable!("ICE: generate_expr_repeat called with non-Repeat expression")
         };
 
         let count_num = match self.eval_const_expr(count)? {
@@ -734,7 +734,7 @@ impl CodeGen {
         expr: &Expr<Type>,
     ) -> Result<Option<qbe::Value>, CodeGenError> {
         let ExprKind::Index(..) = &expr.kind else {
-            unreachable!("ICE: ")
+            unreachable!("ICE: generate_expr_index called with non-Index expression")
         };
 
         let addr = self.address_of(qfunc, expr)?;
