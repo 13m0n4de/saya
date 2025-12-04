@@ -517,8 +517,8 @@ impl CodeGen {
         };
 
         match binop {
-            BinaryOp::And => self.generate_logical_and(qfunc, expr1, expr2),
-            BinaryOp::Or => self.generate_logical_or(qfunc, expr1, expr2),
+            BinaryOp::And => self.generate_expr_land(qfunc, expr),
+            BinaryOp::Or => self.generate_expr_lor(qfunc, expr),
             _ => {
                 let operand1 = self.generate_expression(qfunc, expr1)?.ok_or_else(|| {
                     CodeGenError::new("Expression must produce a value".to_string(), expr1.span)
@@ -1022,12 +1022,17 @@ impl CodeGen {
         Ok(None)
     }
 
-    fn generate_logical_and(
+    fn generate_expr_land(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
-        left: &Expr<Type>,
-        right: &Expr<Type>,
+        expr: &Expr<Type>,
     ) -> Result<Option<qbe::Value>, CodeGenError> {
+        let ExprKind::Binary(BinaryOp::And, left, right) = &expr.kind else {
+            unreachable!("ICE: generate_logical_and called with non-And expression")
+        };
+
+        let result_ty = qbe::Type::from(&expr.ty);
+
         let left_val = self.generate_expression(qfunc, left)?.ok_or_else(|| {
             CodeGenError::new("Left operand must produce a value".to_string(), left.span)
         })?;
@@ -1050,7 +1055,7 @@ impl CodeGen {
         let right_temp = qbe::Value::Temporary(self.new_temp());
         qfunc.assign_instr(
             right_temp.clone(),
-            qbe::Type::Word,
+            result_ty.clone(),
             qbe::Instr::Copy(right_val),
         );
         qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
@@ -1059,7 +1064,7 @@ impl CodeGen {
         let false_temp = qbe::Value::Temporary(self.new_temp());
         qfunc.assign_instr(
             false_temp.clone(),
-            qbe::Type::Word,
+            result_ty.clone(),
             qbe::Instr::Copy(qbe::Value::Const(0)),
         );
         qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
@@ -1068,19 +1073,24 @@ impl CodeGen {
         let result = qbe::Value::Temporary(self.new_temp());
         qfunc.assign_instr(
             result.clone(),
-            qbe::Type::Word,
+            result_ty,
             qbe::Instr::Phi(rhs_label, right_temp, false_label, false_temp),
         );
 
         Ok(Some(result))
     }
 
-    fn generate_logical_or(
+    fn generate_expr_lor(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
-        left: &Expr<Type>,
-        right: &Expr<Type>,
+        expr: &Expr<Type>,
     ) -> Result<Option<qbe::Value>, CodeGenError> {
+        let ExprKind::Binary(BinaryOp::Or, left, right) = &expr.kind else {
+            unreachable!("ICE: generate_logical_or called with non-Or expression")
+        };
+
+        let result_ty = qbe::Type::from(&expr.ty);
+
         let left_val = self.generate_expression(qfunc, left)?.ok_or_else(|| {
             CodeGenError::new("Left operand must produce a value".to_string(), left.span)
         })?;
@@ -1103,7 +1113,7 @@ impl CodeGen {
         let right_temp = qbe::Value::Temporary(self.new_temp());
         qfunc.assign_instr(
             right_temp.clone(),
-            qbe::Type::Word,
+            result_ty.clone(),
             qbe::Instr::Copy(right_val),
         );
         qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
@@ -1112,7 +1122,7 @@ impl CodeGen {
         let true_temp = qbe::Value::Temporary(self.new_temp());
         qfunc.assign_instr(
             true_temp.clone(),
-            qbe::Type::Word,
+            result_ty.clone(),
             qbe::Instr::Copy(qbe::Value::Const(1)),
         );
         qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
@@ -1121,7 +1131,7 @@ impl CodeGen {
         let result = qbe::Value::Temporary(self.new_temp());
         qfunc.assign_instr(
             result.clone(),
-            qbe::Type::Word,
+            result_ty,
             qbe::Instr::Phi(rhs_label, right_temp, true_label, true_temp),
         );
 
