@@ -11,7 +11,7 @@ param = identifier ":" type-name
 
 type-name = base-type / array-type
 
-base-type = "i64"
+base-type = "i64" / "str" / "bool"
 
 array-type = "[" type-name ";" integer "]"
 
