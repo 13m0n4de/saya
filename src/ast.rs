@@ -6,6 +6,7 @@ pub enum TypeAnn {
     Str,
     Bool,
     Array(Box<TypeAnn>, usize),
+    Unit,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -25,6 +26,7 @@ impl From<&TypeAnn> for Type {
             TypeAnn::Str => Type::Str,
             TypeAnn::Bool => Type::Bool,
             TypeAnn::Array(elem, size) => Type::Array(Box::new(Type::from(elem.as_ref())), *size),
+            TypeAnn::Unit => Type::Unit,
         }
     }
 }

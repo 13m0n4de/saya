@@ -225,9 +225,11 @@ impl<'a> Parser<'a> {
 
         self.expect(TokenKind::CloseParen)?;
 
-        self.expect(TokenKind::Arrow)?;
-
-        let return_type_ann = self.parse_type_ann()?;
+        let return_type_ann = if self.eat(TokenKind::Arrow)? {
+            self.parse_type_ann()?
+        } else {
+            TypeAnn::Unit
+        };
 
         let body = if self.eat(TokenKind::Semi)? {
             None

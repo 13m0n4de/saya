@@ -340,11 +340,17 @@ impl CodeGen {
 
         let return_type = Type::from(&func.return_type_ann);
 
+        let qbe_return_type = if return_type == Type::Unit {
+            None
+        } else {
+            Some(qbe::Type::from(&return_type))
+        };
+
         let mut qfunc = qbe::Function::new(
             qbe::Linkage::public(),
             func.name.clone(),
             params,
-            Some(qbe::Type::from(&return_type)),
+            qbe_return_type,
         );
 
         let body = func
@@ -849,15 +855,20 @@ impl CodeGen {
             qbe_args.push((arg_ty, arg_val));
         }
 
-        let result = qbe::Value::Temporary(self.new_temp());
-        let return_ty = qbe::Type::from(&call.callee.ty);
-        qfunc.assign_instr(
-            result.clone(),
-            return_ty,
-            qbe::Instr::Call(func_name, qbe_args, None),
-        );
-
-        Ok(Some(result))
+        // If the function returns Unit, don't capture the return value
+        if call.callee.ty == Type::Unit {
+            qfunc.add_instr(qbe::Instr::Call(func_name, qbe_args, None));
+            Ok(None)
+        } else {
+            let result = qbe::Value::Temporary(self.new_temp());
+            let return_ty = qbe::Type::from(&call.callee.ty);
+            qfunc.assign_instr(
+                result.clone(),
+                return_ty,
+                qbe::Instr::Call(func_name, qbe_args, None),
+            );
+            Ok(Some(result))
+        }
     }
 
     fn generate_expr_if(
