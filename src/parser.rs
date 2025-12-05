@@ -279,52 +279,8 @@ impl<'a> Parser<'a> {
 
         let mut stmts = Vec::new();
 
-        loop {
-            if self.current.kind == TokenKind::CloseBrace {
-                break;
-            }
-
-            if self.current.kind == TokenKind::Let {
-                let stmt = self.parse_let_statement()?;
-                stmts.push(stmt);
-                continue;
-            }
-
-            let expr = self.parse_expression()?;
-            let expr_span = expr.span;
-
-            if self.eat(TokenKind::Semi)? {
-                // Explicit semicolon: statement
-                stmts.push(Stmt {
-                    kind: StmtKind::Semi(expr),
-                    span: expr_span,
-                });
-            } else if self.current.kind == TokenKind::CloseBrace {
-                // No semicolon, followed by '}': tail expression
-                stmts.push(Stmt {
-                    kind: StmtKind::Expr(expr),
-                    span: expr_span,
-                });
-                break;
-            } else if matches!(
-                expr.kind,
-                ExprKind::Block(_) | ExprKind::If(_) | ExprKind::While(_)
-            ) {
-                // `Block`, `If`, `While` can omit semicolons after `{ }`
-                stmts.push(Stmt {
-                    kind: StmtKind::Expr(expr),
-                    span: expr_span,
-                });
-            } else {
-                // Other expressions require semicolons
-                return Err(ParseError::new(
-                    format!(
-                        "Expected ';' after expression (found {:?})",
-                        self.current.kind
-                    ),
-                    self.current.span,
-                ));
-            }
+        while self.current.kind != TokenKind::CloseBrace {
+            stmts.push(self.parse_statement()?);
         }
 
         self.expect(TokenKind::CloseBrace)?;
@@ -336,7 +292,48 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_let_statement(&mut self) -> Result<Stmt, ParseError> {
+    fn parse_statement(&mut self) -> Result<Stmt, ParseError> {
+        if self.current.kind == TokenKind::Let {
+            self.parse_stmt_let()
+        } else {
+            let expr = self.parse_expression()?;
+            let expr_span = expr.span;
+
+            if self.eat(TokenKind::Semi)? {
+                // Explicit semicolon: statement
+                Ok(Stmt {
+                    kind: StmtKind::Semi(expr),
+                    span: expr_span,
+                })
+            } else if self.current.kind == TokenKind::CloseBrace {
+                // No semicolon, followed by '}': tail expression
+                Ok(Stmt {
+                    kind: StmtKind::Expr(expr),
+                    span: expr_span,
+                })
+            } else if matches!(
+                expr.kind,
+                ExprKind::Block(_) | ExprKind::If(_) | ExprKind::While(_)
+            ) {
+                // `Block`, `If`, `While` can omit semicolons after `{ }`
+                Ok(Stmt {
+                    kind: StmtKind::Expr(expr),
+                    span: expr_span,
+                })
+            } else {
+                // Other expressions require semicolons
+                Err(ParseError::new(
+                    format!(
+                        "Expected ';' after expression (found {:?})",
+                        self.current.kind
+                    ),
+                    self.current.span,
+                ))
+            }
+        }
+    }
+
+    fn parse_stmt_let(&mut self) -> Result<Stmt, ParseError> {
         let start_span = self.current.span;
 
         self.expect(TokenKind::Let)?;
@@ -407,7 +404,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_expr_bp(&mut self, min_bp: u8) -> Result<Expr, ParseError> {
-        let mut lhs = if let Some(prefix_bp) = self.prefix_binding_power(&self.current.kind) {
+        let mut lhs = if let Some(prefix_bp) = Self::prefix_binding_power(&self.current.kind) {
             // Prefix operator
             let start_span = self.current.span;
             let op = match self.current.kind {
@@ -424,7 +421,7 @@ impl<'a> Parser<'a> {
             }
         } else {
             // Primary expression
-            let primary = self.parse_primary()?;
+            let primary = self.parse_expr_primary()?;
 
             // Structural expressions (if, while, block) should not participate in infix operators
             // to avoid parsing "if x { } - y" as "(if x { }) minus y"
@@ -442,7 +439,7 @@ impl<'a> Parser<'a> {
             let op_token = &self.current.kind;
 
             // Postfix operators
-            if let Some(postfix_bp) = self.postfix_binding_power(op_token) {
+            if let Some(postfix_bp) = Self::postfix_binding_power(op_token) {
                 if postfix_bp < min_bp {
                     break;
                 }
@@ -474,7 +471,7 @@ impl<'a> Parser<'a> {
             }
 
             // Infix operators
-            if let Some((left_bp, right_bp)) = self.infix_binding_power(op_token) {
+            if let Some((left_bp, right_bp)) = Self::infix_binding_power(op_token) {
                 if left_bp < min_bp {
                     break;
                 }
@@ -518,7 +515,7 @@ impl<'a> Parser<'a> {
         Ok(lhs)
     }
 
-    fn parse_primary(&mut self) -> Result<Expr, ParseError> {
+    fn parse_expr_primary(&mut self) -> Result<Expr, ParseError> {
         let start_span = self.current.span;
 
         let kind = match &self.current.kind {
@@ -684,7 +681,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn prefix_binding_power(&self, token: &TokenKind) -> Option<u8> {
+    fn prefix_binding_power(token: &TokenKind) -> Option<u8> {
         match token {
             TokenKind::Minus => Some(90), // -
             TokenKind::Bang => Some(90),  // !
@@ -692,7 +689,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn infix_binding_power(&self, token: &TokenKind) -> Option<(u8, u8)> {
+    fn infix_binding_power(token: &TokenKind) -> Option<(u8, u8)> {
         let bp = match token {
             TokenKind::OrOr => (10, 11),                 // ||
             TokenKind::AndAnd => (20, 21),               // &&
@@ -707,7 +704,7 @@ impl<'a> Parser<'a> {
         Some(bp)
     }
 
-    fn postfix_binding_power(&self, token: &TokenKind) -> Option<u8> {
+    fn postfix_binding_power(token: &TokenKind) -> Option<u8> {
         match token {
             TokenKind::OpenParen => Some(100),   // function call
             TokenKind::OpenBracket => Some(100), // array index
