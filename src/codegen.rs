@@ -509,22 +509,37 @@ impl CodeGen {
             unreachable!("ICE: generate_expr_unary called with non-Unary expression")
         };
 
+        let operand = self
+            .generate_expression(qfunc, operand_expr)?
+            .ok_or_else(|| {
+                CodeGenError::new(
+                    "Expression must produce a value".to_string(),
+                    operand_expr.span,
+                )
+            })?;
+        let result = qbe::Value::Temporary(self.new_temp());
+        let result_ty = qbe::Type::from(&expr.ty);
+
         match unop {
             UnaryOp::Neg => {
-                let operand = self
-                    .generate_expression(qfunc, operand_expr)?
-                    .ok_or_else(|| {
-                        CodeGenError::new(
-                            "Expression must produce a value".to_string(),
-                            operand_expr.span,
-                        )
-                    })?;
-                let result = qbe::Value::Temporary(self.new_temp());
-                let result_ty = qbe::Type::from(&expr.ty);
                 qfunc.assign_instr(result.clone(), result_ty, qbe::Instr::Neg(operand));
-                Ok(Some(result))
             }
+            UnaryOp::Not => match &operand_expr.ty {
+                Type::Bool => qfunc.assign_instr(
+                    result.clone(),
+                    result_ty.clone(),
+                    qbe::Instr::Cmp(result_ty, qbe::Cmp::Eq, operand, qbe::Value::Const(0)),
+                ),
+                Type::I64 => qfunc.assign_instr(
+                    result.clone(),
+                    result_ty.clone(),
+                    qbe::Instr::Xor(operand, qbe::Value::Const(u64::MAX)),
+                ),
+                _ => unreachable!(),
+            },
         }
+
+        Ok(Some(result))
     }
 
     fn generate_expr_binary(

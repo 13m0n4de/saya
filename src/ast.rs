@@ -173,7 +173,8 @@ pub struct While<T = ()> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum UnaryOp {
-    Neg,
+    Neg, // -
+    Not, // !
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -462,7 +462,7 @@ impl TypeChecker {
                     UnaryOp::Neg => {
                         if typed_operand.ty != Type::I64 {
                             return Err(TypeError::new(
-                                format!("cannot negate type {:?}", typed_operand.ty),
+                                format!("cannot apply `-` to type {:?}", typed_operand.ty),
                                 operand.span,
                             ));
                         }
@@ -471,6 +471,22 @@ impl TypeChecker {
                             ExprKind::Unary(op.clone(), Box::new(typed_operand)),
                         )
                     }
+                    UnaryOp::Not => match typed_operand.ty {
+                        Type::Bool => (
+                            Type::Bool,
+                            ExprKind::Unary(op.clone(), Box::new(typed_operand)),
+                        ),
+                        Type::I64 => (
+                            Type::I64,
+                            ExprKind::Unary(op.clone(), Box::new(typed_operand)),
+                        ),
+                        _ => {
+                            return Err(TypeError::new(
+                                format!("cannot apply `!` to type {:?}", typed_operand.ty),
+                                operand.span,
+                            ));
+                        }
+                    },
                 }
             }
             ExprKind::Binary(op, left, right) => {

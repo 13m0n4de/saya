@@ -412,6 +412,7 @@ impl<'a> Parser<'a> {
             let start_span = self.current.span;
             let op = match self.current.kind {
                 TokenKind::Minus => UnaryOp::Neg,
+                TokenKind::Bang => UnaryOp::Not,
                 _ => unreachable!(),
             };
             self.advance()?;
@@ -686,6 +687,7 @@ impl<'a> Parser<'a> {
     fn prefix_binding_power(&self, token: &TokenKind) -> Option<u8> {
         match token {
             TokenKind::Minus => Some(90), // -
+            TokenKind::Bang => Some(90),  // !
             _ => None,
         }
     }

@@ -32,10 +32,10 @@ pub enum TokenKind {
     Gt, // >
     Ge, // >=
 
-    And, // &
-    Or,  // |
-    Eq,  // =
-    Not, // !
+    And,  // &
+    Or,   // |
+    Eq,   // =
+    Bang, // !
 
     EqEq, // ==
     Ne,   // !=
@@ -225,7 +225,7 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     TokenKind::Ne
                 } else {
-                    TokenKind::Not
+                    TokenKind::Bang
                 }
             }
 
