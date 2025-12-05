@@ -85,7 +85,9 @@ impl CodeGen {
         }
 
         for item in &prog.items {
-            if let Item::Function(func) = item {
+            if let Item::Function(func) = item
+                && func.body.is_some()
+            {
                 module.add_function(self.generate_function(func)?);
             }
         }
@@ -345,12 +347,17 @@ impl CodeGen {
             Some(qbe::Type::from(&return_type)),
         );
 
+        let body = func
+            .body
+            .as_ref()
+            .expect("generate_function called on prototype");
+
         qfunc.add_block("start");
-        let block_value = self.generate_block(&mut qfunc, &func.body)?;
+        let block_value = self.generate_block(&mut qfunc, body)?;
 
         if return_type == Type::Never {
             qfunc.add_instr(qbe::Instr::Hlt);
-        } else if func.body.ty == Type::Never {
+        } else if body.ty == Type::Never {
             if let Some(last_block) = qfunc.blocks.last()
                 && !last_block.jumps()
             {

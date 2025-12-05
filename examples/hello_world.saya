@@ -1,3 +1,5 @@
+fn puts(s: str) -> i64;
+
 fn main() -> i64 {
     puts("Hello, world!");
     0
