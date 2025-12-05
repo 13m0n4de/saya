@@ -53,7 +53,7 @@ multiplicative-expr = unary-expr *(multiplicative-op unary-expr)
 multiplicative-op = "*" / "/" / "%"
 
 unary-expr = unary-op unary-expr / postfix-expr
-unary-op = "-"
+unary-op = "-" / "!"
 
 postfix-expr = primary-expr *postfix-op
 postfix-op = index-op / call-op
@@ -74,8 +74,9 @@ array-expr = "[" [array-list / array-repeat] "]"
 array-list = expression *("," expression)
 array-repeat = expression ";" expression
 
-literal = integer / string
+literal = integer / string / bool
 integer = 1*DIGIT
+bool = "true" / "false"
 string = DQUOTE *string-char DQUOTE
 string-char = unescaped-char / escape-sequence
 unescaped-char = %x20-21 / %x23-5B / %x5D-7E
