@@ -4,7 +4,7 @@ const-def = "const" identifier ":" type-name "=" expression ";"
 
 static-def = "static" identifier ":" type-name "=" expression ";"
 
-function-def = "fn" identifier "(" [param-list] ")" "->" type-name block
+function-def = "fn" identifier "(" [param-list] ")" "->" type-name (block / ";")
 
 param-list = param *("," param)
 param = identifier ":" type-name
