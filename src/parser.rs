@@ -229,7 +229,11 @@ impl<'a> Parser<'a> {
 
         let return_type_ann = self.parse_type_ann()?;
 
-        let body = self.parse_block()?;
+        let body = if self.eat(TokenKind::Semi)? {
+            None
+        } else {
+            Some(self.parse_block()?)
+        };
 
         Ok(FunctionDef {
             name,

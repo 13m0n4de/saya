@@ -75,7 +75,7 @@ pub struct FunctionDef<T = ()> {
     pub name: String,
     pub params: Vec<Param>,
     pub return_type_ann: TypeAnn,
-    pub body: Block<T>,
+    pub body: Option<Block<T>>,
     pub span: Span,
 }
 
