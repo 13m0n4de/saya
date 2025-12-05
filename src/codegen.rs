@@ -431,8 +431,9 @@ impl CodeGen {
 
     fn generate_expr_literal(&mut self, expr: &Expr<Type>) -> qbe::Value {
         let ExprKind::Literal(lit) = &expr.kind else {
-            unreachable!("ICE: generate_expr_literal called with non-Literal expression")
+            unreachable!()
         };
+
         match lit {
             Literal::Integer(n) => qbe::Value::Const(n.cast_unsigned()),
             Literal::String(s) => {
@@ -449,7 +450,7 @@ impl CodeGen {
         expr: &Expr<Type>,
     ) -> Result<Option<qbe::Value>, CodeGenError> {
         let ExprKind::Ident(name) = &expr.kind else {
-            unreachable!("ICE: generate_expr_ident called with non-Ident expression")
+            unreachable!()
         };
 
         if let Some(literal) = self.constants.get(name).cloned() {
@@ -506,7 +507,7 @@ impl CodeGen {
         expr: &Expr<Type>,
     ) -> Result<Option<qbe::Value>, CodeGenError> {
         let ExprKind::Unary(unop, operand_expr) = &expr.kind else {
-            unreachable!("ICE: generate_expr_unary called with non-Unary expression")
+            unreachable!()
         };
 
         let operand = self
@@ -548,7 +549,7 @@ impl CodeGen {
         expr: &Expr<Type>,
     ) -> Result<Option<qbe::Value>, CodeGenError> {
         let ExprKind::Binary(binop, expr1, expr2) = &expr.kind else {
-            unreachable!("ICE: generate_expr_binary called with non-Binary expression")
+            unreachable!()
         };
 
         match binop {
@@ -605,7 +606,7 @@ impl CodeGen {
         expr: &Expr<Type>,
     ) -> Result<Option<qbe::Value>, CodeGenError> {
         let ExprKind::Assign(lhs, rhs) = &expr.kind else {
-            unreachable!("ICE: generate_expr_assign called with non-Assign expression")
+            unreachable!()
         };
 
         let addr = self.address_of(qfunc, lhs)?;
@@ -624,7 +625,7 @@ impl CodeGen {
         expr: &Expr<Type>,
     ) -> Result<Option<qbe::Value>, CodeGenError> {
         let ExprKind::Return(ret_expr) = &expr.kind else {
-            unreachable!("ICE: generate_expr_return called with non-Return expression")
+            unreachable!()
         };
 
         let value = match ret_expr {
@@ -657,9 +658,7 @@ impl CodeGen {
                 Ok(None)
             }
 
-            _ => unreachable!(
-                "ICE: generate_expr_control called with non-control-flow expression (expected Break or Continue)"
-            ),
+            _ => unreachable!(),
         }
     }
 
@@ -669,7 +668,7 @@ impl CodeGen {
         expr: &Expr<Type>,
     ) -> Result<Option<qbe::Value>, CodeGenError> {
         let ExprKind::Array(elements) = &expr.kind else {
-            unreachable!("ICE: generate_expr_array called with non-Array expression")
+            unreachable!()
         };
 
         // Get element type from the array type
@@ -718,7 +717,7 @@ impl CodeGen {
         expr: &Expr<Type>,
     ) -> Result<Option<qbe::Value>, CodeGenError> {
         let ExprKind::Repeat(elem, count) = &expr.kind else {
-            unreachable!("ICE: generate_expr_repeat called with non-Repeat expression")
+            unreachable!()
         };
 
         let count_num = match self.eval_const_expr(count)? {
@@ -777,7 +776,7 @@ impl CodeGen {
         expr: &Expr<Type>,
     ) -> Result<Option<qbe::Value>, CodeGenError> {
         let ExprKind::Index(..) = &expr.kind else {
-            unreachable!("ICE: generate_expr_index called with non-Index expression")
+            unreachable!()
         };
 
         let addr = self.address_of(qfunc, expr)?;
@@ -845,7 +844,7 @@ impl CodeGen {
         expr: &Expr<Type>,
     ) -> Result<Option<qbe::Value>, CodeGenError> {
         let ExprKind::Call(call) = &expr.kind else {
-            unreachable!("ICE: generate_expr_call called with non-Call expression")
+            unreachable!()
         };
 
         let func_name = match &call.callee.kind {
@@ -892,7 +891,7 @@ impl CodeGen {
         expr: &Expr<Type>,
     ) -> Result<Option<qbe::Value>, CodeGenError> {
         let ExprKind::If(if_expr) = &expr.kind else {
-            unreachable!("ICE: generate_if called with non-If expression")
+            unreachable!()
         };
 
         let label_id = self.new_label();
@@ -1020,7 +1019,7 @@ impl CodeGen {
         expr: &Expr<Type>,
     ) -> Result<Option<qbe::Value>, CodeGenError> {
         let ExprKind::While(while_expr) = &expr.kind else {
-            unreachable!("ICE: generate_expr_while called with non-While expression")
+            unreachable!()
         };
 
         let label_id = self.new_label();
@@ -1068,7 +1067,7 @@ impl CodeGen {
         expr: &Expr<Type>,
     ) -> Result<Option<qbe::Value>, CodeGenError> {
         let ExprKind::Binary(BinaryOp::And, left, right) = &expr.kind else {
-            unreachable!("ICE: generate_logical_and called with non-And expression")
+            unreachable!()
         };
 
         let result_ty = qbe::Type::from(&expr.ty);
@@ -1126,7 +1125,7 @@ impl CodeGen {
         expr: &Expr<Type>,
     ) -> Result<Option<qbe::Value>, CodeGenError> {
         let ExprKind::Binary(BinaryOp::Or, left, right) = &expr.kind else {
-            unreachable!("ICE: generate_logical_or called with non-Or expression")
+            unreachable!()
         };
 
         let result_ty = qbe::Type::from(&expr.ty);
