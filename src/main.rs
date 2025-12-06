@@ -1,16 +1,9 @@
 use std::{env, error::Error, fs::read_to_string, process};
 
-use codegen::CodeGen;
-use lexer::Lexer;
-use parser::Parser;
-use type_checker::TypeChecker;
-
-mod ast;
-mod codegen;
-mod lexer;
-mod parser;
-mod span;
-mod type_checker;
+use saya::codegen::CodeGen;
+use saya::lexer::Lexer;
+use saya::parser::Parser;
+use saya::type_checker::TypeChecker;
 
 fn run() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = env::args().collect();
