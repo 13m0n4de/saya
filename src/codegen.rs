@@ -74,6 +74,7 @@ impl fmt::Display for CodeGenError {
 
 impl Error for CodeGenError {}
 
+#[derive(Default)]
 pub struct CodeGen {
     temp_counter: usize,
     label_counter: usize,

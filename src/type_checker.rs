@@ -26,6 +26,7 @@ impl fmt::Display for TypeError {
 
 impl Error for TypeError {}
 
+#[derive(Default)]
 pub struct TypeChecker {
     scopes: Vec<HashMap<String, Type>>,
     functions: HashMap<String, FunctionSig>,
