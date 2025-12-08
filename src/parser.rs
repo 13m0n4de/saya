@@ -361,7 +361,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_expression(&mut self) -> Result<Expr, ParseError> {
+    pub fn parse_expression(&mut self) -> Result<Expr, ParseError> {
         let start_span = self.current.span;
 
         if self.current.kind == TokenKind::Return {
