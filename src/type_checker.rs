@@ -95,6 +95,23 @@ impl TypeChecker {
                     self.functions
                         .insert(def.name.clone(), FunctionSig { params, return_ty });
                 }
+                Item::Extern(extern_item) => match extern_item {
+                    ExternItem::Static(decl) => {
+                        let ty = Type::from(&decl.type_ann);
+                        self.globals.insert(decl.name.clone(), ty);
+                    }
+                    ExternItem::Function(decl) => {
+                        let params = decl
+                            .params
+                            .iter()
+                            .map(|param| Type::from(&param.type_ann))
+                            .collect();
+                        let return_ty = Type::from(&decl.return_type_ann);
+
+                        self.functions
+                            .insert(decl.name.clone(), FunctionSig { params, return_ty });
+                    }
+                },
             }
         }
 
@@ -147,6 +164,9 @@ impl TypeChecker {
                     let typed_func = self.check_function(def)?;
                     typed_items.push(Item::Function(typed_func));
                 }
+                Item::Extern(extern_item) => {
+                    typed_items.push(Item::Extern(extern_item.clone()));
+                }
             }
         }
 
@@ -156,17 +176,6 @@ impl TypeChecker {
     fn check_function(&mut self, func: &FunctionDef<()>) -> Result<FunctionDef<Type>, TypeError> {
         let return_ty = Type::from(&func.return_type_ann);
 
-        // If function has no body, it's a external function
-        let Some(body) = &func.body else {
-            return Ok(FunctionDef {
-                name: func.name.clone(),
-                params: func.params.clone(),
-                return_type_ann: func.return_type_ann.clone(),
-                body: None,
-                span: func.span,
-            });
-        };
-
         self.current_fn_return_ty = Some(return_ty.clone());
         self.push_scope();
 
@@ -175,7 +184,7 @@ impl TypeChecker {
             self.insert_var(param.name.clone(), param_ty);
         }
 
-        let typed_body = self.check_block(body)?;
+        let typed_body = self.check_block(&func.body)?;
 
         // The `Never` type is compatible with any return type
         if typed_body.ty != return_ty && typed_body.ty != Type::Never {
@@ -184,7 +193,7 @@ impl TypeChecker {
                     "function '{}' has mismatched return type: expected {:?}, found {:?}",
                     func.name, return_ty, typed_body.ty
                 ),
-                body.span,
+                func.body.span,
             ));
         }
 
@@ -195,7 +204,7 @@ impl TypeChecker {
             name: func.name.clone(),
             params: func.params.clone(),
             return_type_ann: func.return_type_ann.clone(),
-            body: Some(typed_body),
+            body: typed_body,
             span: func.span,
         })
     }

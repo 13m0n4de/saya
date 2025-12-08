@@ -54,6 +54,28 @@ pub enum Item<T = ()> {
     Const(ConstDef<T>),
     Static(StaticDef<T>),
     Function(FunctionDef<T>),
+    Extern(ExternItem),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExternItem {
+    Static(ExternStaticDecl),
+    Function(ExternFunctionDecl),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternStaticDecl {
+    pub name: String,
+    pub type_ann: TypeAnn,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternFunctionDecl {
+    pub name: String,
+    pub params: Vec<Param>,
+    pub return_type_ann: TypeAnn,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -77,7 +99,7 @@ pub struct FunctionDef<T = ()> {
     pub name: String,
     pub params: Vec<Param>,
     pub return_type_ann: TypeAnn,
-    pub body: Option<Block<T>>,
+    pub body: Block<T>,
     pub span: Span,
 }
 

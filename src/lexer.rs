@@ -5,6 +5,7 @@ use crate::span::Span;
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
     Fn,       // fn
+    Extern,   // extern
     Return,   // return
     Let,      // let
     If,       // if
@@ -304,6 +305,7 @@ impl<'a> Lexer<'a> {
 
         match ident.as_str() {
             "fn" => TokenKind::Fn,
+            "extern" => TokenKind::Extern,
             "return" => TokenKind::Return,
             "let" => TokenKind::Let,
             "if" => TokenKind::If,
