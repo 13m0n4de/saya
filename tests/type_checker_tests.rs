@@ -19,7 +19,7 @@ fn test_integer_literal() {
 
     match &program.items[0] {
         Item::Function(func) => {
-            let body = func.body.as_ref().unwrap();
+            let body = &func.body;
             assert_eq!(body.ty, Type::I64);
         }
         _ => panic!("Expected function"),
@@ -32,7 +32,7 @@ fn test_string_literal() {
 
     match &program.items[0] {
         Item::Function(func) => {
-            let body = func.body.as_ref().unwrap();
+            let body = &func.body;
             assert_eq!(body.ty, Type::Str);
         }
         _ => panic!("Expected function"),
@@ -45,7 +45,7 @@ fn test_bool_literal() {
 
     match &program.items[0] {
         Item::Function(func) => {
-            let body = func.body.as_ref().unwrap();
+            let body = &func.body;
             assert_eq!(body.ty, Type::Bool);
         }
         _ => panic!("Expected function"),
@@ -244,7 +244,7 @@ fn test_nested_scopes() {
 
 #[test]
 fn test_external_function() {
-    let result = typecheck!("fn external(x: i64) -> i64;");
+    let result = typecheck!("extern fn external(x: i64) -> i64;");
     assert!(result.is_ok());
 }
 
