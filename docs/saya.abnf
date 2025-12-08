@@ -1,10 +1,14 @@
-program = *(const-def / static-def / function-def)
+program = *item
+
+item = extern-item / const-def / static-def / function-def
+
+extern-item = "extern" (extern-static / extern-fn)
+extern-static = "static" identifier ":" type-name ";"
+extern-fn = "fn" identifier "(" [param-list] ")" ["->" type-name]  ";"
 
 const-def = "const" identifier ":" type-name "=" expression ";"
-
 static-def = "static" identifier ":" type-name "=" expression ";"
-
-function-def = "fn" identifier "(" [param-list] ")" ["->" type-name] (block / ";")
+function-def = "fn" identifier "(" [param-list] ")" ["->" type-name] block
 
 param-list = param *("," param)
 param = identifier ":" type-name
