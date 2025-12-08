@@ -103,6 +103,7 @@ impl CodeGen {
     pub fn generate(&mut self, prog: &Program<Type>) -> Result<String, CodeGenError> {
         let mut module = qbe::Module::new();
 
+        // Constants
         for item in &prog.items {
             if let Item::Const(const_def) = item {
                 let value = self.eval_const_expr(&const_def.init)?;
@@ -110,21 +111,28 @@ impl CodeGen {
             }
         }
 
+        // Globals
         for item in &prog.items {
-            if let Item::Static(static_def) = item {
-                self.generate_static(static_def)?;
-                self.globals.insert(static_def.name.clone());
+            match item {
+                Item::Static(static_def) => {
+                    self.generate_static(static_def)?;
+                    self.globals.insert(static_def.name.clone());
+                }
+                Item::Extern(ExternItem::Static(static_decl)) => {
+                    self.globals.insert(static_decl.name.clone());
+                }
+                _ => {}
             }
         }
 
+        // Functions
         for item in &prog.items {
-            if let Item::Function(func) = item
-                && func.body.is_some()
-            {
+            if let Item::Function(func) = item {
                 module.add_function(self.generate_function(func)?);
             }
         }
 
+        // DataDefs
         for data_def in &self.data_defs {
             module.add_data(data_def.clone());
         }
@@ -388,23 +396,18 @@ impl CodeGen {
             qbe_return_type,
         );
 
-        let body = func
-            .body
-            .as_ref()
-            .expect("generate_function called on prototype");
-
         qfunc.add_block("start");
-        let block_value = self.generate_block(&mut qfunc, body)?;
+        let block_value = self.generate_block(&mut qfunc, &func.body)?;
 
         if return_type == Type::Never {
             qfunc.add_instr(qbe::Instr::Hlt);
-        } else if body.ty == Type::Never {
+        } else if func.body.ty == Type::Never {
             if let Some(last_block) = qfunc.blocks.last()
                 && !last_block.jumps()
             {
                 qfunc.add_instr(qbe::Instr::Hlt);
             }
-        } else if body.ty == Type::Unit {
+        } else if func.body.ty == Type::Unit {
             qfunc.add_instr(qbe::Instr::Ret(None));
         } else {
             qfunc.add_instr(qbe::Instr::Ret(Some(block_value.into_qbe())));

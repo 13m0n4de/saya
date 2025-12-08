@@ -1,0 +1,7 @@
+extern static stderr: i64;
+extern fn fputs(s: str, stream: i64) -> i64;
+
+fn main() -> i64 {
+    fputs("Hello from stderr\n", stderr);
+    0
+}

@@ -152,16 +152,13 @@ fn test_let_binding() {
     let program = parse!("fn test() -> i64 { let x: i64 = 42; x }").unwrap();
 
     match &program.items[0] {
-        Item::Function(func) => {
-            let body = func.body.as_ref().expect("Expected function body");
-            match &body.stmts[0].kind {
-                StmtKind::Let(let_stmt) => {
-                    assert_eq!(let_stmt.name, "x");
-                    assert_eq!(let_stmt.type_ann, TypeAnn::I64);
-                }
-                _ => panic!("Expected let statement"),
+        Item::Function(func) => match &func.body.stmts[0].kind {
+            StmtKind::Let(let_stmt) => {
+                assert_eq!(let_stmt.name, "x");
+                assert_eq!(let_stmt.type_ann, TypeAnn::I64);
             }
-        }
+            _ => panic!("Expected let statement"),
+        },
         _ => panic!("Expected function"),
     }
 }
@@ -260,7 +257,6 @@ fn test_function_definition() {
             assert_eq!(func.params[0].name, "a");
             assert_eq!(func.params[1].name, "b");
             assert_eq!(func.return_type_ann, TypeAnn::I64);
-            assert!(func.body.is_some());
         }
         _ => panic!("Expected function"),
     }
@@ -314,15 +310,12 @@ fn test_array_type() {
     let program = parse!("fn test() -> i64 { let arr: [i64; 3] = [1, 2, 3]; 0 }").unwrap();
 
     match &program.items[0] {
-        Item::Function(func) => {
-            let body = func.body.as_ref().expect("Expected function body");
-            match &body.stmts[0].kind {
-                StmtKind::Let(let_stmt) => {
-                    assert!(matches!(let_stmt.type_ann, TypeAnn::Array(_, 3)));
-                }
-                _ => panic!("Expected let statement"),
+        Item::Function(func) => match &func.body.stmts[0].kind {
+            StmtKind::Let(let_stmt) => {
+                assert!(matches!(let_stmt.type_ann, TypeAnn::Array(_, 3)));
             }
-        }
+            _ => panic!("Expected let statement"),
+        },
         _ => panic!("Expected function"),
     }
 }
@@ -354,5 +347,36 @@ fn test_chained_calls_and_index() {
             assert!(matches!(array.kind, ExprKind::Call(_)));
         }
         _ => panic!("Expected index of call"),
+    }
+}
+
+#[test]
+fn test_extern_declarations() {
+    let program = parse!(
+        r#"
+        extern static stderr: i64;
+        extern fn puts(s: str) -> i64;
+    "#
+    )
+    .unwrap();
+
+    assert_eq!(program.items.len(), 2);
+
+    match &program.items[0] {
+        Item::Extern(ExternItem::Static(static_decl)) => {
+            assert_eq!(static_decl.name, "stderr");
+            assert_eq!(static_decl.type_ann, TypeAnn::I64);
+        }
+        _ => panic!("Expected extern static"),
+    }
+
+    match &program.items[1] {
+        Item::Extern(ExternItem::Function(func)) => {
+            assert_eq!(func.name, "puts");
+            assert_eq!(func.params.len(), 1);
+            assert_eq!(func.params[0].name, "s");
+            assert_eq!(func.return_type_ann, TypeAnn::I64);
+        }
+        _ => panic!("Expected extern function"),
     }
 }

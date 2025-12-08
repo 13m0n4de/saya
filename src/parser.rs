@@ -145,6 +145,7 @@ impl<'a> Parser<'a> {
                 TokenKind::Const => items.push(Item::Const(self.parse_const()?)),
                 TokenKind::Static => items.push(Item::Static(self.parse_static()?)),
                 TokenKind::Fn => items.push(Item::Function(self.parse_function()?)),
+                TokenKind::Extern => items.push(self.parse_item_extern()?),
                 TokenKind::Eof => break,
                 _ => {
                     return Err(ParseError::new(
@@ -156,6 +157,72 @@ impl<'a> Parser<'a> {
         }
 
         Ok(Program { items })
+    }
+
+    fn parse_item_extern(&mut self) -> Result<Item, ParseError> {
+        self.expect(TokenKind::Extern)?;
+
+        match self.current.kind {
+            TokenKind::Fn => Ok(Item::Extern(ExternItem::Function(self.parse_extern_function()?))),
+            TokenKind::Static => Ok(Item::Extern(ExternItem::Static(self.parse_extern_static()?))),
+            _ => Err(ParseError::new(
+                "expected 'fn' or 'static' after 'extern'".to_string(),
+                self.current.span,
+            )),
+        }
+    }
+
+    fn parse_extern_static(&mut self) -> Result<ExternStaticDecl, ParseError> {
+        let start_span = self.current.span;
+
+        self.expect(TokenKind::Static)?;
+
+        let name = self.expect_identifier()?;
+
+        self.expect(TokenKind::Colon)?;
+
+        let type_ann = self.parse_type_ann()?;
+
+        self.expect(TokenKind::Semi)?;
+
+        Ok(ExternStaticDecl {
+            name,
+            type_ann,
+            span: start_span,
+        })
+    }
+
+    fn parse_extern_function(&mut self) -> Result<ExternFunctionDecl, ParseError> {
+        let start_span = self.current.span;
+
+        self.expect(TokenKind::Fn)?;
+
+        let name = self.expect_identifier()?;
+
+        self.expect(TokenKind::OpenParen)?;
+
+        let params = if self.current.kind == TokenKind::CloseParen {
+            Vec::new()
+        } else {
+            self.parse_param_list()?
+        };
+
+        self.expect(TokenKind::CloseParen)?;
+
+        let return_type_ann = if self.eat(TokenKind::Arrow)? {
+            self.parse_type_ann()?
+        } else {
+            TypeAnn::Unit
+        };
+
+        self.expect(TokenKind::Semi)?;
+
+        Ok(ExternFunctionDecl {
+            name,
+            params,
+            return_type_ann,
+            span: start_span,
+        })
     }
 
     fn parse_const(&mut self) -> Result<ConstDef, ParseError> {
@@ -231,11 +298,7 @@ impl<'a> Parser<'a> {
             TypeAnn::Unit
         };
 
-        let body = if self.eat(TokenKind::Semi)? {
-            None
-        } else {
-            Some(self.parse_block()?)
-        };
+        let body = self.parse_block()?;
 
         Ok(FunctionDef {
             name,
