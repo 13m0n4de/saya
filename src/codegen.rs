@@ -396,20 +396,18 @@ impl CodeGen {
             qbe_return_type,
         );
 
-        let body = &func.body;
-
         qfunc.add_block("start");
-        let block_value = self.generate_block(&mut qfunc, body)?;
+        let block_value = self.generate_block(&mut qfunc, &func.body)?;
 
         if return_type == Type::Never {
             qfunc.add_instr(qbe::Instr::Hlt);
-        } else if body.ty == Type::Never {
+        } else if func.body.ty == Type::Never {
             if let Some(last_block) = qfunc.blocks.last()
                 && !last_block.jumps()
             {
                 qfunc.add_instr(qbe::Instr::Hlt);
             }
-        } else if body.ty == Type::Unit {
+        } else if func.body.ty == Type::Unit {
             qfunc.add_instr(qbe::Instr::Ret(None));
         } else {
             qfunc.add_instr(qbe::Instr::Ret(Some(block_value.into_qbe())));
