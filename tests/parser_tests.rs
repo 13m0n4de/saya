@@ -349,3 +349,34 @@ fn test_chained_calls_and_index() {
         _ => panic!("Expected index of call"),
     }
 }
+
+#[test]
+fn test_extern_declarations() {
+    let program = parse!(
+        r#"
+        extern static stderr: i64;
+        extern fn puts(s: str) -> i64;
+    "#
+    )
+    .unwrap();
+
+    assert_eq!(program.items.len(), 2);
+
+    match &program.items[0] {
+        Item::Extern(ExternItem::Static(static_decl)) => {
+            assert_eq!(static_decl.name, "stderr");
+            assert_eq!(static_decl.type_ann, TypeAnn::I64);
+        }
+        _ => panic!("Expected extern static"),
+    }
+
+    match &program.items[1] {
+        Item::Extern(ExternItem::Function(func)) => {
+            assert_eq!(func.name, "puts");
+            assert_eq!(func.params.len(), 1);
+            assert_eq!(func.params[0].name, "s");
+            assert_eq!(func.return_type_ann, TypeAnn::I64);
+        }
+        _ => panic!("Expected extern function"),
+    }
+}
