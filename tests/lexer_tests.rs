@@ -17,9 +17,9 @@ fn tokenize(input: &str) -> Result<Vec<TokenKind>, LexError> {
 }
 
 #[test]
-fn test_keywords() -> Result<(), LexError> {
+fn test_keywords() {
     let input = "fn let return if else while break continue const static true false";
-    let tokens = tokenize(input)?;
+    let tokens = tokenize(input).unwrap();
 
     assert_eq!(
         tokens,
@@ -39,13 +39,12 @@ fn test_keywords() -> Result<(), LexError> {
             TokenKind::Eof,
         ]
     );
-    Ok(())
 }
 
 #[test]
-fn test_identifiers_and_integers() -> Result<(), LexError> {
+fn test_identifiers_and_integers() {
     let input = "x y123 _foo 42 0 9999";
-    let tokens = tokenize(input)?;
+    let tokens = tokenize(input).unwrap();
 
     assert_eq!(
         tokens,
@@ -59,13 +58,12 @@ fn test_identifiers_and_integers() -> Result<(), LexError> {
             TokenKind::Eof,
         ]
     );
-    Ok(())
 }
 
 #[test]
-fn test_operators() -> Result<(), LexError> {
+fn test_operators() {
     let input = "+ - * / % < <= > >= == != && || ! & | =";
-    let tokens = tokenize(input)?;
+    let tokens = tokenize(input).unwrap();
 
     assert_eq!(
         tokens,
@@ -90,13 +88,12 @@ fn test_operators() -> Result<(), LexError> {
             TokenKind::Eof,
         ]
     );
-    Ok(())
 }
 
 #[test]
-fn test_double_char_operators() -> Result<(), LexError> {
+fn test_double_char_operators() {
     let input = "<= >= == != && || ->";
-    let tokens = tokenize(input)?;
+    let tokens = tokenize(input).unwrap();
 
     assert_eq!(
         tokens,
@@ -111,13 +108,12 @@ fn test_double_char_operators() -> Result<(), LexError> {
             TokenKind::Eof,
         ]
     );
-    Ok(())
 }
 
 #[test]
-fn test_delimiters() -> Result<(), LexError> {
+fn test_delimiters() {
     let input = "( ) { } [ ] , : ; ->";
-    let tokens = tokenize(input)?;
+    let tokens = tokenize(input).unwrap();
 
     assert_eq!(
         tokens,
@@ -135,13 +131,12 @@ fn test_delimiters() -> Result<(), LexError> {
             TokenKind::Eof,
         ]
     );
-    Ok(())
 }
 
 #[test]
-fn test_string_literal() -> Result<(), LexError> {
+fn test_string_literal() {
     let input = r#""hello" "world 123" "with\nescape""#;
-    let tokens = tokenize(input)?;
+    let tokens = tokenize(input).unwrap();
 
     assert_eq!(
         tokens,
@@ -152,13 +147,12 @@ fn test_string_literal() -> Result<(), LexError> {
             TokenKind::Eof,
         ]
     );
-    Ok(())
 }
 
 #[test]
-fn test_compact_code() -> Result<(), LexError> {
+fn test_compact_code() {
     let input = "let x=42;";
-    let tokens = tokenize(input)?;
+    let tokens = tokenize(input).unwrap();
 
     assert_eq!(
         tokens,
@@ -171,17 +165,16 @@ fn test_compact_code() -> Result<(), LexError> {
             TokenKind::Eof,
         ]
     );
-    Ok(())
 }
 
 #[test]
-fn test_comments() -> Result<(), LexError> {
+fn test_comments() {
     let input = r#"
         // this is a comment
         let x = 42; // another comment
         // final comment
     "#;
-    let tokens = tokenize(input)?;
+    let tokens = tokenize(input).unwrap();
 
     assert_eq!(
         tokens,
@@ -194,17 +187,16 @@ fn test_comments() -> Result<(), LexError> {
             TokenKind::Eof,
         ]
     );
-    Ok(())
 }
 
 #[test]
-fn test_complete_function() -> Result<(), LexError> {
+fn test_complete_function() {
     let input = r#"
         fn add(a: i64, b: i64) -> i64 {
             return a + b;
         }
     "#;
-    let tokens = tokenize(input)?;
+    let tokens = tokenize(input).unwrap();
 
     assert_eq!(
         tokens,
@@ -232,7 +224,6 @@ fn test_complete_function() -> Result<(), LexError> {
             TokenKind::Eof,
         ]
     );
-    Ok(())
 }
 
 #[test]
@@ -268,22 +259,19 @@ fn test_integer_overflow() {
 }
 
 #[test]
-fn test_empty_input() -> Result<(), LexError> {
-    let tokens = tokenize("")?;
+fn test_empty_input() {
+    let tokens = tokenize("").unwrap();
     assert_eq!(tokens, vec![TokenKind::Eof]);
-    Ok(())
 }
 
 #[test]
-fn test_only_whitespace() -> Result<(), LexError> {
-    let tokens = tokenize("   \t\n  ")?;
+fn test_only_whitespace() {
+    let tokens = tokenize("   \t\n  ").unwrap();
     assert_eq!(tokens, vec![TokenKind::Eof]);
-    Ok(())
 }
 
 #[test]
-fn test_only_comments() -> Result<(), LexError> {
-    let tokens = tokenize("// just a comment\n// another one")?;
+fn test_only_comments() {
+    let tokens = tokenize("// just a comment\n// another one").unwrap();
     assert_eq!(tokens, vec![TokenKind::Eof]);
-    Ok(())
 }
