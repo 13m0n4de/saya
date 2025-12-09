@@ -13,10 +13,9 @@ function-def = "fn" identifier "(" [param-list] ")" ["->" type-name] block
 param-list = param *("," param)
 param = identifier ":" type-name
 
-type-name = base-type / array-type
-
+type-name = pointer-type / array-type / base-type
 base-type = "i64" / "str" / "bool"
-
+pointer-type = "*" type-name
 array-type = "[" type-name ";" integer "]"
 
 block = "{" *statement [expression] "}"
@@ -57,7 +56,7 @@ multiplicative-expr = unary-expr *(multiplicative-op unary-expr)
 multiplicative-op = "*" / "/" / "%"
 
 unary-expr = unary-op unary-expr / postfix-expr
-unary-op = "-" / "!"
+unary-op = "-" / "!" / "&" / "*"
 
 postfix-expr = primary-expr *postfix-op
 postfix-op = index-op / call-op
