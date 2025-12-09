@@ -203,6 +203,7 @@ impl CodeGen {
         expr: &Expr<Type>,
     ) -> Result<qbe::Value, CodeGenError> {
         match &expr.kind {
+            // x -> %x
             ExprKind::Ident(name) => {
                 // Constants
                 if self.constants.contains_key(name) {
@@ -227,9 +228,11 @@ impl CodeGen {
                     expr.span,
                 ))
             }
+            // *ptr -> value_of(ptr)
             ExprKind::Unary(UnaryOp::Deref, ptr_expr) => {
                 Ok(self.generate_expression(qfunc, ptr_expr)?.into_qbe())
             }
+            // arr[i] -> value_of(arr) + i * elem_size
             ExprKind::Index(base, index) => {
                 let base_ptr = self.generate_expression(qfunc, base)?.into_qbe();
                 let index_val = self.generate_expression(qfunc, index)?.into_qbe();
@@ -395,6 +398,8 @@ impl CodeGen {
             self.insert_var(param.name.clone());
         }
 
+        qfunc.add_block("body");
+
         let block_value = self.generate_block(&mut qfunc, &func.body)?;
 
         if return_type == Type::Never {
@@ -545,19 +550,16 @@ impl CodeGen {
             }
             UnaryOp::Ref => {
                 let addr = self.address_of(qfunc, operand_expr)?;
-                return Ok(GenValue::Temp(
-                    match addr {
-                        qbe::Value::Temporary(name) => name,
-                        qbe::Value::Global(name) => name,
-                        _ => {
-                            return Err(CodeGenError::new(
-                                "Cannot take address of non-lvalue".to_string(),
-                                operand_expr.span,
-                            ));
-                        }
-                    },
-                    expr.ty.clone(),
-                ));
+                return Ok(match addr {
+                    qbe::Value::Temporary(name) => GenValue::Temp(name, expr.ty.clone()),
+                    qbe::Value::Global(name) => GenValue::Global(name, expr.ty.clone()),
+                    _ => {
+                        return Err(CodeGenError::new(
+                            "Cannot take address of non-lvalue".to_string(),
+                            operand_expr.span,
+                        ));
+                    }
+                });
             }
             UnaryOp::Deref => {
                 let ptr = self.generate_expression(qfunc, operand_expr)?.into_qbe();
