@@ -349,7 +349,7 @@ impl CodeGen {
 
     fn generate_static(&mut self, static_def: &StaticDef<Type>) -> Result<(), CodeGenError> {
         let literal = self.eval_const_expr(&static_def.init)?;
-        let qbe_ty = qbe::Type::from(&Type::from(&static_def.type_ann));
+        let qbe_ty = qbe::Type::from(&static_def.type_ann);
         let data_item = self.literal_to_data_item(&literal);
 
         self.data_defs.push(qbe::DataDef::new(
@@ -372,18 +372,16 @@ impl CodeGen {
             .params
             .iter()
             .map(|param| {
-                let ty = qbe::Type::from(&Type::from(&param.type_ann));
+                let ty = qbe::Type::from(&param.type_ann);
                 let value = qbe::Value::Temporary(format!("{}.param", param.name));
                 (ty, value)
             })
             .collect();
 
-        let return_type = Type::from(&func.return_type_ann);
-
-        let qbe_return_type = if return_type == Type::Unit {
+        let qbe_return_type = if func.return_type_ann == Type::Unit {
             None
         } else {
-            Some(qbe::Type::from(&return_type))
+            Some(qbe::Type::from(&func.return_type_ann))
         };
 
         let mut qfunc = qbe::Function::new(
@@ -396,7 +394,7 @@ impl CodeGen {
         qfunc.add_block("start");
 
         for param in &func.params {
-            let ty = qbe::Type::from(&Type::from(&param.type_ann));
+            let ty = qbe::Type::from(&param.type_ann);
             let addr = qbe::Value::Temporary(param.name.clone());
             let param_val = qbe::Value::Temporary(format!("{}.param", param.name));
 
@@ -410,7 +408,7 @@ impl CodeGen {
 
         let block_value = self.generate_block(&mut qfunc, &func.body)?;
 
-        if return_type == Type::Never {
+        if func.return_type_ann == Type::Never {
             qfunc.add_instr(qbe::Instr::Hlt);
         } else if func.body.ty == Type::Never {
             if let Some(last_block) = qfunc.blocks.last()
@@ -458,7 +456,7 @@ impl CodeGen {
         qfunc: &mut qbe::Function<'static>,
         let_stmt: &Let<Type>,
     ) -> Result<(), CodeGenError> {
-        let qbe_ty = qbe::Type::from(&Type::from(&let_stmt.type_ann));
+        let qbe_ty = qbe::Type::from(&let_stmt.type_ann);
         let size = qbe_ty.size();
 
         let addr = qbe::Value::Temporary(let_stmt.name.clone());

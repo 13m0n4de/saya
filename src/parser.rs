@@ -92,14 +92,14 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_type_ann(&mut self) -> Result<TypeAnn, ParseError> {
+    fn parse_type_ann(&mut self) -> Result<Type, ParseError> {
         match self.current.kind.clone() {
             TokenKind::Ident(name) => {
                 self.advance()?;
                 match name.as_str() {
-                    "i64" => Ok(TypeAnn::I64),
-                    "str" => Ok(TypeAnn::Str),
-                    "bool" => Ok(TypeAnn::Bool),
+                    "i64" => Ok(Type::I64),
+                    "str" => Ok(Type::Str),
+                    "bool" => Ok(Type::Bool),
                     _ => Err(ParseError::new(
                         format!("Unknown type: {name}"),
                         self.current.span,
@@ -128,12 +128,12 @@ impl<'a> Parser<'a> {
 
                 self.advance()?;
                 self.expect(TokenKind::CloseBracket)?;
-                Ok(TypeAnn::Array(elem_type_ann, size))
+                Ok(Type::Array(elem_type_ann, size))
             }
             TokenKind::Star => {
                 self.advance()?;
                 let inner_type = Box::new(self.parse_type_ann()?);
-                Ok(TypeAnn::Pointer(inner_type))
+                Ok(Type::Pointer(inner_type))
             }
             _ => Err(ParseError::new(
                 format!("Unknown type: {:?}", self.current.kind),
@@ -221,7 +221,7 @@ impl<'a> Parser<'a> {
         let return_type_ann = if self.eat(TokenKind::Arrow)? {
             self.parse_type_ann()?
         } else {
-            TypeAnn::Unit
+            Type::Unit
         };
 
         self.expect(TokenKind::Semi)?;
@@ -304,7 +304,7 @@ impl<'a> Parser<'a> {
         let return_type_ann = if self.eat(TokenKind::Arrow)? {
             self.parse_type_ann()?
         } else {
-            TypeAnn::Unit
+            Type::Unit
         };
 
         let body = self.parse_block()?;

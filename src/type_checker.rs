@@ -80,39 +80,46 @@ impl TypeChecker {
         for item in &prog.items {
             match item {
                 Item::Const(def) => {
-                    let ty = Type::from(&def.type_ann);
-                    self.constants.insert(def.name.clone(), ty);
+                    self.constants
+                        .insert(def.name.clone(), def.type_ann.clone());
                 }
                 Item::Static(def) => {
-                    let ty = Type::from(&def.type_ann);
-                    self.globals.insert(def.name.clone(), ty);
+                    self.globals.insert(def.name.clone(), def.type_ann.clone());
                 }
                 Item::Function(def) => {
                     let params = def
                         .params
                         .iter()
-                        .map(|param| Type::from(&param.type_ann))
+                        .map(|param| param.type_ann.clone())
                         .collect();
-                    let return_ty = Type::from(&def.return_type_ann);
 
-                    self.functions
-                        .insert(def.name.clone(), FunctionSig { params, return_ty });
+                    self.functions.insert(
+                        def.name.clone(),
+                        FunctionSig {
+                            params,
+                            return_ty: def.return_type_ann.clone(),
+                        },
+                    );
                 }
                 Item::Extern(extern_item) => match extern_item {
                     ExternItem::Static(decl) => {
-                        let ty = Type::from(&decl.type_ann);
-                        self.globals.insert(decl.name.clone(), ty);
+                        self.globals
+                            .insert(decl.name.clone(), decl.type_ann.clone());
                     }
                     ExternItem::Function(decl) => {
                         let params = decl
                             .params
                             .iter()
-                            .map(|param| Type::from(&param.type_ann))
+                            .cloned()
+                            .map(|param| param.type_ann)
                             .collect();
-                        let return_ty = Type::from(&decl.return_type_ann);
-
-                        self.functions
-                            .insert(decl.name.clone(), FunctionSig { params, return_ty });
+                        self.functions.insert(
+                            decl.name.clone(),
+                            FunctionSig {
+                                params,
+                                return_ty: decl.return_type_ann.clone(),
+                            },
+                        );
                     }
                 },
             }
@@ -122,14 +129,13 @@ impl TypeChecker {
         for item in &prog.items {
             match item {
                 Item::Const(def) => {
-                    let expected_ty = Type::from(&def.type_ann);
                     let typed_init = self.check_expression(&def.init)?;
 
-                    if typed_init.ty != expected_ty {
+                    if typed_init.ty != def.type_ann {
                         return Err(TypeError::new(
                             format!(
                                 "const '{}' type mismatch: expected {:?}, found {:?}",
-                                def.name, expected_ty, typed_init.ty
+                                def.name, def.type_ann, typed_init.ty
                             ),
                             def.init.span,
                         ));
@@ -143,14 +149,13 @@ impl TypeChecker {
                     }));
                 }
                 Item::Static(def) => {
-                    let expected_ty = Type::from(&def.type_ann);
                     let typed_init = self.check_expression(&def.init)?;
 
-                    if typed_init.ty != expected_ty {
+                    if typed_init.ty != def.type_ann {
                         return Err(TypeError::new(
                             format!(
                                 "static '{}' type mismatch: expected {:?}, found {:?}",
-                                def.name, expected_ty, typed_init.ty
+                                def.name, def.type_ann, typed_init.ty
                             ),
                             def.init.span,
                         ));
@@ -177,24 +182,21 @@ impl TypeChecker {
     }
 
     fn check_function(&mut self, func: &FunctionDef<()>) -> Result<FunctionDef<Type>, TypeError> {
-        let return_ty = Type::from(&func.return_type_ann);
-
-        self.current_fn_return_ty = Some(return_ty.clone());
+        self.current_fn_return_ty = Some(func.return_type_ann.clone());
         self.push_scope();
 
         for param in &func.params {
-            let param_ty = Type::from(&param.type_ann);
-            self.insert_local_var(param.name.clone(), param_ty);
+            self.insert_local_var(param.name.clone(), param.type_ann.clone());
         }
 
         let typed_body = self.check_block(&func.body)?;
 
         // The `Never` type is compatible with any return type
-        if typed_body.ty != return_ty && typed_body.ty != Type::Never {
+        if typed_body.ty != func.return_type_ann && typed_body.ty != Type::Never {
             return Err(TypeError::new(
                 format!(
                     "function '{}' has mismatched return type: expected {:?}, found {:?}",
-                    func.name, return_ty, typed_body.ty
+                    func.name, func.return_type_ann, typed_body.ty
                 ),
                 func.body.span,
             ));
@@ -274,20 +276,19 @@ impl TypeChecker {
     fn check_statement(&mut self, stmt: &Stmt<()>) -> Result<Stmt<Type>, TypeError> {
         let kind = match &stmt.kind {
             StmtKind::Let(let_stmt) => {
-                let expected_ty = Type::from(&let_stmt.type_ann);
                 let typed_init = self.check_expression(&let_stmt.init)?;
 
-                if typed_init.ty != expected_ty {
+                if typed_init.ty != let_stmt.type_ann {
                     return Err(TypeError::new(
                         format!(
                             "type mismatch in let binding: expected {:?}, found {:?}",
-                            expected_ty, typed_init.ty
+                            let_stmt.type_ann, typed_init.ty
                         ),
                         let_stmt.init.span,
                     ));
                 }
 
-                self.insert_local_var(let_stmt.name.clone(), expected_ty);
+                self.insert_local_var(let_stmt.name.clone(), let_stmt.type_ann.clone());
 
                 StmtKind::Let(Let {
                     name: let_stmt.name.clone(),

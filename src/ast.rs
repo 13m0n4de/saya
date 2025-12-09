@@ -1,16 +1,6 @@
 use crate::span::Span;
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum TypeAnn {
-    I64,
-    Str,
-    Bool,
-    Pointer(Box<TypeAnn>),
-    Array(Box<TypeAnn>, usize),
-    Unit,
-}
-
-#[derive(Debug, Clone, PartialEq)]
 pub enum Type {
     I64,
     Str,
@@ -19,19 +9,6 @@ pub enum Type {
     Array(Box<Type>, usize),
     Unit,
     Never,
-}
-
-impl From<&TypeAnn> for Type {
-    fn from(ty: &TypeAnn) -> Self {
-        match ty {
-            TypeAnn::I64 => Type::I64,
-            TypeAnn::Str => Type::Str,
-            TypeAnn::Bool => Type::Bool,
-            TypeAnn::Pointer(inner) => Type::Pointer(Box::new(Type::from(inner.as_ref()))),
-            TypeAnn::Array(elem, size) => Type::Array(Box::new(Type::from(elem.as_ref())), *size),
-            TypeAnn::Unit => Type::Unit,
-        }
-    }
 }
 
 impl From<&Type> for qbe::Type<'static> {
@@ -70,7 +47,7 @@ pub enum ExternItem {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExternStaticDecl {
     pub name: String,
-    pub type_ann: TypeAnn,
+    pub type_ann: Type,
     pub span: Span,
 }
 
@@ -78,14 +55,14 @@ pub struct ExternStaticDecl {
 pub struct ExternFunctionDecl {
     pub name: String,
     pub params: Vec<Param>,
-    pub return_type_ann: TypeAnn,
+    pub return_type_ann: Type,
     pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConstDef<T = ()> {
     pub name: String,
-    pub type_ann: TypeAnn,
+    pub type_ann: Type,
     pub init: Box<Expr<T>>,
     pub span: Span,
 }
@@ -93,7 +70,7 @@ pub struct ConstDef<T = ()> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct StaticDef<T = ()> {
     pub name: String,
-    pub type_ann: TypeAnn,
+    pub type_ann: Type,
     pub init: Box<Expr<T>>,
     pub span: Span,
 }
@@ -102,7 +79,7 @@ pub struct StaticDef<T = ()> {
 pub struct FunctionDef<T = ()> {
     pub name: String,
     pub params: Vec<Param>,
-    pub return_type_ann: TypeAnn,
+    pub return_type_ann: Type,
     pub body: Block<T>,
     pub span: Span,
 }
@@ -110,7 +87,7 @@ pub struct FunctionDef<T = ()> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param {
     pub name: String,
-    pub type_ann: TypeAnn,
+    pub type_ann: Type,
     pub span: Span,
 }
 
@@ -137,7 +114,7 @@ pub enum StmtKind<T = ()> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Let<T = ()> {
     pub name: String,
-    pub type_ann: TypeAnn,
+    pub type_ann: Type,
     pub init: Expr<T>,
     pub span: Span,
 }
