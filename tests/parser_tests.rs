@@ -155,7 +155,7 @@ fn test_let_binding() {
         Item::Function(func) => match &func.body.stmts[0].kind {
             StmtKind::Let(let_stmt) => {
                 assert_eq!(let_stmt.name, "x");
-                assert_eq!(let_stmt.type_ann, TypeAnn::I64);
+                assert_eq!(let_stmt.type_ann, Type::I64);
             }
             _ => panic!("Expected let statement"),
         },
@@ -256,7 +256,7 @@ fn test_function_definition() {
             assert_eq!(func.params.len(), 2);
             assert_eq!(func.params[0].name, "a");
             assert_eq!(func.params[1].name, "b");
-            assert_eq!(func.return_type_ann, TypeAnn::I64);
+            assert_eq!(func.return_type_ann, Type::I64);
         }
         _ => panic!("Expected function"),
     }
@@ -269,7 +269,7 @@ fn test_const_definition() {
     match &program.items[0] {
         Item::Const(const_def) => {
             assert_eq!(const_def.name, "PI");
-            assert_eq!(const_def.type_ann, TypeAnn::I64);
+            assert_eq!(const_def.type_ann, Type::I64);
         }
         _ => panic!("Expected const"),
     }
@@ -282,7 +282,7 @@ fn test_static_definition() {
     match &program.items[0] {
         Item::Static(static_def) => {
             assert_eq!(static_def.name, "GLOBAL");
-            assert_eq!(static_def.type_ann, TypeAnn::I64);
+            assert_eq!(static_def.type_ann, Type::I64);
         }
         _ => panic!("Expected static"),
     }
@@ -312,7 +312,7 @@ fn test_array_type() {
     match &program.items[0] {
         Item::Function(func) => match &func.body.stmts[0].kind {
             StmtKind::Let(let_stmt) => {
-                assert!(matches!(let_stmt.type_ann, TypeAnn::Array(_, 3)));
+                assert!(matches!(let_stmt.type_ann, Type::Array(_, 3)));
             }
             _ => panic!("Expected let statement"),
         },
@@ -365,7 +365,7 @@ fn test_extern_declarations() {
     match &program.items[0] {
         Item::Extern(ExternItem::Static(static_decl)) => {
             assert_eq!(static_decl.name, "stderr");
-            assert_eq!(static_decl.type_ann, TypeAnn::I64);
+            assert_eq!(static_decl.type_ann, Type::I64);
         }
         _ => panic!("Expected extern static"),
     }
@@ -375,7 +375,7 @@ fn test_extern_declarations() {
             assert_eq!(func.name, "puts");
             assert_eq!(func.params.len(), 1);
             assert_eq!(func.params[0].name, "s");
-            assert_eq!(func.return_type_ann, TypeAnn::I64);
+            assert_eq!(func.return_type_ann, Type::I64);
         }
         _ => panic!("Expected extern function"),
     }
