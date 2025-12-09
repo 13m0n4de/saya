@@ -561,7 +561,17 @@ impl TypeChecker {
                     ));
                 }
             },
-            UnaryOp::Ref => Type::Pointer(Box::new(typed_operand.ty.clone())),
+            UnaryOp::Ref => {
+                if let ExprKind::Ident(name) = &operand.kind
+                    && self.constants.contains_key(name)
+                {
+                    return Err(TypeError::new(
+                        format!("cannot take address of constant `{name}`"),
+                        operand.span,
+                    ));
+                }
+                Type::Pointer(Box::new(typed_operand.ty.clone()))
+            }
             UnaryOp::Deref => match &typed_operand.ty {
                 Type::Pointer(inner) => *inner.clone(),
                 _ => {
