@@ -5,6 +5,7 @@ pub enum TypeAnn {
     I64,
     Str,
     Bool,
+    Pointer(Box<TypeAnn>),
     Array(Box<TypeAnn>, usize),
     Unit,
 }
@@ -14,6 +15,7 @@ pub enum Type {
     I64,
     Str,
     Bool,
+    Pointer(Box<Type>),
     Array(Box<Type>, usize),
     Unit,
     Never,
@@ -25,6 +27,7 @@ impl From<&TypeAnn> for Type {
             TypeAnn::I64 => Type::I64,
             TypeAnn::Str => Type::Str,
             TypeAnn::Bool => Type::Bool,
+            TypeAnn::Pointer(inner) => Type::Pointer(Box::new(Type::from(inner.as_ref()))),
             TypeAnn::Array(elem, size) => Type::Array(Box::new(Type::from(elem.as_ref())), *size),
             TypeAnn::Unit => Type::Unit,
         }
@@ -37,6 +40,7 @@ impl From<&Type> for qbe::Type<'static> {
             Type::I64 => qbe::Type::Long,
             Type::Str => qbe::Type::Long,
             Type::Bool => qbe::Type::Word,
+            Type::Pointer(_) => qbe::Type::Long,
             Type::Array(_, _) => qbe::Type::Long,
             Type::Unit => qbe::Type::Zero,
             Type::Never => unreachable!("Never type should not need QBE type conversion"),
@@ -195,8 +199,10 @@ pub struct While<T = ()> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum UnaryOp {
-    Neg, // -
-    Not, // !
+    Neg,   // -
+    Not,   // !
+    Ref,   // &
+    Deref, // *
 }
 
 #[derive(Debug, Clone, PartialEq)]

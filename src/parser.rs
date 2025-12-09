@@ -130,6 +130,11 @@ impl<'a> Parser<'a> {
                 self.expect(TokenKind::CloseBracket)?;
                 Ok(TypeAnn::Array(elem_type_ann, size))
             }
+            TokenKind::Star => {
+                self.advance()?;
+                let inner_type = Box::new(self.parse_type_ann()?);
+                Ok(TypeAnn::Pointer(inner_type))
+            }
             _ => Err(ParseError::new(
                 format!("Unknown type: {:?}", self.current.kind),
                 self.current.span,
@@ -163,8 +168,12 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::Extern)?;
 
         match self.current.kind {
-            TokenKind::Fn => Ok(Item::Extern(ExternItem::Function(self.parse_extern_function()?))),
-            TokenKind::Static => Ok(Item::Extern(ExternItem::Static(self.parse_extern_static()?))),
+            TokenKind::Fn => Ok(Item::Extern(ExternItem::Function(
+                self.parse_extern_function()?,
+            ))),
+            TokenKind::Static => Ok(Item::Extern(ExternItem::Static(
+                self.parse_extern_static()?,
+            ))),
             _ => Err(ParseError::new(
                 "expected 'fn' or 'static' after 'extern'".to_string(),
                 self.current.span,
@@ -473,6 +482,8 @@ impl<'a> Parser<'a> {
             let op = match self.current.kind {
                 TokenKind::Minus => UnaryOp::Neg,
                 TokenKind::Bang => UnaryOp::Not,
+                TokenKind::And => UnaryOp::Ref,
+                TokenKind::Star => UnaryOp::Deref,
                 _ => unreachable!(),
             };
             self.advance()?;
@@ -748,6 +759,8 @@ impl<'a> Parser<'a> {
         match token {
             TokenKind::Minus => Some(90), // -
             TokenKind::Bang => Some(90),  // !
+            TokenKind::And => Some(90),   // &
+            TokenKind::Star => Some(90),  // *
             _ => None,
         }
     }

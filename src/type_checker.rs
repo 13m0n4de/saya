@@ -558,6 +558,16 @@ impl TypeChecker {
                     ));
                 }
             },
+            UnaryOp::Ref => Type::Pointer(Box::new(typed_operand.ty.clone())),
+            UnaryOp::Deref => match &typed_operand.ty {
+                Type::Pointer(inner) => *inner.clone(),
+                _ => {
+                    return Err(TypeError::new(
+                        format!("cannot dereference non-pointer type {:?}", typed_operand.ty),
+                        operand.span,
+                    ));
+                }
+            },
         };
 
         Ok(Expr {
