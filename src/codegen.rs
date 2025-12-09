@@ -559,12 +559,7 @@ impl CodeGen {
                 return Ok(match addr {
                     qbe::Value::Temporary(name) => GenValue::Temp(name, expr.ty.clone()),
                     qbe::Value::Global(name) => GenValue::Global(name, expr.ty.clone()),
-                    _ => {
-                        return Err(CodeGenError::new(
-                            "Cannot take address of non-lvalue".to_string(),
-                            operand_expr.span,
-                        ));
-                    }
+                    qbe::Value::Const(_) => unreachable!(),
                 });
             }
             UnaryOp::Deref => {
