@@ -169,15 +169,23 @@ impl CodeGen {
             .expect("ICE: cannot pop scope, scopes stack is empty");
     }
 
-    fn insert_var(&mut self, name: String) {
+    fn is_constant(&self, name: &str) -> bool {
+        self.constants.contains_key(name)
+    }
+
+    fn is_global_var(&self, name: &str) -> bool {
+        self.globals.contains(name)
+    }
+
+    fn is_local_var(&self, name: &str) -> bool {
+        self.scopes.iter().rev().any(|scope| scope.contains(name))
+    }
+
+    fn insert_local_var(&mut self, name: String) {
         self.scopes
             .last_mut()
             .expect("ICE: scopes stack should not be empty")
             .insert(name);
-    }
-
-    fn contains_var(&self, name: &str) -> bool {
-        self.scopes.iter().rev().any(|scope| scope.contains(name))
     }
 
     fn push_loop(&mut self, continue_label: String, break_label: String) {
@@ -206,7 +214,7 @@ impl CodeGen {
             // x -> %x
             ExprKind::Ident(name) => {
                 // Constants
-                if self.constants.contains_key(name) {
+                if self.is_constant(name) {
                     return Err(CodeGenError::new(
                         format!("Cannot take address of constant `{name}`"),
                         expr.span,
@@ -214,12 +222,12 @@ impl CodeGen {
                 }
 
                 // Global variables
-                if self.globals.contains(name) {
+                if self.is_global_var(name) {
                     return Ok(qbe::Value::Global(name.clone()));
                 }
 
                 // Local variables
-                if self.contains_var(name) {
+                if self.is_local_var(name) {
                     return Ok(qbe::Value::Temporary(name.clone()));
                 }
 
@@ -395,7 +403,7 @@ impl CodeGen {
             qfunc.assign_instr(addr.clone(), qbe::Type::Long, qbe::Instr::Alloc8(8));
             qfunc.add_instr(qbe::Instr::Store(ty, addr, param_val));
 
-            self.insert_var(param.name.clone());
+            self.insert_local_var(param.name.clone());
         }
 
         qfunc.add_block("body");
@@ -456,7 +464,7 @@ impl CodeGen {
         let addr = qbe::Value::Temporary(let_stmt.name.clone());
         qfunc.assign_instr(addr.clone(), qbe::Type::Long, qbe::Instr::Alloc8(size));
 
-        self.insert_var(let_stmt.name.clone());
+        self.insert_local_var(let_stmt.name.clone());
 
         let init_val = self.generate_expression(qfunc, &let_stmt.init)?.into_qbe();
         qfunc.add_instr(qbe::Instr::Store(qbe_ty, addr, init_val));
@@ -501,14 +509,14 @@ impl CodeGen {
         }
 
         // Local variables
-        if self.contains_var(name) {
+        if self.is_local_var(name) {
             let addr = qbe::Value::Temporary(name.clone());
             let qbe_ty = qbe::Type::from(&expr.ty);
             return Ok(self.assign_to_temp(qfunc, &expr.ty, qbe::Instr::Load(qbe_ty, addr)));
         }
 
         // Global variables
-        if self.globals.contains(name) {
+        if self.is_global_var(name) {
             let addr = qbe::Value::Global(name.clone());
             let qbe_ty = qbe::Type::from(&expr.ty);
             return Ok(self.assign_to_temp(qfunc, &expr.ty, qbe::Instr::Load(qbe_ty, addr)));
