@@ -38,12 +38,6 @@ impl From<GenValue> for qbe::Value {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum VarKind {
-    Param,
-    Local,
-}
-
 #[derive(Debug, Clone)]
 struct LoopContext {
     continue_label: String,
@@ -79,7 +73,7 @@ pub struct CodeGen {
     temp_counter: usize,
     label_counter: usize,
     string_counter: usize,
-    scopes: Vec<HashMap<String, VarKind>>,
+    scopes: Vec<HashSet<String>>,
     loops: Vec<LoopContext>,
     constants: HashMap<String, Literal>,
     data_defs: Vec<qbe::DataDef<'static>>,
@@ -166,7 +160,7 @@ impl CodeGen {
     }
 
     fn push_scope(&mut self) {
-        self.scopes.push(HashMap::new());
+        self.scopes.push(HashSet::new());
     }
 
     fn pop_scope(&mut self) {
@@ -175,25 +169,23 @@ impl CodeGen {
             .expect("ICE: cannot pop scope, scopes stack is empty");
     }
 
-    fn insert_local(&mut self, name: String) {
+    fn is_constant(&self, name: &str) -> bool {
+        self.constants.contains_key(name)
+    }
+
+    fn is_global_var(&self, name: &str) -> bool {
+        self.globals.contains(name)
+    }
+
+    fn is_local_var(&self, name: &str) -> bool {
+        self.scopes.iter().rev().any(|scope| scope.contains(name))
+    }
+
+    fn insert_local_var(&mut self, name: String) {
         self.scopes
             .last_mut()
             .expect("ICE: scopes stack should not be empty")
-            .insert(name, VarKind::Local);
-    }
-
-    fn insert_param(&mut self, name: String) {
-        self.scopes
-            .last_mut()
-            .expect("ICE: scopes stack should not be empty")
-            .insert(name, VarKind::Param);
-    }
-
-    fn lookup_var(&self, name: &str) -> Option<VarKind> {
-        self.scopes
-            .iter()
-            .rev()
-            .find_map(|scope| scope.get(name).copied())
+            .insert(name);
     }
 
     fn push_loop(&mut self, continue_label: String, break_label: String) {
@@ -219,19 +211,23 @@ impl CodeGen {
         expr: &Expr<Type>,
     ) -> Result<qbe::Value, CodeGenError> {
         match &expr.kind {
+            // x -> %x
             ExprKind::Ident(name) => {
-                if self.constants.contains_key(name) {
+                // Constants
+                if self.is_constant(name) {
                     return Err(CodeGenError::new(
-                        format!("Cannot assign to constant `{name}`"),
+                        format!("Cannot take address of constant `{name}`"),
                         expr.span,
                     ));
                 }
 
-                if self.globals.contains(name) {
+                // Global variables
+                if self.is_global_var(name) {
                     return Ok(qbe::Value::Global(name.clone()));
                 }
 
-                if self.lookup_var(name).is_some() {
+                // Local variables
+                if self.is_local_var(name) {
                     return Ok(qbe::Value::Temporary(name.clone()));
                 }
 
@@ -240,6 +236,11 @@ impl CodeGen {
                     expr.span,
                 ))
             }
+            // *ptr -> value_of(ptr)
+            ExprKind::Unary(UnaryOp::Deref, ptr_expr) => {
+                Ok(self.generate_expression(qfunc, ptr_expr)?.into_qbe())
+            }
+            // arr[i] -> value_of(arr) + i * elem_size
             ExprKind::Index(base, index) => {
                 let base_ptr = self.generate_expression(qfunc, base)?.into_qbe();
                 let index_val = self.generate_expression(qfunc, index)?.into_qbe();
@@ -367,16 +368,12 @@ impl CodeGen {
     ) -> Result<qbe::Function<'static>, CodeGenError> {
         self.push_scope();
 
-        for param in &func.params {
-            self.insert_param(param.name.clone());
-        }
-
         let params = func
             .params
             .iter()
             .map(|param| {
                 let ty = qbe::Type::from(&Type::from(&param.type_ann));
-                let value = qbe::Value::Temporary(param.name.clone());
+                let value = qbe::Value::Temporary(format!("{}.param", param.name));
                 (ty, value)
             })
             .collect();
@@ -397,6 +394,20 @@ impl CodeGen {
         );
 
         qfunc.add_block("start");
+
+        for param in &func.params {
+            let ty = qbe::Type::from(&Type::from(&param.type_ann));
+            let addr = qbe::Value::Temporary(param.name.clone());
+            let param_val = qbe::Value::Temporary(format!("{}.param", param.name));
+
+            qfunc.assign_instr(addr.clone(), qbe::Type::Long, qbe::Instr::Alloc8(8));
+            qfunc.add_instr(qbe::Instr::Store(ty, addr, param_val));
+
+            self.insert_local_var(param.name.clone());
+        }
+
+        qfunc.add_block("body");
+
         let block_value = self.generate_block(&mut qfunc, &func.body)?;
 
         if return_type == Type::Never {
@@ -453,7 +464,7 @@ impl CodeGen {
         let addr = qbe::Value::Temporary(let_stmt.name.clone());
         qfunc.assign_instr(addr.clone(), qbe::Type::Long, qbe::Instr::Alloc8(size));
 
-        self.insert_local(let_stmt.name.clone());
+        self.insert_local_var(let_stmt.name.clone());
 
         let init_val = self.generate_expression(qfunc, &let_stmt.init)?.into_qbe();
         qfunc.add_instr(qbe::Instr::Store(qbe_ty, addr, init_val));
@@ -485,6 +496,7 @@ impl CodeGen {
             unreachable!()
         };
 
+        // Constants
         if let Some(literal) = self.constants.get(name).cloned() {
             return match literal {
                 Literal::Integer(n) => Ok(GenValue::Const(n.cast_unsigned(), Type::I64)),
@@ -496,24 +508,15 @@ impl CodeGen {
             };
         }
 
-        if let Some(var_kind) = self.lookup_var(name) {
-            match var_kind {
-                VarKind::Param => {
-                    return Ok(GenValue::Temp(name.clone(), expr.ty.clone()));
-                }
-                VarKind::Local => {
-                    let addr = qbe::Value::Temporary(name.clone());
-                    let qbe_ty = qbe::Type::from(&expr.ty);
-                    return Ok(self.assign_to_temp(
-                        qfunc,
-                        &expr.ty,
-                        qbe::Instr::Load(qbe_ty, addr),
-                    ));
-                }
-            }
+        // Local variables
+        if self.is_local_var(name) {
+            let addr = qbe::Value::Temporary(name.clone());
+            let qbe_ty = qbe::Type::from(&expr.ty);
+            return Ok(self.assign_to_temp(qfunc, &expr.ty, qbe::Instr::Load(qbe_ty, addr)));
         }
 
-        if self.globals.contains(name) {
+        // Global variables
+        if self.is_global_var(name) {
             let addr = qbe::Value::Global(name.clone());
             let qbe_ty = qbe::Type::from(&expr.ty);
             return Ok(self.assign_to_temp(qfunc, &expr.ty, qbe::Instr::Load(qbe_ty, addr)));
@@ -534,21 +537,43 @@ impl CodeGen {
             unreachable!()
         };
 
-        let operand = self.generate_expression(qfunc, operand_expr)?.into_qbe();
-        let result_ty = qbe::Type::from(&expr.ty);
-
         let instr = match unop {
-            UnaryOp::Neg => qbe::Instr::Neg(operand),
-            UnaryOp::Not => match &operand_expr.ty {
-                Type::Bool => qbe::Instr::Cmp(
-                    result_ty.clone(),
-                    qbe::Cmp::Eq,
-                    operand,
-                    qbe::Value::Const(0),
-                ),
-                Type::I64 => qbe::Instr::Xor(operand, qbe::Value::Const(u64::MAX)),
-                _ => unreachable!(),
-            },
+            UnaryOp::Neg => {
+                let operand = self.generate_expression(qfunc, operand_expr)?.into_qbe();
+                qbe::Instr::Neg(operand)
+            }
+            UnaryOp::Not => {
+                let operand = self.generate_expression(qfunc, operand_expr)?.into_qbe();
+                let result_ty = qbe::Type::from(&expr.ty);
+                match &operand_expr.ty {
+                    Type::Bool => qbe::Instr::Cmp(
+                        result_ty.clone(),
+                        qbe::Cmp::Eq,
+                        operand,
+                        qbe::Value::Const(0),
+                    ),
+                    Type::I64 => qbe::Instr::Xor(operand, qbe::Value::Const(u64::MAX)),
+                    _ => unreachable!(),
+                }
+            }
+            UnaryOp::Ref => {
+                let addr = self.address_of(qfunc, operand_expr)?;
+                return Ok(match addr {
+                    qbe::Value::Temporary(name) => GenValue::Temp(name, expr.ty.clone()),
+                    qbe::Value::Global(name) => GenValue::Global(name, expr.ty.clone()),
+                    _ => {
+                        return Err(CodeGenError::new(
+                            "Cannot take address of non-lvalue".to_string(),
+                            operand_expr.span,
+                        ));
+                    }
+                });
+            }
+            UnaryOp::Deref => {
+                let ptr = self.generate_expression(qfunc, operand_expr)?.into_qbe();
+                let result_ty = qbe::Type::from(&expr.ty);
+                qbe::Instr::Load(result_ty, ptr)
+            }
         };
 
         Ok(self.assign_to_temp(qfunc, &expr.ty, instr))

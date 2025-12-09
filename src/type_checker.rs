@@ -31,6 +31,7 @@ pub struct TypeChecker {
     scopes: Vec<HashMap<String, Type>>,
     functions: HashMap<String, FunctionSig>,
     globals: HashMap<String, Type>,
+    constants: HashMap<String, Type>,
     current_fn_return_ty: Option<Type>,
 }
 
@@ -46,6 +47,7 @@ impl TypeChecker {
             scopes: Vec::new(),
             functions: HashMap::new(),
             globals: HashMap::new(),
+            constants: HashMap::new(),
             current_fn_return_ty: None,
         }
     }
@@ -58,15 +60,16 @@ impl TypeChecker {
         self.scopes.pop();
     }
 
-    fn lookup_var(&self, name: &str) -> Option<&Type> {
+    fn lookup_var_type(&self, name: &str) -> Option<&Type> {
         self.scopes
             .iter()
             .rev()
             .find_map(|scope| scope.get(name))
             .or_else(|| self.globals.get(name))
+            .or_else(|| self.constants.get(name))
     }
 
-    fn insert_var(&mut self, name: String, ty: Type) {
+    fn insert_local_var(&mut self, name: String, ty: Type) {
         self.scopes
             .last_mut()
             .expect("ICE: scope stack should not be empty")
@@ -78,7 +81,7 @@ impl TypeChecker {
             match item {
                 Item::Const(def) => {
                     let ty = Type::from(&def.type_ann);
-                    self.globals.insert(def.name.clone(), ty);
+                    self.constants.insert(def.name.clone(), ty);
                 }
                 Item::Static(def) => {
                     let ty = Type::from(&def.type_ann);
@@ -181,7 +184,7 @@ impl TypeChecker {
 
         for param in &func.params {
             let param_ty = Type::from(&param.type_ann);
-            self.insert_var(param.name.clone(), param_ty);
+            self.insert_local_var(param.name.clone(), param_ty);
         }
 
         let typed_body = self.check_block(&func.body)?;
@@ -284,7 +287,7 @@ impl TypeChecker {
                     ));
                 }
 
-                self.insert_var(let_stmt.name.clone(), expected_ty);
+                self.insert_local_var(let_stmt.name.clone(), expected_ty);
 
                 StmtKind::Let(Let {
                     name: let_stmt.name.clone(),
@@ -361,7 +364,7 @@ impl TypeChecker {
         };
 
         let ty = self
-            .lookup_var(name)
+            .lookup_var_type(name)
             .ok_or_else(|| TypeError::new(format!("undefined variable: {name}"), expr.span))?
             .clone();
 
@@ -554,6 +557,26 @@ impl TypeChecker {
                 _ => {
                     return Err(TypeError::new(
                         format!("cannot apply `!` to type {:?}", typed_operand.ty),
+                        operand.span,
+                    ));
+                }
+            },
+            UnaryOp::Ref => {
+                if let ExprKind::Ident(name) = &operand.kind
+                    && self.constants.contains_key(name)
+                {
+                    return Err(TypeError::new(
+                        format!("cannot take address of constant `{name}`"),
+                        operand.span,
+                    ));
+                }
+                Type::Pointer(Box::new(typed_operand.ty.clone()))
+            }
+            UnaryOp::Deref => match &typed_operand.ty {
+                Type::Pointer(inner) => *inner.clone(),
+                _ => {
+                    return Err(TypeError::new(
+                        format!("cannot dereference non-pointer type {:?}", typed_operand.ty),
                         operand.span,
                     ));
                 }

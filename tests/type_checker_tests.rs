@@ -446,3 +446,51 @@ fn test_if_else_with_never() {
     let result = typecheck!("fn test() -> i64 { if true { 1 } else { return 2; } }");
     assert!(result.is_ok());
 }
+
+#[test]
+fn test_pointer_basic() {
+    let result = typecheck!("fn test() -> i64 { let x: i64 = 42; let ptr: *i64 = &x; *ptr }");
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_pointer_double() {
+    let result = typecheck!(
+        "fn test() -> i64 { let x: i64 = 42; let ptr: *i64 = &x; let pptr: **i64 = &ptr; **pptr }"
+    );
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_pointer_to_global() {
+    let result = typecheck!(
+        r#"
+        static GLOBAL: i64 = 100;
+        fn test() -> i64 { let ptr: *i64 = &GLOBAL; *ptr }
+        "#
+    );
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_pointer_type_error() {
+    let result = typecheck!("fn test() { let x: i64 = 42; let ptr: *bool = &x; }");
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_deref_non_pointer() {
+    let result = typecheck!("fn test() -> i64 { let x: i64 = 42; *x }");
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_ref_constant() {
+    let result = typecheck!(
+        r#"
+        const X: i64 = 42;
+        fn test() -> *i64 { &X }
+        "#
+    );
+    assert!(result.is_err());
+}
