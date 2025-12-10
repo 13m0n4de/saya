@@ -27,13 +27,10 @@ impl GenValue {
 
 impl From<GenValue> for qbe::Value {
     fn from(value: GenValue) -> Self {
-        match value.ty() {
-            Type::Unit | Type::Never => unreachable!(),
-            _ => match value {
-                GenValue::Const(val, _) => qbe::Value::Const(val),
-                GenValue::Global(name, _) => qbe::Value::Global(name),
-                GenValue::Temp(name, _) => qbe::Value::Temporary(name),
-            },
+        match value {
+            GenValue::Const(val, _) => qbe::Value::Const(val),
+            GenValue::Global(name, _) => qbe::Value::Global(name),
+            GenValue::Temp(name, _) => qbe::Value::Temporary(name),
         }
     }
 }

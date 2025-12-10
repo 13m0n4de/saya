@@ -135,6 +135,15 @@ impl<'a> Parser<'a> {
                 let inner_type = Box::new(self.parse_type_ann()?);
                 Ok(Type::Pointer(inner_type))
             }
+            TokenKind::OpenParen => {
+                self.advance()?;
+                self.expect(TokenKind::CloseParen)?;
+                Ok(Type::Unit)
+            }
+            TokenKind::Bang => {
+                self.advance()?;
+                Ok(Type::Never)
+            }
             _ => Err(ParseError::new(
                 format!("Unknown type: {:?}", self.current.kind),
                 self.current.span,

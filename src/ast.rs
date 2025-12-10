@@ -19,8 +19,8 @@ impl From<&Type> for qbe::Type<'static> {
             Type::Bool => qbe::Type::Word,
             Type::Pointer(_) => qbe::Type::Long,
             Type::Array(_, _) => qbe::Type::Long,
-            Type::Unit => qbe::Type::Zero,
-            Type::Never => unreachable!("Never type should not need QBE type conversion"),
+            Type::Unit => qbe::Type::Long,
+            Type::Never => qbe::Type::Long,
         }
     }
 }
