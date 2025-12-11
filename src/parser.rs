@@ -107,38 +107,47 @@ impl<'a> Parser<'a> {
                     )),
                 }
             }
-            // Slice: &[T]
-            TokenKind::And => {
-                self.advance()?;
-                self.expect(TokenKind::OpenBracket)?;
-                let elem_type_ann = Box::new(self.parse_type_ann()?);
-                self.expect(TokenKind::CloseBracket)?;
-                Ok(Type::Slice(elem_type_ann))
-            }
-            // Array: [T; N]
+            // Slice: [T] or Array: [T; N]
             TokenKind::OpenBracket => {
                 self.advance()?;
                 let elem_type_ann = Box::new(self.parse_type_ann()?);
-                self.expect(TokenKind::Semi)?;
 
-                let size = if let TokenKind::Integer(n) = self.current.kind {
-                    if n < 0 {
-                        return Err(ParseError::new(
-                            "Array size cannot be negative".to_string(),
-                            self.current.span,
-                        ));
+                match self.current.kind {
+                    // Slice: [T]
+                    TokenKind::CloseBracket => {
+                        self.advance()?;
+                        Ok(Type::Slice(elem_type_ann))
                     }
-                    n as usize
-                } else {
-                    return Err(ParseError::new(
-                        "Expected array size".to_string(),
-                        self.current.span,
-                    ));
-                };
+                    // Array: [T; N]
+                    TokenKind::Semi => {
+                        self.advance()?;
+                        let size = if let TokenKind::Integer(n) = self.current.kind {
+                            if n < 0 {
+                                return Err(ParseError::new(
+                                    "Array size cannot be negative".to_string(),
+                                    self.current.span,
+                                ));
+                            }
+                            n as usize
+                        } else {
+                            return Err(ParseError::new(
+                                "Expected array size".to_string(),
+                                self.current.span,
+                            ));
+                        };
 
-                self.advance()?;
-                self.expect(TokenKind::CloseBracket)?;
-                Ok(Type::Array(elem_type_ann, size))
+                        self.advance()?;
+                        self.expect(TokenKind::CloseBracket)?;
+                        Ok(Type::Array(elem_type_ann, size))
+                    }
+                    _ => Err(ParseError::new(
+                        format!(
+                            "Expected `]` or `;` after type in brackets, found {:?}",
+                            self.current.kind
+                        ),
+                        self.current.span,
+                    )),
+                }
             }
             // Pointer: *T
             TokenKind::Star => {
