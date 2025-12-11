@@ -13,11 +13,11 @@ function-def = "fn" identifier "(" [param-list] ")" ["->" type-name] block
 param-list = param *("," param)
 param = identifier ":" type-name
 
-type-name = slice-type / pointer-type / array-type / base-type
+type-name = slice-type / array-type / pointer-type / base-type
 base-type = "i64" / "u8" / "bool"
 pointer-type = "*" type-name
 array-type = "[" type-name ";" integer "]"
-slice-type = "&" "[" type-name "]"
+slice-type = "[" type-name "]"
 
 block = "{" *statement [expression] "}"
 
