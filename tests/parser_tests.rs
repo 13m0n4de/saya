@@ -355,7 +355,7 @@ fn test_extern_declarations() {
     let program = parse!(
         r#"
         extern static stderr: i64;
-        extern fn puts(s: &[u8]) -> i64;
+        extern fn puts(s: [u8]) -> i64;
     "#
     )
     .unwrap();

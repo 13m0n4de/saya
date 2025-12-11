@@ -28,7 +28,7 @@ fn test_integer_literal() {
 
 #[test]
 fn test_string_literal() {
-    let program = typecheck!(r#"fn main() -> &[u8] { "hello" }"#).unwrap();
+    let program = typecheck!(r#"fn main() -> [u8] { "hello" }"#).unwrap();
 
     match &program.items[0] {
         Item::Function(func) => {
