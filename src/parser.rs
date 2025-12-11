@@ -94,11 +94,12 @@ impl<'a> Parser<'a> {
 
     fn parse_type_ann(&mut self) -> Result<Type, ParseError> {
         match self.current.kind.clone() {
+            // Base types: i64, u8, bool
             TokenKind::Ident(name) => {
                 self.advance()?;
                 match name.as_str() {
                     "i64" => Ok(Type::I64),
-                    "str" => Ok(Type::Str),
+                    "u8" => Ok(Type::U8),
                     "bool" => Ok(Type::Bool),
                     _ => Err(ParseError::new(
                         format!("Unknown type: {name}"),
@@ -106,6 +107,15 @@ impl<'a> Parser<'a> {
                     )),
                 }
             }
+            // Slice: &[T]
+            TokenKind::And => {
+                self.advance()?;
+                self.expect(TokenKind::OpenBracket)?;
+                let elem_type_ann = Box::new(self.parse_type_ann()?);
+                self.expect(TokenKind::CloseBracket)?;
+                Ok(Type::Slice(elem_type_ann))
+            }
+            // Array: [T; N]
             TokenKind::OpenBracket => {
                 self.advance()?;
                 let elem_type_ann = Box::new(self.parse_type_ann()?);
@@ -130,16 +140,19 @@ impl<'a> Parser<'a> {
                 self.expect(TokenKind::CloseBracket)?;
                 Ok(Type::Array(elem_type_ann, size))
             }
+            // Pointer: *T
             TokenKind::Star => {
                 self.advance()?;
                 let inner_type = Box::new(self.parse_type_ann()?);
                 Ok(Type::Pointer(inner_type))
             }
+            // Unit: ()
             TokenKind::OpenParen => {
                 self.advance()?;
                 self.expect(TokenKind::CloseParen)?;
                 Ok(Type::Unit)
             }
+            // Never: !
             TokenKind::Bang => {
                 self.advance()?;
                 Ok(Type::Never)

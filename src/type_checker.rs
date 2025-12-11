@@ -348,7 +348,10 @@ impl TypeChecker {
 
         let (ty, kind) = match lit {
             Literal::Integer(n) => (Type::I64, ExprKind::Literal(Literal::Integer(*n))),
-            Literal::String(s) => (Type::Str, ExprKind::Literal(Literal::String(s.clone()))),
+            Literal::String(s) => (
+                Type::Slice(Box::new(Type::U8)),
+                ExprKind::Literal(Literal::String(s.clone())),
+            ),
             Literal::Bool(b) => (Type::Bool, ExprKind::Literal(Literal::Bool(*b))),
         };
 
@@ -460,7 +463,7 @@ impl TypeChecker {
         }
 
         match typed_array.ty {
-            Type::Array(ref elem_ty, _) => Ok(Expr {
+            Type::Array(ref elem_ty, _) | Type::Slice(ref elem_ty) => Ok(Expr {
                 kind: ExprKind::Index(Box::new(typed_array.clone()), Box::new(typed_index)),
                 ty: *elem_ty.clone(),
                 span: expr.span,
