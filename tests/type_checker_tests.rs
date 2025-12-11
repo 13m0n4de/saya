@@ -28,12 +28,12 @@ fn test_integer_literal() {
 
 #[test]
 fn test_string_literal() {
-    let program = typecheck!(r#"fn main() -> str { "hello" }"#).unwrap();
+    let program = typecheck!(r#"fn main() -> &[u8] { "hello" }"#).unwrap();
 
     match &program.items[0] {
         Item::Function(func) => {
             let body = &func.body;
-            assert_eq!(body.ty, Type::Str);
+            assert_eq!(body.ty, Type::Slice(Box::new(Type::U8)));
         }
         _ => panic!("Expected function"),
     }
@@ -335,7 +335,7 @@ fn test_unary_neg_type_error() {
 
 #[test]
 fn test_unary_not_type_error() {
-    let result = typecheck!(r#"fn test() -> str { !"hello" }"#);
+    let result = typecheck!(r#"fn test() -> bool { !"hello" }"#);
     assert!(result.is_err());
 }
 
