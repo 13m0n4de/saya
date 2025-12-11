@@ -393,7 +393,7 @@ impl CodeGen {
                 Ok(elem_addr)
             }
             _ => Err(CodeGenError::new(
-                "Invalid left-hand side of assignment".to_string(),
+                format!("Cannot take address of this expression: {:?}", expr.kind),
                 expr.span,
             )),
         }
