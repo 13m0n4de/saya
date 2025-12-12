@@ -94,11 +94,12 @@ impl<'a> Parser<'a> {
 
     fn parse_type_ann(&mut self) -> Result<Type, ParseError> {
         match self.current.kind.clone() {
+            // Base types: i64, u8, bool
             TokenKind::Ident(name) => {
                 self.advance()?;
                 match name.as_str() {
                     "i64" => Ok(Type::I64),
-                    "str" => Ok(Type::Str),
+                    "u8" => Ok(Type::U8),
                     "bool" => Ok(Type::Bool),
                     _ => Err(ParseError::new(
                         format!("Unknown type: {name}"),
@@ -106,40 +107,61 @@ impl<'a> Parser<'a> {
                     )),
                 }
             }
+            // Slice: [T] or Array: [T; N]
             TokenKind::OpenBracket => {
                 self.advance()?;
                 let elem_type_ann = Box::new(self.parse_type_ann()?);
-                self.expect(TokenKind::Semi)?;
 
-                let size = if let TokenKind::Integer(n) = self.current.kind {
-                    if n < 0 {
-                        return Err(ParseError::new(
-                            "Array size cannot be negative".to_string(),
-                            self.current.span,
-                        ));
+                match self.current.kind {
+                    // Slice: [T]
+                    TokenKind::CloseBracket => {
+                        self.advance()?;
+                        Ok(Type::Slice(elem_type_ann))
                     }
-                    n as usize
-                } else {
-                    return Err(ParseError::new(
-                        "Expected array size".to_string(),
-                        self.current.span,
-                    ));
-                };
+                    // Array: [T; N]
+                    TokenKind::Semi => {
+                        self.advance()?;
+                        let size = if let TokenKind::Integer(n) = self.current.kind {
+                            if n < 0 {
+                                return Err(ParseError::new(
+                                    "Array size cannot be negative".to_string(),
+                                    self.current.span,
+                                ));
+                            }
+                            n as usize
+                        } else {
+                            return Err(ParseError::new(
+                                "Expected array size".to_string(),
+                                self.current.span,
+                            ));
+                        };
 
-                self.advance()?;
-                self.expect(TokenKind::CloseBracket)?;
-                Ok(Type::Array(elem_type_ann, size))
+                        self.advance()?;
+                        self.expect(TokenKind::CloseBracket)?;
+                        Ok(Type::Array(elem_type_ann, size))
+                    }
+                    _ => Err(ParseError::new(
+                        format!(
+                            "Expected `]` or `;` after type in brackets, found {:?}",
+                            self.current.kind
+                        ),
+                        self.current.span,
+                    )),
+                }
             }
+            // Pointer: *T
             TokenKind::Star => {
                 self.advance()?;
                 let inner_type = Box::new(self.parse_type_ann()?);
                 Ok(Type::Pointer(inner_type))
             }
+            // Unit: ()
             TokenKind::OpenParen => {
                 self.advance()?;
                 self.expect(TokenKind::CloseParen)?;
                 Ok(Type::Unit)
             }
+            // Never: !
             TokenKind::Bang => {
                 self.advance()?;
                 Ok(Type::Never)

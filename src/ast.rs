@@ -3,22 +3,80 @@ use crate::span::Span;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
     I64,
-    Str,
+    U8,
     Bool,
     Pointer(Box<Type>),
     Array(Box<Type>, usize),
+    Slice(Box<Type>),
     Unit,
     Never,
 }
 
-impl From<&Type> for qbe::Type<'static> {
-    fn from(ty: &Type) -> Self {
-        match ty {
+impl Type {
+    pub fn is_aggregate(&self) -> bool {
+        matches!(self, Type::Slice(_) | Type::Array(..))
+    }
+
+    pub fn size(&self) -> usize {
+        match self {
+            Type::I64 => 8,
+            Type::U8 => 1,
+            Type::Bool => 1,
+            Type::Pointer(_) => 8,
+            Type::Slice(_) => 16, // { ptr: l, len: l }
+            Type::Array(elem_ty, count) => elem_ty.size() * count,
+            Type::Unit => 0,
+            Type::Never => 0,
+        }
+    }
+
+    pub fn align(&self) -> u64 {
+        match self {
+            Type::I64 => 8,
+            Type::U8 => 1,
+            Type::Bool => 1,
+            Type::Pointer(_) => 8,
+            Type::Slice(_) => 8,
+            Type::Array(elem_ty, _) => elem_ty.align(),
+            Type::Unit => 1,
+            Type::Never => 1,
+        }
+    }
+
+    pub fn to_qbe_base(&self) -> qbe::Type<'static> {
+        match self {
             Type::I64 => qbe::Type::Long,
-            Type::Str => qbe::Type::Long,
+            Type::U8 => qbe::Type::Word,
             Type::Bool => qbe::Type::Word,
             Type::Pointer(_) => qbe::Type::Long,
             Type::Array(_, _) => qbe::Type::Long,
+            Type::Slice(_) => qbe::Type::Long,
+            Type::Unit => qbe::Type::Long,
+            Type::Never => qbe::Type::Long,
+        }
+    }
+
+    pub fn to_qbe_load(&self) -> qbe::Type<'static> {
+        match self {
+            Type::I64 => qbe::Type::Long,
+            Type::U8 => qbe::Type::UnsignedByte,
+            Type::Bool => qbe::Type::UnsignedByte,
+            Type::Pointer(_) => qbe::Type::Long,
+            Type::Array(_, _) => qbe::Type::Long,
+            Type::Slice(_) => qbe::Type::Long,
+            Type::Unit => qbe::Type::Long,
+            Type::Never => qbe::Type::Long,
+        }
+    }
+
+    pub fn to_qbe_store(&self) -> qbe::Type<'static> {
+        match self {
+            Type::I64 => qbe::Type::Long,
+            Type::U8 => qbe::Type::Byte,
+            Type::Bool => qbe::Type::Byte,
+            Type::Pointer(_) => qbe::Type::Long,
+            Type::Array(_, _) => qbe::Type::Long,
+            Type::Slice(_) => qbe::Type::Long,
             Type::Unit => qbe::Type::Long,
             Type::Never => qbe::Type::Long,
         }
