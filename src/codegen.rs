@@ -268,6 +268,24 @@ impl CodeGen {
         }
     }
 
+    fn load_value(
+        &mut self,
+        qfunc: &mut qbe::Function<'static>,
+        addr: qbe::Value,
+        ty: &Type,
+    ) -> GenValue {
+        if ty.is_aggregate() {
+            match addr {
+                qbe::Value::Temporary(name) => GenValue::Temp(name, ty.clone()),
+                qbe::Value::Global(name) => GenValue::Global(name, ty.clone()),
+                qbe::Value::Const(_) => unreachable!("cannot load from a constant address"),
+            }
+        } else {
+            let ext_ty = ty.to_qbe_extended();
+            self.assign_to_temp(qfunc, ty, qbe::Instr::Load(ext_ty, addr))
+        }
+    }
+
     fn push_scope(&mut self) {
         self.scopes.push(HashSet::new());
     }
@@ -689,25 +707,13 @@ impl CodeGen {
         // Local variables
         if self.is_local_var(name) {
             let addr = qbe::Value::Temporary(name.clone());
-
-            if expr.ty.is_aggregate() {
-                return Ok(GenValue::Temp(name.clone(), expr.ty.clone()));
-            }
-
-            let ext_ty = expr.ty.to_qbe_extended();
-            return Ok(self.assign_to_temp(qfunc, &expr.ty, qbe::Instr::Load(ext_ty, addr)));
+            return Ok(self.load_value(qfunc, addr, &expr.ty));
         }
 
         // Global variables
         if self.is_global_var(name) {
             let addr = qbe::Value::Global(name.clone());
-
-            if expr.ty.is_aggregate() {
-                return Ok(GenValue::Global(name.clone(), expr.ty.clone()));
-            }
-
-            let ext_ty = expr.ty.to_qbe_extended();
-            return Ok(self.assign_to_temp(qfunc, &expr.ty, qbe::Instr::Load(ext_ty, addr)));
+            return Ok(self.load_value(qfunc, addr, &expr.ty));
         }
 
         Err(CodeGenError::new(
@@ -754,8 +760,7 @@ impl CodeGen {
             }
             UnaryOp::Deref => {
                 let ptr = self.generate_expression(qfunc, operand_expr)?.into_qbe();
-                let ext_ty = expr.ty.to_qbe_extended();
-                qbe::Instr::Load(ext_ty, ptr)
+                return Ok(self.load_value(qfunc, ptr, &expr.ty));
             }
         };
 
@@ -988,8 +993,7 @@ impl CodeGen {
         };
 
         let addr = self.address_of(qfunc, expr)?;
-        let ext_ty = expr.ty.to_qbe_extended();
-        Ok(self.assign_to_temp(qfunc, &expr.ty, qbe::Instr::Load(ext_ty, addr)))
+        Ok(self.load_value(qfunc, addr, &expr.ty))
     }
 
     fn generate_expression(
