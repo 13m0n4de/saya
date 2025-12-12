@@ -56,11 +56,24 @@ impl Type {
         }
     }
 
-    pub fn to_qbe_extended(&self) -> qbe::Type<'static> {
+    pub fn to_qbe_load(&self) -> qbe::Type<'static> {
         match self {
             Type::I64 => qbe::Type::Long,
             Type::U8 => qbe::Type::UnsignedByte,
             Type::Bool => qbe::Type::UnsignedByte,
+            Type::Pointer(_) => qbe::Type::Long,
+            Type::Array(_, _) => qbe::Type::Long,
+            Type::Slice(_) => qbe::Type::Long,
+            Type::Unit => qbe::Type::Long,
+            Type::Never => qbe::Type::Long,
+        }
+    }
+
+    pub fn to_qbe_store(&self) -> qbe::Type<'static> {
+        match self {
+            Type::I64 => qbe::Type::Long,
+            Type::U8 => qbe::Type::Byte,
+            Type::Bool => qbe::Type::Byte,
             Type::Pointer(_) => qbe::Type::Long,
             Type::Array(_, _) => qbe::Type::Long,
             Type::Slice(_) => qbe::Type::Long,

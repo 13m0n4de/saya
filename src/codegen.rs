@@ -194,9 +194,9 @@ impl CodeGen {
         };
 
         let base_ty = field_ty.to_qbe_base();
-        let ext_ty = field_ty.to_qbe_extended();
+        let load_ty = field_ty.to_qbe_load();
         let result = qbe::Value::Temporary(self.new_temp());
-        qfunc.assign_instr(result.clone(), base_ty, qbe::Instr::Load(ext_ty, addr));
+        qfunc.assign_instr(result.clone(), base_ty, qbe::Instr::Load(load_ty, addr));
         result
     }
 
@@ -220,8 +220,8 @@ impl CodeGen {
             temp
         };
 
-        let qbe_ty = field_ty.to_qbe_extended();
-        qfunc.add_instr(qbe::Instr::Store(qbe_ty, addr, value));
+        let store_ty = field_ty.to_qbe_store();
+        qfunc.add_instr(qbe::Instr::Store(store_ty, addr, value));
     }
 
     fn copy_aggregate(
@@ -263,8 +263,8 @@ impl CodeGen {
         if ty.is_aggregate() {
             self.copy_aggregate(qfunc, dest_addr, src.into_qbe(), ty);
         } else {
-            let qbe_ty = ty.to_qbe_extended();
-            qfunc.add_instr(qbe::Instr::Store(qbe_ty, dest_addr, src.into_qbe()));
+            let store_ty = ty.to_qbe_store();
+            qfunc.add_instr(qbe::Instr::Store(store_ty, dest_addr, src.into_qbe()));
         }
     }
 
@@ -281,8 +281,8 @@ impl CodeGen {
                 qbe::Value::Const(_) => unreachable!("cannot load from a constant address"),
             }
         } else {
-            let ext_ty = ty.to_qbe_extended();
-            self.assign_to_temp(qfunc, ty, qbe::Instr::Load(ext_ty, addr))
+            let load_ty = ty.to_qbe_load();
+            self.assign_to_temp(qfunc, ty, qbe::Instr::Load(load_ty, addr))
         }
     }
 
@@ -417,13 +417,16 @@ impl CodeGen {
         }
     }
 
-    fn literal_to_data_item(&mut self, lit: &Literal) -> qbe::DataItem {
+    fn literal_to_data_items(&mut self, lit: &Literal) -> Vec<(qbe::Type<'static>, qbe::DataItem)> {
         match lit {
-            Literal::Integer(n) => qbe::DataItem::Const(n.cast_unsigned()),
-            Literal::Bool(b) => qbe::DataItem::Const(u64::from(*b)),
+            Literal::Integer(n) => vec![(qbe::Type::Long, qbe::DataItem::Const(n.cast_unsigned()))],
+            Literal::Bool(b) => vec![(qbe::Type::Word, qbe::DataItem::Const(u64::from(*b)))],
             Literal::String(s) => {
                 let label = self.emit_string_data(s);
-                qbe::DataItem::Symbol(label, None)
+                vec![
+                    (qbe::Type::Long, qbe::DataItem::Symbol(label, None)), // ptr
+                    (qbe::Type::Long, qbe::DataItem::Const(s.len() as u64)), // len
+                ]
             }
         }
     }
@@ -495,14 +498,13 @@ impl CodeGen {
 
     fn generate_static(&mut self, static_def: &StaticDef<Type>) -> Result<(), CodeGenError> {
         let literal = self.eval_const_expr(&static_def.init)?;
-        let qbe_ty = static_def.type_ann.to_qbe_base();
-        let data_item = self.literal_to_data_item(&literal);
+        let data_items = self.literal_to_data_items(&literal);
 
         self.data_defs.push(qbe::DataDef::new(
             qbe::Linkage::private(),
             static_def.name.clone(),
             None,
-            vec![(qbe_ty, data_item)],
+            data_items,
         ));
 
         Ok(())
@@ -650,35 +652,7 @@ impl CodeGen {
 
         match lit {
             Literal::Integer(n) => GenValue::Const(n.cast_unsigned(), Type::I64),
-            Literal::String(s) => {
-                // Emit global string data
-                let data_label = self.emit_string_data(s);
-
-                // Allocate slice on stack: { ptr: l, len: l }
-                let slice_addr = self.alloc_local(qfunc, &Type::Slice(Box::new(Type::U8)));
-
-                // Store ptr field
-                let ptr = qbe::Value::Global(data_label);
-                self.store_field(
-                    qfunc,
-                    slice_addr.clone(),
-                    0,
-                    ptr,
-                    &Type::Pointer(Box::new(Type::U8)),
-                );
-
-                // Store len field
-                let len = qbe::Value::Const(s.len() as u64);
-                self.store_field(qfunc, slice_addr.clone(), 8, len, &Type::I64);
-
-                // Return address of slice
-                match slice_addr {
-                    qbe::Value::Temporary(name) => {
-                        GenValue::Temp(name, Type::Slice(Box::new(Type::U8)))
-                    }
-                    _ => unreachable!(),
-                }
-            }
+            Literal::String(s) => self.generate_string_slice(qfunc, s),
             Literal::Bool(b) => GenValue::Const(u64::from(*b), Type::Bool),
         }
     }
@@ -697,10 +671,7 @@ impl CodeGen {
             return match literal {
                 Literal::Integer(n) => Ok(GenValue::Const(n.cast_unsigned(), Type::I64)),
                 Literal::Bool(b) => Ok(GenValue::Const(u64::from(b), Type::Bool)),
-                Literal::String(s) => {
-                    let label = self.emit_string_data(&s);
-                    Ok(GenValue::Global(label, Type::Slice(Box::new(Type::U8))))
-                }
+                Literal::String(s) => Ok(self.generate_string_slice(qfunc, &s)),
             };
         }
 
@@ -907,7 +878,7 @@ impl CodeGen {
             qbe::Instr::Alloc8(array_size),
         );
 
-        let elem_ext_ty = elem_ty.to_qbe_extended();
+        let elem_store_ty = elem_ty.to_qbe_store();
         for (i, elem) in elements.iter().enumerate() {
             let elem_val = self.generate_expression(qfunc, elem)?.into_qbe();
             let offset = i as u64 * elem_size;
@@ -917,7 +888,11 @@ impl CodeGen {
                 qbe::Type::Long,
                 qbe::Instr::Add(array_ptr.clone(), qbe::Value::Const(offset)),
             );
-            qfunc.add_instr(qbe::Instr::Store(elem_ext_ty.clone(), elem_addr, elem_val));
+            qfunc.add_instr(qbe::Instr::Store(
+                elem_store_ty.clone(),
+                elem_addr,
+                elem_val,
+            ));
         }
 
         Ok(GenValue::Temp(array_name, expr.ty.clone()))
@@ -963,7 +938,7 @@ impl CodeGen {
         );
 
         let elem_val = self.generate_expression(qfunc, elem)?.into_qbe();
-        let elem_ext_ty = elem_ty.to_qbe_extended();
+        let elem_store_ty = elem_ty.to_qbe_store();
 
         for i in 0..count_num {
             let offset = i as u64 * elem_size;
@@ -974,7 +949,7 @@ impl CodeGen {
                 qbe::Instr::Add(array_ptr.clone(), qbe::Value::Const(offset)),
             );
             qfunc.add_instr(qbe::Instr::Store(
-                elem_ext_ty.clone(),
+                elem_store_ty.clone(),
                 elem_addr,
                 elem_val.clone(),
             ));
@@ -1041,6 +1016,34 @@ impl CodeGen {
         ));
 
         label
+    }
+
+    fn generate_string_slice(&mut self, qfunc: &mut qbe::Function<'static>, s: &str) -> GenValue {
+        // Emit global string data
+        let data_label = self.emit_string_data(s);
+
+        // Allocate slice on stack: { ptr: l, len: l }
+        let slice_addr = self.alloc_local(qfunc, &Type::Slice(Box::new(Type::U8)));
+
+        // Store ptr field
+        let ptr = qbe::Value::Global(data_label);
+        self.store_field(
+            qfunc,
+            slice_addr.clone(),
+            0,
+            ptr,
+            &Type::Pointer(Box::new(Type::U8)),
+        );
+
+        // Store len field
+        let len = qbe::Value::Const(s.len() as u64);
+        self.store_field(qfunc, slice_addr.clone(), 8, len, &Type::I64);
+
+        // Return address of slice
+        match slice_addr {
+            qbe::Value::Temporary(name) => GenValue::Temp(name, Type::Slice(Box::new(Type::U8))),
+            _ => unreachable!(),
+        }
     }
 
     fn generate_expr_call(
