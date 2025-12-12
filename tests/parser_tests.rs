@@ -49,6 +49,66 @@ fn test_bool_literal() {
 }
 
 #[test]
+fn test_struct_literal() {
+    let expr =
+        parse_expr!("Line { start: Point { x: 0, y: 0 }, end: Point { x: 10, y: 10 } }").unwrap();
+
+    match expr.kind {
+        ExprKind::Struct(struct_expr) => {
+            assert_eq!(struct_expr.name, "Line");
+            assert_eq!(struct_expr.fields.len(), 2);
+
+            assert_eq!(struct_expr.fields[0].name, "start");
+            match &struct_expr.fields[0].value.kind {
+                ExprKind::Struct(start_point) => {
+                    assert_eq!(start_point.name, "Point");
+                    assert_eq!(start_point.fields.len(), 2);
+
+                    // start.x = 0
+                    assert_eq!(start_point.fields[0].name, "x");
+                    assert!(matches!(
+                        start_point.fields[0].value.kind,
+                        ExprKind::Literal(Literal::Integer(0))
+                    ));
+
+                    // start.y = 0
+                    assert_eq!(start_point.fields[1].name, "y");
+                    assert!(matches!(
+                        start_point.fields[1].value.kind,
+                        ExprKind::Literal(Literal::Integer(0))
+                    ));
+                }
+                _ => panic!("Expected nested struct literal for 'start'"),
+            }
+
+            assert_eq!(struct_expr.fields[1].name, "end");
+            match &struct_expr.fields[1].value.kind {
+                ExprKind::Struct(end_point) => {
+                    assert_eq!(end_point.name, "Point");
+                    assert_eq!(end_point.fields.len(), 2);
+
+                    // end.x = 10
+                    assert_eq!(end_point.fields[0].name, "x");
+                    assert!(matches!(
+                        end_point.fields[0].value.kind,
+                        ExprKind::Literal(Literal::Integer(10))
+                    ));
+
+                    // end.y = 10
+                    assert_eq!(end_point.fields[1].name, "y");
+                    assert!(matches!(
+                        end_point.fields[1].value.kind,
+                        ExprKind::Literal(Literal::Integer(10))
+                    ));
+                }
+                _ => panic!("Expected nested struct literal for 'end'"),
+            }
+        }
+        _ => panic!("Expected struct literal"),
+    }
+}
+
+#[test]
 fn test_operator_precedence() {
     let expr = parse_expr!("1 + 2 * 3").unwrap();
 
@@ -285,6 +345,22 @@ fn test_static_definition() {
             assert_eq!(static_def.type_ann, Type::I64);
         }
         _ => panic!("Expected static"),
+    }
+}
+
+#[test]
+fn test_struct_definition() {
+    let program = parse!("struct Position { x: i64, y: i64 }").unwrap();
+
+    match &program.items[0] {
+        Item::Struct(struct_def) => {
+            assert_eq!(struct_def.name, "Position");
+            assert_eq!(struct_def.fields[0].name, "x");
+            assert_eq!(struct_def.fields[0].type_ann, Type::I64);
+            assert_eq!(struct_def.fields[1].name, "y");
+            assert_eq!(struct_def.fields[1].type_ann, Type::I64);
+        }
+        _ => panic!("Expected struct"),
     }
 }
 
