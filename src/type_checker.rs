@@ -86,6 +86,9 @@ impl TypeChecker {
                 Item::Static(def) => {
                     self.globals.insert(def.name.clone(), def.type_ann.clone());
                 }
+                Item::Struct(def) => {
+                    todo!()
+                }
                 Item::Function(def) => {
                     let params = def
                         .params
@@ -167,6 +170,9 @@ impl TypeChecker {
                         init: Box::new(typed_init),
                         span: def.span,
                     }));
+                }
+                Item::Struct(def) => {
+                    todo!()
                 }
                 Item::Function(def) => {
                     let typed_func = self.check_function(def)?;
@@ -316,6 +322,7 @@ impl TypeChecker {
     fn check_expression(&mut self, expr: &Expr) -> Result<Expr<Type>, TypeError> {
         match &expr.kind {
             ExprKind::Literal(..) => Ok(Self::check_expr_literal(expr)),
+            ExprKind::Struct(..) => self.check_expr_struct(expr),
             ExprKind::Ident(..) => self.check_expr_ident(expr),
             ExprKind::Array(..) => self.check_expr_array(expr),
             ExprKind::Repeat(..) => self.check_expr_repeat(expr),
@@ -360,6 +367,10 @@ impl TypeChecker {
             ty,
             span: expr.span,
         }
+    }
+
+    fn check_expr_struct(&mut self, expr: &Expr) -> Result<Expr<Type>, TypeError> {
+        todo!()
     }
 
     fn check_expr_ident(&mut self, expr: &Expr) -> Result<Expr<Type>, TypeError> {

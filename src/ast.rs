@@ -8,6 +8,7 @@ pub enum Type {
     Pointer(Box<Type>),
     Array(Box<Type>, usize),
     Slice(Box<Type>),
+    Struct(String),
     Unit,
     Never,
 }
@@ -25,6 +26,7 @@ impl Type {
             Type::Pointer(_) => 8,
             Type::Slice(_) => 16, // { ptr: l, len: l }
             Type::Array(elem_ty, count) => elem_ty.size() * count,
+            Type::Struct(_) => todo!(),
             Type::Unit => 0,
             Type::Never => 0,
         }
@@ -38,6 +40,7 @@ impl Type {
             Type::Pointer(_) => 8,
             Type::Slice(_) => 8,
             Type::Array(elem_ty, _) => elem_ty.align(),
+            Type::Struct(_) => todo!(),
             Type::Unit => 1,
             Type::Never => 1,
         }
@@ -51,6 +54,7 @@ impl Type {
             Type::Pointer(_) => qbe::Type::Long,
             Type::Array(_, _) => qbe::Type::Long,
             Type::Slice(_) => qbe::Type::Long,
+            Type::Struct(_) => todo!(),
             Type::Unit => qbe::Type::Long,
             Type::Never => qbe::Type::Long,
         }
@@ -64,6 +68,7 @@ impl Type {
             Type::Pointer(_) => qbe::Type::Long,
             Type::Array(_, _) => qbe::Type::Long,
             Type::Slice(_) => qbe::Type::Long,
+            Type::Struct(_) => todo!(),
             Type::Unit => qbe::Type::Long,
             Type::Never => qbe::Type::Long,
         }
@@ -77,6 +82,7 @@ impl Type {
             Type::Pointer(_) => qbe::Type::Long,
             Type::Array(_, _) => qbe::Type::Long,
             Type::Slice(_) => qbe::Type::Long,
+            Type::Struct(_) => todo!(),
             Type::Unit => qbe::Type::Long,
             Type::Never => qbe::Type::Long,
         }
@@ -93,6 +99,7 @@ pub enum Item<T = ()> {
     Const(ConstDef<T>),
     Static(StaticDef<T>),
     Function(FunctionDef<T>),
+    Struct(StructDef),
     Extern(ExternItem),
 }
 
@@ -130,6 +137,20 @@ pub struct StaticDef<T = ()> {
     pub name: String,
     pub type_ann: Type,
     pub init: Box<Expr<T>>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StructDef {
+    pub name: String,
+    pub fields: Vec<Field>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Field {
+    pub name: String,
+    pub type_ann: Type,
     pub span: Span,
 }
 
@@ -187,6 +208,7 @@ pub struct Expr<T = ()> {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExprKind<T = ()> {
     Literal(Literal),
+    Struct(StructExpr<T>),
     Ident(String),
     Array(Vec<Expr<T>>),
     Repeat(Box<Expr<T>>, Box<Expr<T>>),
@@ -208,6 +230,20 @@ pub enum Literal {
     Integer(i64),
     String(String),
     Bool(bool),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StructExpr<T> {
+    pub name: String,
+    pub fields: Vec<FieldInit<T>>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FieldInit<T = ()> {
+    pub name: String,
+    pub value: Box<Expr<T>>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]

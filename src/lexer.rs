@@ -7,6 +7,7 @@ pub enum TokenKind {
     Fn,       // fn
     Extern,   // extern
     Return,   // return
+    Struct,   // struct
     Let,      // let
     If,       // if
     Else,     // else
@@ -307,6 +308,7 @@ impl<'a> Lexer<'a> {
             "fn" => TokenKind::Fn,
             "extern" => TokenKind::Extern,
             "return" => TokenKind::Return,
+            "struct" => TokenKind::Struct,
             "let" => TokenKind::Let,
             "if" => TokenKind::If,
             "else" => TokenKind::Else,

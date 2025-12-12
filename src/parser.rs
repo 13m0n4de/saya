@@ -180,6 +180,7 @@ impl<'a> Parser<'a> {
             match self.current.kind {
                 TokenKind::Const => items.push(Item::Const(self.parse_const()?)),
                 TokenKind::Static => items.push(Item::Static(self.parse_static()?)),
+                TokenKind::Struct => items.push(Item::Struct(self.parse_struct()?)),
                 TokenKind::Fn => items.push(Item::Function(self.parse_function()?)),
                 TokenKind::Extern => items.push(self.parse_item_extern()?),
                 TokenKind::Eof => break,
@@ -311,6 +312,82 @@ impl<'a> Parser<'a> {
             name,
             type_ann,
             init,
+            span: start_span,
+        })
+    }
+
+    fn parse_struct(&mut self) -> Result<StructDef, ParseError> {
+        let start_span = self.current.span;
+
+        self.expect(TokenKind::Struct)?;
+
+        let name = self.expect_identifier()?;
+
+        self.expect(TokenKind::OpenBrace)?;
+
+        let fields = if self.current.kind == TokenKind::CloseBrace {
+            Vec::new()
+        } else {
+            self.parse_field_list()?
+        };
+
+        self.expect(TokenKind::CloseBrace)?;
+
+        Ok(StructDef {
+            name,
+            fields,
+            span: start_span,
+        })
+    }
+
+    fn parse_field_list(&mut self) -> Result<Vec<Field>, ParseError> {
+        let mut fields = Vec::new();
+
+        fields.push(self.parse_field()?);
+
+        while self.eat(TokenKind::Comma)? {
+            fields.push(self.parse_field()?);
+        }
+
+        Ok(fields)
+    }
+
+    fn parse_field(&mut self) -> Result<Field, ParseError> {
+        let start_span = self.current.span;
+
+        let name = self.expect_identifier()?;
+        self.expect(TokenKind::Colon)?;
+        let type_ann = self.parse_type_ann()?;
+
+        Ok(Field {
+            name,
+            type_ann,
+            span: start_span,
+        })
+    }
+
+    fn parse_field_init_list(&mut self) -> Result<Vec<FieldInit>, ParseError> {
+        let mut fields = Vec::new();
+
+        fields.push(self.parse_field_init()?);
+
+        while self.eat(TokenKind::Comma)? {
+            fields.push(self.parse_field_init()?);
+        }
+
+        Ok(fields)
+    }
+
+    fn parse_field_init(&mut self) -> Result<FieldInit, ParseError> {
+        let start_span = self.current.span;
+
+        let name = self.expect_identifier()?;
+        self.expect(TokenKind::Colon)?;
+        let value = Box::new(self.parse_expression()?);
+
+        Ok(FieldInit {
+            name,
+            value,
             span: start_span,
         })
     }
@@ -645,7 +722,23 @@ impl<'a> Parser<'a> {
             TokenKind::Ident(name) => {
                 let name = name.clone();
                 self.advance()?;
-                ExprKind::Ident(name)
+
+                if self.eat(TokenKind::OpenBrace)? {
+                    let fields = if self.current.kind == TokenKind::CloseBrace {
+                        Vec::new()
+                    } else {
+                        self.parse_field_init_list()?
+                    };
+                    self.expect(TokenKind::CloseBrace)?;
+
+                    ExprKind::Struct(StructExpr {
+                        name,
+                        fields,
+                        span: start_span,
+                    })
+                } else {
+                    ExprKind::Ident(name)
+                }
             }
 
             TokenKind::OpenParen => {

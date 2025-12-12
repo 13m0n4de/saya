@@ -657,6 +657,14 @@ impl CodeGen {
         }
     }
 
+    fn generate_expr_struct(
+        &mut self,
+        qfunc: &mut qbe::Function<'static>,
+        expr: &Expr<Type>,
+    ) -> Result<GenValue, CodeGenError> {
+        todo!()
+    }
+
     fn generate_expr_ident(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
@@ -978,6 +986,7 @@ impl CodeGen {
     ) -> Result<GenValue, CodeGenError> {
         let result = match &expr.kind {
             ExprKind::Literal(..) => Ok(self.generate_expr_literal(qfunc, expr)),
+            ExprKind::Struct(..) => self.generate_expr_struct(qfunc, expr),
             ExprKind::Ident(..) => self.generate_expr_ident(qfunc, expr),
             ExprKind::Call(..) => self.generate_expr_call(qfunc, expr),
             ExprKind::Unary(..) => self.generate_expr_unary(qfunc, expr),
