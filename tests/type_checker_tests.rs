@@ -1,6 +1,7 @@
 use saya::ast::*;
 use saya::lexer::Lexer;
 use saya::parser::Parser;
+use saya::ty::{Type, TypeKind};
 use saya::type_checker::TypeChecker;
 
 macro_rules! typecheck {
@@ -20,7 +21,7 @@ fn test_integer_literal() {
     match &program.items[0] {
         Item::Function(func) => {
             let body = &func.body;
-            assert_eq!(body.ty, Type::I64);
+            assert_eq!(body.ty.kind, TypeKind::I64);
         }
         _ => panic!("Expected function"),
     }
@@ -33,7 +34,7 @@ fn test_string_literal() {
     match &program.items[0] {
         Item::Function(func) => {
             let body = &func.body;
-            assert_eq!(body.ty, Type::Slice(Box::new(Type::U8)));
+            assert_eq!(body.ty, Type::slice(Type::u8()));
         }
         _ => panic!("Expected function"),
     }
@@ -46,7 +47,7 @@ fn test_bool_literal() {
     match &program.items[0] {
         Item::Function(func) => {
             let body = &func.body;
-            assert_eq!(body.ty, Type::Bool);
+            assert_eq!(body.ty, Type::bool());
         }
         _ => panic!("Expected function"),
     }

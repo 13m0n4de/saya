@@ -1,6 +1,10 @@
 use std::{collections::HashMap, error::Error, fmt};
 
-use crate::{ast::*, span::Span};
+use crate::{
+    ast::*,
+    span::Span,
+    ty::{Type, TypeKind},
+};
 
 #[derive(Debug, Clone)]
 pub struct TypeError {
@@ -198,7 +202,7 @@ impl TypeChecker {
         let typed_body = self.check_block(&func.body)?;
 
         // The `Never` type is compatible with any return type
-        if typed_body.ty != func.return_type_ann && typed_body.ty != Type::Never {
+        if typed_body.ty != func.return_type_ann && typed_body.ty.kind != TypeKind::Never {
             return Err(TypeError::new(
                 format!(
                     "function '{}' has mismatched return type: expected {:?}, found {:?}",
@@ -239,7 +243,9 @@ impl TypeChecker {
 
             match &typed_stmt.kind {
                 StmtKind::Expr(expr)
-                    if !is_last && expr.ty != Type::Unit && expr.ty != Type::Never =>
+                    if !is_last
+                        && expr.ty.kind != TypeKind::Unit
+                        && expr.ty.kind != TypeKind::Never =>
                 {
                     return Err(TypeError::new(
                         format!(
@@ -249,7 +255,7 @@ impl TypeChecker {
                         expr.span,
                     ));
                 }
-                StmtKind::Expr(expr) | StmtKind::Semi(expr) if expr.ty == Type::Never => {
+                StmtKind::Expr(expr) | StmtKind::Semi(expr) if expr.ty.kind == TypeKind::Never => {
                     has_never = true;
                 }
                 _ => {}
@@ -266,8 +272,8 @@ impl TypeChecker {
             Some(Stmt {
                 kind: StmtKind::Semi(expr),
                 ..
-            }) if expr.ty == Type::Never => Type::Never,
-            _ => Type::Unit,
+            }) if expr.ty.kind == TypeKind::Never => Type::never(),
+            _ => Type::unit(),
         };
 
         self.pop_scope();
@@ -337,12 +343,12 @@ impl TypeChecker {
             ExprKind::While(..) => self.check_expr_while(expr),
             ExprKind::Break => Ok(Expr {
                 kind: ExprKind::Break,
-                ty: Type::Never,
+                ty: Type::never(),
                 span: expr.span,
             }),
             ExprKind::Continue => Ok(Expr {
                 kind: ExprKind::Continue,
-                ty: Type::Never,
+                ty: Type::never(),
                 span: expr.span,
             }),
         }
@@ -354,12 +360,12 @@ impl TypeChecker {
         };
 
         let (ty, kind) = match lit {
-            Literal::Integer(n) => (Type::I64, ExprKind::Literal(Literal::Integer(*n))),
+            Literal::Integer(n) => (Type::i64(), ExprKind::Literal(Literal::Integer(*n))),
             Literal::String(s) => (
-                Type::Slice(Box::new(Type::U8)),
+                Type::slice(Type::u8()),
                 ExprKind::Literal(Literal::String(s.clone())),
             ),
-            Literal::Bool(b) => (Type::Bool, ExprKind::Literal(Literal::Bool(*b))),
+            Literal::Bool(b) => (Type::bool(), ExprKind::Literal(Literal::Bool(*b))),
         };
 
         Expr {
@@ -421,7 +427,7 @@ impl TypeChecker {
             typed_elems.push(typed_elem);
         }
 
-        let array_ty = Type::Array(Box::new(elem_ty), elems.len());
+        let array_ty = Type::array(elem_ty, elems.len());
         Ok(Expr {
             kind: ExprKind::Array(typed_elems),
             ty: array_ty,
@@ -437,7 +443,7 @@ impl TypeChecker {
         let typed_elem = self.check_expression(elem)?;
         let typed_count = self.check_expression(count)?;
 
-        if typed_count.ty != Type::I64 {
+        if typed_count.ty.kind != TypeKind::I64 {
             return Err(TypeError::new(
                 format!("repeat count must be i64, found {:?}", typed_count.ty),
                 count.span,
@@ -447,7 +453,7 @@ impl TypeChecker {
         if let ExprKind::Literal(Literal::Integer(n)) = typed_count.kind {
             Ok(Expr {
                 kind: ExprKind::Repeat(Box::new(typed_elem.clone()), Box::new(typed_count)),
-                ty: Type::Array(Box::new(typed_elem.ty), n as usize),
+                ty: Type::array(typed_elem.ty, n as usize),
                 span: expr.span,
             })
         } else {
@@ -466,15 +472,15 @@ impl TypeChecker {
         let typed_array = self.check_expression(array)?;
         let typed_index = self.check_expression(index)?;
 
-        if typed_index.ty != Type::I64 {
+        if typed_index.ty.kind != TypeKind::I64 {
             return Err(TypeError::new(
                 format!("array index must be i64, found {:?}", typed_index.ty),
                 index.span,
             ));
         }
 
-        match typed_array.ty {
-            Type::Array(ref elem_ty, _) | Type::Slice(ref elem_ty) => Ok(Expr {
+        match typed_array.ty.kind {
+            TypeKind::Array(ref elem_ty, _) | TypeKind::Slice(ref elem_ty) => Ok(Expr {
                 kind: ExprKind::Index(Box::new(typed_array.clone()), Box::new(typed_index)),
                 ty: *elem_ty.clone(),
                 span: expr.span,
@@ -558,17 +564,17 @@ impl TypeChecker {
 
         let ty = match op {
             UnaryOp::Neg => {
-                if typed_operand.ty != Type::I64 {
+                if typed_operand.ty.kind != TypeKind::I64 {
                     return Err(TypeError::new(
                         format!("cannot apply `-` to type {:?}", typed_operand.ty),
                         operand.span,
                     ));
                 }
-                Type::I64
+                Type::i64()
             }
-            UnaryOp::Not => match typed_operand.ty {
-                Type::Bool => Type::Bool,
-                Type::I64 => Type::I64,
+            UnaryOp::Not => match typed_operand.ty.kind {
+                TypeKind::Bool => Type::bool(),
+                TypeKind::I64 => Type::i64(),
                 _ => {
                     return Err(TypeError::new(
                         format!("cannot apply `!` to type {:?}", typed_operand.ty),
@@ -585,10 +591,10 @@ impl TypeChecker {
                         operand.span,
                     ));
                 }
-                Type::Pointer(Box::new(typed_operand.ty.clone()))
+                Type::pointer(typed_operand.ty.clone())
             }
-            UnaryOp::Deref => match &typed_operand.ty {
-                Type::Pointer(inner) => *inner.clone(),
+            UnaryOp::Deref => match &typed_operand.ty.kind {
+                TypeKind::Pointer(inner) => *inner.clone(),
                 _ => {
                     return Err(TypeError::new(
                         format!("cannot dereference non-pointer type {:?}", typed_operand.ty),
@@ -621,7 +627,7 @@ impl TypeChecker {
             | BinaryOp::Rem
             | BinaryOp::BitAnd
             | BinaryOp::BitOr => {
-                if typed_left.ty != Type::I64 || typed_right.ty != Type::I64 {
+                if typed_left.ty.kind != TypeKind::I64 || typed_right.ty.kind != TypeKind::I64 {
                     return Err(TypeError::new(
                         format!(
                             "arithmetic operator requires i64 operands, found {:?} and {:?}",
@@ -630,10 +636,10 @@ impl TypeChecker {
                         expr.span,
                     ));
                 }
-                Type::I64
+                Type::i64()
             }
             BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
-                if typed_left.ty != Type::I64 || typed_right.ty != Type::I64 {
+                if typed_left.ty.kind != TypeKind::I64 || typed_right.ty.kind != TypeKind::I64 {
                     return Err(TypeError::new(
                         format!(
                             "comparison operator requires i64 operands, found {:?} and {:?}",
@@ -642,7 +648,7 @@ impl TypeChecker {
                         expr.span,
                     ));
                 }
-                Type::Bool
+                Type::bool()
             }
             BinaryOp::Eq | BinaryOp::Ne => {
                 if typed_left.ty != typed_right.ty {
@@ -654,10 +660,10 @@ impl TypeChecker {
                         expr.span,
                     ));
                 }
-                Type::Bool
+                Type::bool()
             }
             BinaryOp::And | BinaryOp::Or => {
-                if typed_left.ty != Type::Bool || typed_right.ty != Type::Bool {
+                if typed_left.ty.kind != TypeKind::Bool || typed_right.ty.kind != TypeKind::Bool {
                     return Err(TypeError::new(
                         format!(
                             "logical operator requires bool operands, found {:?} and {:?}",
@@ -666,7 +672,7 @@ impl TypeChecker {
                         expr.span,
                     ));
                 }
-                Type::Bool
+                Type::bool()
             }
         };
 
@@ -697,7 +703,7 @@ impl TypeChecker {
 
         Ok(Expr {
             kind: ExprKind::Assign(Box::new(typed_lhs), Box::new(typed_rhs)),
-            ty: Type::Unit,
+            ty: Type::unit(),
             span: expr.span,
         })
     }
@@ -725,7 +731,7 @@ impl TypeChecker {
             }
             ExprKind::Return(Some(Box::new(typed_val)))
         } else {
-            if return_ty != Type::Unit {
+            if return_ty.kind != TypeKind::Unit {
                 return Err(TypeError::new(
                     format!("expected return value of type {return_ty:?}"),
                     expr.span,
@@ -736,7 +742,7 @@ impl TypeChecker {
 
         Ok(Expr {
             kind,
-            ty: Type::Never,
+            ty: Type::never(),
             span: expr.span,
         })
     }
@@ -763,7 +769,7 @@ impl TypeChecker {
 
         let typed_cond = self.check_expression(&if_expr.cond)?;
 
-        if typed_cond.ty != Type::Bool {
+        if typed_cond.ty.kind != TypeKind::Bool {
             return Err(TypeError::new(
                 format!("if condition must be bool, found {:?}", typed_cond.ty),
                 if_expr.cond.span,
@@ -773,12 +779,13 @@ impl TypeChecker {
         let typed_then = self.check_block(&if_expr.then_body)?;
 
         let (ty, typed_else) = if let Some(else_expr) = &if_expr.else_body {
-            let typed_else_expr = self.check_expression(else_expr)?;
+            let typed_else = self.check_expression(else_expr)?;
 
-            let result_ty = match (&typed_then.ty, &typed_else_expr.ty) {
-                (Type::Never, Type::Never) => Type::Never,
-                (Type::Never, other) | (other, Type::Never) => other.clone(),
-                (then_ty, else_ty) if then_ty == else_ty => then_ty.clone(),
+            let result_ty = match (&typed_then.ty.kind, &typed_else.ty.kind) {
+                (TypeKind::Never, TypeKind::Never) => Type::never(),
+                (_, TypeKind::Never) => typed_then.ty.clone(),
+                (TypeKind::Never, _) => typed_else.ty.clone(),
+                (then_ty, else_ty) if then_ty == else_ty => typed_then.ty.clone(),
                 (then_ty, else_ty) => {
                     return Err(TypeError::new(
                         format!(
@@ -789,12 +796,12 @@ impl TypeChecker {
                 }
             };
 
-            (result_ty, Some(Box::new(typed_else_expr)))
+            (result_ty, Some(Box::new(typed_else)))
         } else {
             // when there is no else-branch, the implicit else branch returns `Unit`,
             // so the entire `Expr` is always `Unit`
             // (even if the then-branch is `Never`)
-            (Type::Unit, None)
+            (Type::unit(), None)
         };
 
         Ok(Expr {
@@ -816,7 +823,7 @@ impl TypeChecker {
 
         let typed_cond = self.check_expression(&while_expr.cond)?;
 
-        if typed_cond.ty != Type::Bool {
+        if typed_cond.ty.kind != TypeKind::Bool {
             return Err(TypeError::new(
                 format!("while condition must be bool, found {:?}", typed_cond.ty),
                 while_expr.cond.span,
@@ -831,7 +838,7 @@ impl TypeChecker {
                 body: Box::new(typed_body),
                 span: while_expr.span,
             }),
-            ty: Type::Unit,
+            ty: Type::unit(),
             span: expr.span,
         })
     }

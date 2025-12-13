@@ -4,6 +4,7 @@ use crate::{
     ast::*,
     lexer::{LexError, Lexer, Token, TokenKind},
     span::Span,
+    ty::Type,
 };
 
 #[derive(Debug)]
@@ -98,25 +99,22 @@ impl<'a> Parser<'a> {
             TokenKind::Ident(name) => {
                 self.advance()?;
                 match name.as_str() {
-                    "i64" => Ok(Type::I64),
-                    "u8" => Ok(Type::U8),
-                    "bool" => Ok(Type::Bool),
-                    _ => Err(ParseError::new(
-                        format!("Unknown type: {name}"),
-                        self.current.span,
-                    )),
+                    "i64" => Ok(Type::i64()),
+                    "u8" => Ok(Type::u8()),
+                    "bool" => Ok(Type::bool()),
+                    _ => todo!(),
                 }
             }
             // Slice: [T] or Array: [T; N]
             TokenKind::OpenBracket => {
                 self.advance()?;
-                let elem_type_ann = Box::new(self.parse_type_ann()?);
+                let elem_type_ann = self.parse_type_ann()?;
 
                 match self.current.kind {
                     // Slice: [T]
                     TokenKind::CloseBracket => {
                         self.advance()?;
-                        Ok(Type::Slice(elem_type_ann))
+                        Ok(Type::slice(elem_type_ann))
                     }
                     // Array: [T; N]
                     TokenKind::Semi => {
@@ -138,7 +136,7 @@ impl<'a> Parser<'a> {
 
                         self.advance()?;
                         self.expect(TokenKind::CloseBracket)?;
-                        Ok(Type::Array(elem_type_ann, size))
+                        Ok(Type::array(elem_type_ann, size))
                     }
                     _ => Err(ParseError::new(
                         format!(
@@ -152,19 +150,19 @@ impl<'a> Parser<'a> {
             // Pointer: *T
             TokenKind::Star => {
                 self.advance()?;
-                let inner_type = Box::new(self.parse_type_ann()?);
-                Ok(Type::Pointer(inner_type))
+                let inner_type = self.parse_type_ann()?;
+                Ok(Type::pointer(inner_type))
             }
             // Unit: ()
             TokenKind::OpenParen => {
                 self.advance()?;
                 self.expect(TokenKind::CloseParen)?;
-                Ok(Type::Unit)
+                Ok(Type::unit())
             }
             // Never: !
             TokenKind::Bang => {
                 self.advance()?;
-                Ok(Type::Never)
+                Ok(Type::never())
             }
             _ => Err(ParseError::new(
                 format!("Unknown type: {:?}", self.current.kind),
@@ -253,7 +251,7 @@ impl<'a> Parser<'a> {
         let return_type_ann = if self.eat(TokenKind::Arrow)? {
             self.parse_type_ann()?
         } else {
-            Type::Unit
+            Type::unit()
         };
 
         self.expect(TokenKind::Semi)?;
@@ -412,7 +410,7 @@ impl<'a> Parser<'a> {
         let return_type_ann = if self.eat(TokenKind::Arrow)? {
             self.parse_type_ann()?
         } else {
-            Type::Unit
+            Type::unit()
         };
 
         let body = self.parse_block()?;
