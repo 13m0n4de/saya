@@ -4,7 +4,6 @@ use crate::{
     ast::*,
     lexer::{LexError, Lexer, Token, TokenKind},
     span::Span,
-    ty::Type,
 };
 
 #[derive(Debug)]
@@ -51,7 +50,7 @@ impl<'a> Parser<'a> {
         Ok(Self { lexer, current })
     }
 
-    pub fn parse(&mut self) -> Result<Program<()>, ParseError> {
+    pub fn parse(&mut self) -> Result<Program, ParseError> {
         self.parse_program()
     }
 
@@ -93,16 +92,18 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_type_ann(&mut self) -> Result<Type, ParseError> {
-        match self.current.kind.clone() {
+    fn parse_type_ann(&mut self) -> Result<TypeAnn, ParseError> {
+        let start_span = self.current.span;
+
+        let kind = match self.current.kind.clone() {
             // Base types: i64, u8, bool
             TokenKind::Ident(name) => {
                 self.advance()?;
                 match name.as_str() {
-                    "i64" => Ok(Type::i64()),
-                    "u8" => Ok(Type::u8()),
-                    "bool" => Ok(Type::bool()),
-                    _ => todo!(),
+                    "i64" => TypeAnnKind::I64,
+                    "u8" => TypeAnnKind::U8,
+                    "bool" => TypeAnnKind::Bool,
+                    name => TypeAnnKind::Named(name.to_string()),
                 }
             }
             // Slice: [T] or Array: [T; N]
@@ -114,7 +115,7 @@ impl<'a> Parser<'a> {
                     // Slice: [T]
                     TokenKind::CloseBracket => {
                         self.advance()?;
-                        Ok(Type::slice(elem_type_ann))
+                        TypeAnnKind::Slice(Box::new(elem_type_ann))
                     }
                     // Array: [T; N]
                     TokenKind::Semi => {
@@ -136,39 +137,48 @@ impl<'a> Parser<'a> {
 
                         self.advance()?;
                         self.expect(TokenKind::CloseBracket)?;
-                        Ok(Type::array(elem_type_ann, size))
+                        TypeAnnKind::Array(Box::new(elem_type_ann), size)
                     }
-                    _ => Err(ParseError::new(
-                        format!(
-                            "Expected `]` or `;` after type in brackets, found {:?}",
-                            self.current.kind
-                        ),
-                        self.current.span,
-                    )),
+                    _ => {
+                        return Err(ParseError::new(
+                            format!(
+                                "Expected `]` or `;` after type in brackets, found {:?}",
+                                self.current.kind
+                            ),
+                            self.current.span,
+                        ));
+                    }
                 }
             }
             // Pointer: *T
             TokenKind::Star => {
                 self.advance()?;
                 let inner_type = self.parse_type_ann()?;
-                Ok(Type::pointer(inner_type))
+                TypeAnnKind::Pointer(Box::new(inner_type))
             }
             // Unit: ()
             TokenKind::OpenParen => {
                 self.advance()?;
                 self.expect(TokenKind::CloseParen)?;
-                Ok(Type::unit())
+                TypeAnnKind::Unit
             }
             // Never: !
             TokenKind::Bang => {
                 self.advance()?;
-                Ok(Type::never())
+                TypeAnnKind::Never
             }
-            _ => Err(ParseError::new(
-                format!("Unknown type: {:?}", self.current.kind),
-                self.current.span,
-            )),
-        }
+            _ => {
+                return Err(ParseError::new(
+                    format!("Unknown type: {:?}", self.current.kind),
+                    self.current.span,
+                ));
+            }
+        };
+
+        Ok(TypeAnn {
+            kind,
+            span: start_span,
+        })
     }
 
     fn parse_program(&mut self) -> Result<Program, ParseError> {
@@ -251,7 +261,10 @@ impl<'a> Parser<'a> {
         let return_type_ann = if self.eat(TokenKind::Arrow)? {
             self.parse_type_ann()?
         } else {
-            Type::unit()
+            TypeAnn {
+                kind: TypeAnnKind::Unit,
+                span: self.current.span,
+            }
         };
 
         self.expect(TokenKind::Semi)?;
@@ -410,7 +423,10 @@ impl<'a> Parser<'a> {
         let return_type_ann = if self.eat(TokenKind::Arrow)? {
             self.parse_type_ann()?
         } else {
-            Type::unit()
+            TypeAnn {
+                kind: TypeAnnKind::Unit,
+                span: self.current.span,
+            }
         };
 
         let body = self.parse_block()?;
@@ -464,7 +480,6 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::CloseBrace)?;
 
         Ok(Block {
-            ty: (),
             stmts,
             span: start_span,
         })
@@ -554,7 +569,6 @@ impl<'a> Parser<'a> {
             };
 
             return Ok(Expr {
-                ty: (),
                 kind: ExprKind::Return(ret_expr),
                 span: start_span,
             });
@@ -572,7 +586,6 @@ impl<'a> Parser<'a> {
             let rhs = self.parse_expr_assign()?;
 
             Ok(Expr {
-                ty: (),
                 kind: ExprKind::Assign(Box::new(lhs), Box::new(rhs)),
                 span: start_span,
             })
@@ -595,7 +608,6 @@ impl<'a> Parser<'a> {
             self.advance()?;
             let rhs = self.parse_expr_bp(prefix_bp)?;
             Expr {
-                ty: (),
                 kind: ExprKind::Unary(op, Box::new(rhs)),
                 span: start_span,
             }
@@ -628,7 +640,6 @@ impl<'a> Parser<'a> {
                     TokenKind::OpenParen => {
                         let span = lhs.span;
                         lhs = Expr {
-                            ty: (),
                             kind: ExprKind::Call(self.parse_call(lhs)?),
                             span,
                         }
@@ -639,7 +650,6 @@ impl<'a> Parser<'a> {
                         let index = self.parse_expression()?;
                         self.expect(TokenKind::CloseBracket)?;
                         lhs = Expr {
-                            ty: (),
                             kind: ExprKind::Index(Box::new(lhs), Box::new(index)),
                             span,
                         }
@@ -680,7 +690,6 @@ impl<'a> Parser<'a> {
                 let rhs = self.parse_expr_bp(right_bp)?;
 
                 lhs = Expr {
-                    ty: (),
                     kind: ExprKind::Binary(op, Box::new(lhs), Box::new(rhs)),
                     span,
                 };
@@ -795,7 +804,6 @@ impl<'a> Parser<'a> {
         };
 
         Ok(Expr {
-            ty: (),
             kind,
             span: start_span,
         })
@@ -838,7 +846,6 @@ impl<'a> Parser<'a> {
                 let else_if_span = self.current.span;
                 let else_if = self.parse_if()?;
                 Some(Box::new(Expr {
-                    ty: (),
                     kind: ExprKind::If(else_if),
                     span: else_if_span,
                 }))
@@ -846,7 +853,6 @@ impl<'a> Parser<'a> {
                 let else_span = self.current.span;
                 let block = self.parse_block()?;
                 Some(Box::new(Expr {
-                    ty: (),
                     kind: ExprKind::Block(block),
                     span: else_span,
                 }))

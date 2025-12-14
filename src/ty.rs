@@ -13,9 +13,22 @@ pub enum TypeKind {
     Pointer(Box<Type>),
     Array(Box<Type>, usize),
     Slice(Box<Type>),
-    Struct(String),
+    Struct(StructType),
     Unit,
     Never,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StructType {
+    pub name: String,
+    pub fields: Vec<FieldInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FieldInfo {
+    pub name: String,
+    pub ty: Type,
+    pub offset: usize,
 }
 
 impl Type {
@@ -82,6 +95,14 @@ impl Type {
             kind: TypeKind::Slice(Box::new(elem)),
             size: 16, // ptr + len
             align: 8,
+        }
+    }
+
+    pub fn struct_type(name: String, fields: Vec<FieldInfo>, size: usize, align: u64) -> Self {
+        Type {
+            kind: TypeKind::Struct(StructType { name, fields }),
+            size,
+            align,
         }
     }
 

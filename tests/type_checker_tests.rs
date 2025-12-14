@@ -1,4 +1,4 @@
-use saya::ast::*;
+use saya::hir::*;
 use saya::lexer::Lexer;
 use saya::parser::Parser;
 use saya::ty::{Type, TypeKind};

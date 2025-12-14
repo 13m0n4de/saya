@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{
-    ast::*,
+    hir::*,
     span::Span,
     ty::{Type, TypeKind},
 };
@@ -95,7 +95,7 @@ impl CodeGen {
         }
     }
 
-    pub fn generate(&mut self, prog: &Program<Type>) -> Result<String, CodeGenError> {
+    pub fn generate(&mut self, prog: &Program) -> Result<String, CodeGenError> {
         let mut module = qbe::Module::new();
 
         // Constants
@@ -345,7 +345,7 @@ impl CodeGen {
     fn address_of(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
-        expr: &Expr<Type>,
+        expr: &Expr,
     ) -> Result<qbe::Value, CodeGenError> {
         match &expr.kind {
             // x -> %x
@@ -441,7 +441,7 @@ impl CodeGen {
         }
     }
 
-    fn eval_const_expr(&mut self, expr: &Expr<Type>) -> Result<Literal, CodeGenError> {
+    fn eval_const_expr(&mut self, expr: &Expr) -> Result<Literal, CodeGenError> {
         match &expr.kind {
             ExprKind::Literal(lit) => Ok(lit.clone()),
             ExprKind::Ident(name) => self.constants.get(name).cloned().ok_or_else(|| {
@@ -506,7 +506,7 @@ impl CodeGen {
         }
     }
 
-    fn generate_static(&mut self, static_def: &StaticDef<Type>) -> Result<(), CodeGenError> {
+    fn generate_static(&mut self, static_def: &StaticDef) -> Result<(), CodeGenError> {
         let literal = self.eval_const_expr(&static_def.init)?;
         let data_items = self.literal_to_data_items(&literal);
 
@@ -522,7 +522,7 @@ impl CodeGen {
 
     fn generate_function(
         &mut self,
-        func: &FunctionDef<Type>,
+        func: &FunctionDef,
     ) -> Result<qbe::Function<'static>, CodeGenError> {
         self.push_scope();
 
@@ -530,16 +530,16 @@ impl CodeGen {
             .params
             .iter()
             .map(|param| {
-                let ty = param.type_ann.to_qbe_base();
+                let ty = param.ty.to_qbe_base();
                 let value = qbe::Value::Temporary(format!("{}.param", param.name));
                 (ty, value)
             })
             .collect();
 
-        let qbe_return_type = if func.return_type_ann.kind == TypeKind::Unit {
+        let qbe_return_type = if func.return_ty.kind == TypeKind::Unit {
             None
         } else {
-            Some(func.return_type_ann.to_qbe_base())
+            Some(func.return_ty.to_qbe_base())
         };
 
         let mut qfunc = qbe::Function::new(
@@ -554,8 +554,8 @@ impl CodeGen {
         for param in &func.params {
             let addr = qbe::Value::Temporary(param.name.clone());
 
-            let param_size = param.type_ann.size;
-            let param_align = param.type_ann.align;
+            let param_size = param.ty.size;
+            let param_align = param.ty.align;
             let alloc_instr = if param_align >= 16 {
                 qbe::Instr::Alloc16(param_size as u128)
             } else if param_align >= 8 {
@@ -565,9 +565,8 @@ impl CodeGen {
             };
             qfunc.assign_instr(addr.clone(), qbe::Type::Long, alloc_instr);
 
-            let param_gen_val =
-                GenValue::Temp(format!("{}.param", param.name), param.type_ann.clone());
-            self.store_value(&mut qfunc, addr, param_gen_val, &param.type_ann);
+            let param_gen_val = GenValue::Temp(format!("{}.param", param.name), param.ty.clone());
+            self.store_value(&mut qfunc, addr, param_gen_val, &param.ty);
 
             self.insert_local_var(param.name.clone());
         }
@@ -576,7 +575,7 @@ impl CodeGen {
 
         let block_value = self.generate_block(&mut qfunc, &func.body)?;
 
-        if func.return_type_ann.kind == TypeKind::Never {
+        if func.return_ty.kind == TypeKind::Never {
             qfunc.add_instr(qbe::Instr::Hlt);
         } else if func.body.ty.kind == TypeKind::Never {
             if let Some(last_block) = qfunc.blocks.last()
@@ -598,7 +597,7 @@ impl CodeGen {
     fn generate_block(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
-        block: &Block<Type>,
+        block: &Block,
     ) -> Result<GenValue, CodeGenError> {
         self.push_scope();
         let mut result = GenValue::Const(0, Type::unit());
@@ -622,11 +621,11 @@ impl CodeGen {
     fn generate_let(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
-        let_stmt: &Let<Type>,
+        let_stmt: &Let,
     ) -> Result<(), CodeGenError> {
         // Allocate space on stack with proper alignment
-        let size = let_stmt.type_ann.size;
-        let align = let_stmt.type_ann.align;
+        let size = let_stmt.ty.size;
+        let align = let_stmt.ty.align;
         let addr = qbe::Value::Temporary(let_stmt.name.clone());
 
         let alloc_instr = if align >= 16 {
@@ -646,7 +645,7 @@ impl CodeGen {
         let init_val = self.generate_expression(qfunc, &let_stmt.init)?;
 
         // Store value
-        self.store_value(qfunc, addr, init_val, &let_stmt.type_ann);
+        self.store_value(qfunc, addr, init_val, &let_stmt.ty);
 
         Ok(())
     }
@@ -654,7 +653,7 @@ impl CodeGen {
     fn generate_expr_literal(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
-        expr: &Expr<Type>,
+        expr: &Expr,
     ) -> GenValue {
         let ExprKind::Literal(lit) = &expr.kind else {
             unreachable!()
@@ -670,7 +669,7 @@ impl CodeGen {
     fn generate_expr_struct(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
-        expr: &Expr<Type>,
+        expr: &Expr,
     ) -> Result<GenValue, CodeGenError> {
         todo!()
     }
@@ -678,7 +677,7 @@ impl CodeGen {
     fn generate_expr_ident(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
-        expr: &Expr<Type>,
+        expr: &Expr,
     ) -> Result<GenValue, CodeGenError> {
         let ExprKind::Ident(name) = &expr.kind else {
             unreachable!()
@@ -714,7 +713,7 @@ impl CodeGen {
     fn generate_expr_unary(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
-        expr: &Expr<Type>,
+        expr: &Expr,
     ) -> Result<GenValue, CodeGenError> {
         let ExprKind::Unary(unop, operand_expr) = &expr.kind else {
             unreachable!()
@@ -759,7 +758,7 @@ impl CodeGen {
     fn generate_expr_binary(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
-        expr: &Expr<Type>,
+        expr: &Expr,
     ) -> Result<GenValue, CodeGenError> {
         let ExprKind::Binary(binop, expr1, expr2) = &expr.kind else {
             unreachable!()
@@ -809,7 +808,7 @@ impl CodeGen {
     fn generate_expr_assign(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
-        expr: &Expr<Type>,
+        expr: &Expr,
     ) -> Result<GenValue, CodeGenError> {
         let ExprKind::Assign(lhs, rhs) = &expr.kind else {
             unreachable!()
@@ -825,7 +824,7 @@ impl CodeGen {
     fn generate_expr_return(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
-        expr: &Expr<Type>,
+        expr: &Expr,
     ) -> Result<GenValue, CodeGenError> {
         let ExprKind::Return(ret_expr) = &expr.kind else {
             unreachable!()
@@ -845,7 +844,7 @@ impl CodeGen {
     fn generate_expr_control(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
-        expr: &Expr<Type>,
+        expr: &Expr,
     ) -> Result<GenValue, CodeGenError> {
         match expr.kind {
             ExprKind::Break => {
@@ -870,7 +869,7 @@ impl CodeGen {
     fn generate_expr_array(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
-        expr: &Expr<Type>,
+        expr: &Expr,
     ) -> Result<GenValue, CodeGenError> {
         let ExprKind::Array(elements) = &expr.kind else {
             unreachable!()
@@ -919,7 +918,7 @@ impl CodeGen {
     fn generate_expr_repeat(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
-        expr: &Expr<Type>,
+        expr: &Expr,
     ) -> Result<GenValue, CodeGenError> {
         let ExprKind::Repeat(elem, count) = &expr.kind else {
             unreachable!()
@@ -979,7 +978,7 @@ impl CodeGen {
     fn generate_expr_index(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
-        expr: &Expr<Type>,
+        expr: &Expr,
     ) -> Result<GenValue, CodeGenError> {
         let ExprKind::Index(..) = &expr.kind else {
             unreachable!()
@@ -992,7 +991,7 @@ impl CodeGen {
     fn generate_expression(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
-        expr: &Expr<Type>,
+        expr: &Expr,
     ) -> Result<GenValue, CodeGenError> {
         let result = match &expr.kind {
             ExprKind::Literal(..) => Ok(self.generate_expr_literal(qfunc, expr)),
@@ -1068,7 +1067,7 @@ impl CodeGen {
     fn generate_expr_call(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
-        expr: &Expr<Type>,
+        expr: &Expr,
     ) -> Result<GenValue, CodeGenError> {
         let ExprKind::Call(call) = &expr.kind else {
             unreachable!()
@@ -1102,7 +1101,7 @@ impl CodeGen {
     fn generate_expr_if(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
-        expr: &Expr<Type>,
+        expr: &Expr,
     ) -> Result<GenValue, CodeGenError> {
         let ExprKind::If(if_expr) = &expr.kind else {
             unreachable!()
@@ -1205,7 +1204,7 @@ impl CodeGen {
     fn generate_expr_while(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
-        expr: &Expr<Type>,
+        expr: &Expr,
     ) -> Result<GenValue, CodeGenError> {
         let ExprKind::While(while_expr) = &expr.kind else {
             unreachable!()
@@ -1247,7 +1246,7 @@ impl CodeGen {
     fn generate_expr_land(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
-        expr: &Expr<Type>,
+        expr: &Expr,
     ) -> Result<GenValue, CodeGenError> {
         let ExprKind::Binary(BinaryOp::And, left, right) = &expr.kind else {
             unreachable!()
@@ -1297,7 +1296,7 @@ impl CodeGen {
     fn generate_expr_lor(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
-        expr: &Expr<Type>,
+        expr: &Expr,
     ) -> Result<GenValue, CodeGenError> {
         let ExprKind::Binary(BinaryOp::Or, left, right) = &expr.kind else {
             unreachable!()
