@@ -277,7 +277,9 @@ impl TypeChecker {
                     };
                     hir::Item::Extern(hir_extern)
                 }
-                ast::Item::Struct(_) => todo!(),
+                ast::Item::Struct(_) => {
+                    continue;
+                }
             };
 
             typed_items.push(typed_item);
@@ -539,7 +541,89 @@ impl TypeChecker {
     }
 
     fn check_expr_struct(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
-        todo!()
+        let ast::ExprKind::Struct(struct_expr) = &expr.kind else {
+            unreachable!()
+        };
+
+        let struct_ty = self
+            .types
+            .get(&struct_expr.name)
+            .ok_or_else(|| {
+                TypeError::new(
+                    format!("undefined struct `{}`", struct_expr.name),
+                    expr.span,
+                )
+            })?
+            .clone();
+
+        let TypeKind::Struct(struct_info) = &struct_ty.kind else {
+            return Err(TypeError::new(
+                format!("`{}` is not a struct type", struct_expr.name),
+                expr.span,
+            ));
+        };
+
+        // Build a map of provided fields
+        let mut provided_fields = HashMap::new();
+        for field_init in &struct_expr.fields {
+            if let Some(prev) = provided_fields.insert(&field_init.name, field_init) {
+                return Err(TypeError::new(
+                    format!("duplicate field `{}` in struct literal", field_init.name),
+                    prev.span,
+                ));
+            }
+        }
+
+        // Check all expected fields
+        // Remove fields from the provided fields map, so any remaining are extra
+        let mut typed_fields = Vec::new();
+        for field_info in &struct_info.fields {
+            let field_init = provided_fields.remove(&field_info.name).ok_or_else(|| {
+                TypeError::new(
+                    format!(
+                        "missing field `{}` in struct literal for `{}`",
+                        field_info.name, struct_expr.name
+                    ),
+                    expr.span,
+                )
+            })?;
+
+            let typed_value = self.check_expression(&field_init.value)?;
+
+            if typed_value.ty != field_info.ty {
+                return Err(TypeError::new(
+                    format!(
+                        "field `{}` has wrong type: expected `{:?}`, found `{:?}`",
+                        field_info.name, field_info.ty, typed_value.ty
+                    ),
+                    field_init.value.span,
+                ));
+            }
+
+            typed_fields.push(hir::FieldInit {
+                name: field_info.name.clone(),
+                value: Box::new(typed_value),
+                span: field_init.span,
+            });
+        }
+
+        // Any remaining fields in the map are extra/unknown fields
+        if let Some((name, field_init)) = provided_fields.into_iter().next() {
+            return Err(TypeError::new(
+                format!("struct `{}` has no field `{}`", struct_expr.name, name),
+                field_init.span,
+            ));
+        }
+
+        Ok(hir::Expr {
+            kind: hir::ExprKind::Struct(hir::StructExpr {
+                name: struct_expr.name.clone(),
+                fields: typed_fields,
+                span: struct_expr.span,
+            }),
+            ty: struct_ty,
+            span: expr.span,
+        })
     }
 
     fn check_expr_ident(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {

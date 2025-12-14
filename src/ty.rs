@@ -107,7 +107,10 @@ impl Type {
     }
 
     pub fn is_aggregate(&self) -> bool {
-        matches!(self.kind, TypeKind::Slice(..) | TypeKind::Array(..))
+        matches!(
+            self.kind,
+            TypeKind::Slice(..) | TypeKind::Array(..) | TypeKind::Struct(..)
+        )
     }
 
     pub fn to_qbe_base(&self) -> qbe::Type<'static> {
@@ -118,7 +121,7 @@ impl Type {
             TypeKind::Pointer(_) => qbe::Type::Long,
             TypeKind::Array(_, _) => qbe::Type::Long,
             TypeKind::Slice(_) => qbe::Type::Long,
-            TypeKind::Struct(_) => todo!(),
+            TypeKind::Struct(_) => qbe::Type::Long,
             TypeKind::Unit => qbe::Type::Long,
             TypeKind::Never => qbe::Type::Long,
         }
@@ -132,7 +135,7 @@ impl Type {
             TypeKind::Pointer(_) => qbe::Type::Long,
             TypeKind::Array(_, _) => qbe::Type::Long,
             TypeKind::Slice(_) => qbe::Type::Long,
-            TypeKind::Struct(_) => todo!(),
+            TypeKind::Struct(_) => qbe::Type::Long,
             TypeKind::Unit => qbe::Type::Long,
             TypeKind::Never => qbe::Type::Long,
         }
@@ -146,7 +149,7 @@ impl Type {
             TypeKind::Pointer(_) => qbe::Type::Long,
             TypeKind::Array(_, _) => qbe::Type::Long,
             TypeKind::Slice(_) => qbe::Type::Long,
-            TypeKind::Struct(_) => todo!(),
+            TypeKind::Struct(_) => qbe::Type::Long,
             TypeKind::Unit => qbe::Type::Long,
             TypeKind::Never => qbe::Type::Long,
         }
