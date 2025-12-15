@@ -77,8 +77,8 @@ pub struct CodeGen {
     scopes: Vec<HashSet<String>>,
     loops: Vec<LoopContext>,
     constants: HashMap<String, Literal>,
-    data_defs: Vec<qbe::DataDef<'static>>,
     globals: HashSet<String>,
+    data_defs: Vec<qbe::DataDef<'static>>,
 }
 
 impl CodeGen {
@@ -90,13 +90,20 @@ impl CodeGen {
             scopes: Vec::new(),
             loops: Vec::new(),
             constants: HashMap::new(),
-            data_defs: Vec::new(),
             globals: HashSet::new(),
+            data_defs: Vec::new(),
         }
     }
 
-    pub fn generate(&mut self, prog: &Program) -> Result<String, CodeGenError> {
+    pub fn generate(
+        &mut self,
+        prog: &Program,
+        types: &HashMap<String, Type>,
+    ) -> Result<String, CodeGenError> {
         let mut module = qbe::Module::new();
+
+        // Types
+        self.generate_type_defs(&mut module, types);
 
         // Constants
         for item in &prog.items {
@@ -257,6 +264,20 @@ impl CodeGen {
                     let offset = i as u64 * elem_size as u64;
                     let elem_val = self.load_field(qfunc, src.clone(), offset, elem_ty);
                     self.store_field(qfunc, dest.clone(), offset, elem_val, elem_ty);
+                }
+            }
+            TypeKind::Struct(struct_ty) => {
+                // Struct: copy each field
+                for field in &struct_ty.fields {
+                    let field_val =
+                        self.load_field(qfunc, src.clone(), field.offset as u64, &field.ty);
+                    self.store_field(
+                        qfunc,
+                        dest.clone(),
+                        field.offset as u64,
+                        field_val,
+                        &field.ty,
+                    );
                 }
             }
             _ => unreachable!("copy_aggregate called on non-aggregate type: {:?}", ty),
@@ -506,6 +527,25 @@ impl CodeGen {
         }
     }
 
+    fn generate_type_defs(&self, module: &mut qbe::Module, types: &HashMap<String, Type>) {
+        for (name, ty) in types {
+            if let TypeKind::Struct(struct_ty) = &ty.kind {
+                let qbe_fields: Vec<_> = struct_ty
+                    .fields
+                    .iter()
+                    .map(|field| (field.ty.to_qbe_store(), 1))
+                    .collect();
+
+                let type_def = qbe::TypeDef {
+                    name: name.clone(),
+                    align: Some(ty.align),
+                    items: qbe_fields,
+                };
+                module.add_type(type_def);
+            }
+        }
+    }
+
     fn generate_static(&mut self, static_def: &StaticDef) -> Result<(), CodeGenError> {
         let literal = self.eval_const_expr(&static_def.init)?;
         let data_items = self.literal_to_data_items(&literal);
@@ -671,7 +711,38 @@ impl CodeGen {
         qfunc: &mut qbe::Function<'static>,
         expr: &Expr,
     ) -> Result<GenValue, CodeGenError> {
-        todo!()
+        let ExprKind::Struct(struct_expr) = &expr.kind else {
+            unreachable!()
+        };
+
+        let TypeKind::Struct(struct_ty) = &expr.ty.kind else {
+            unreachable!()
+        };
+
+        let struct_addr = self.alloc_local(qfunc, &expr.ty);
+
+        for field_init in &struct_expr.fields {
+            let field_info = struct_ty
+                .fields
+                .iter()
+                .find(|f| f.name == field_init.name)
+                .expect("type checker should ensure all fields exist");
+
+            let field_value = self.generate_expression(qfunc, &field_init.value)?;
+
+            self.store_field(
+                qfunc,
+                struct_addr.clone(),
+                field_info.offset as u64,
+                field_value.into_qbe(),
+                &field_info.ty,
+            );
+        }
+
+        Ok(match struct_addr {
+            qbe::Value::Temporary(name) => GenValue::Temp(name, expr.ty.clone()),
+            _ => unreachable!(),
+        })
     }
 
     fn generate_expr_ident(

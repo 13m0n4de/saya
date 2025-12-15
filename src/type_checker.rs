@@ -86,6 +86,10 @@ impl TypeChecker {
             .insert(name, ty);
     }
 
+    pub fn types(&self) -> &HashMap<String, Type> {
+        &self.types
+    }
+
     fn resolve_type(&mut self, type_ann: &ast::TypeAnn) -> Result<Type, TypeError> {
         match &type_ann.kind {
             ast::TypeAnnKind::I64 => Ok(Type::i64()),
