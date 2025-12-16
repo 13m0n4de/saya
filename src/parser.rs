@@ -654,6 +654,15 @@ impl<'a> Parser<'a> {
                             span,
                         }
                     }
+                    TokenKind::Dot => {
+                        let span = lhs.span;
+                        self.advance()?;
+                        let field_name = self.expect_identifier()?;
+                        lhs = Expr {
+                            kind: ExprKind::Field(Box::new(lhs), field_name),
+                            span,
+                        }
+                    }
                     _ => unreachable!(),
                 }
 
@@ -912,6 +921,7 @@ impl<'a> Parser<'a> {
         match token {
             TokenKind::OpenParen => Some(100),   // function call
             TokenKind::OpenBracket => Some(100), // array index
+            TokenKind::Dot => Some(100),         // field
             _ => None,
         }
     }

@@ -140,6 +140,7 @@ pub enum ExprKind {
     Ident(String),
     Array(Vec<Expr>),
     Repeat(Box<Expr>, Box<Expr>),
+    Field(Box<Expr>, String),
     Index(Box<Expr>, Box<Expr>),
     Call(Call),
     Unary(UnaryOp, Box<Expr>),

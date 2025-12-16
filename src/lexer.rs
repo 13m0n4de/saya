@@ -51,6 +51,7 @@ pub enum TokenKind {
     CloseBrace,   // }
     OpenBracket,  // [
     CloseBracket, // ]
+    Dot,          // .
     Comma,        // ,
     Colon,        // :
     Semi,         // ;
@@ -146,6 +147,10 @@ impl<'a> Lexer<'a> {
             Some(']') => {
                 self.advance();
                 TokenKind::CloseBracket
+            }
+            Some('.') => {
+                self.advance();
+                TokenKind::Dot
             }
             Some(',') => {
                 self.advance();

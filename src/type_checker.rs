@@ -498,6 +498,7 @@ impl TypeChecker {
             ast::ExprKind::Ident(..) => self.check_expr_ident(expr),
             ast::ExprKind::Array(..) => self.check_expr_array(expr),
             ast::ExprKind::Repeat(..) => self.check_expr_repeat(expr),
+            ast::ExprKind::Field(..) => self.check_expr_field(expr),
             ast::ExprKind::Index(..) => self.check_expr_index(expr),
             ast::ExprKind::Call(..) => self.check_expr_call(expr),
             ast::ExprKind::Unary(..) => self.check_expr_unary(expr),
@@ -712,6 +713,42 @@ impl TypeChecker {
                 "repeat count must be a constant integer".to_string(),
                 count.span,
             ))
+        }
+    }
+
+    fn check_expr_field(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
+        let ast::ExprKind::Field(base, field_name) = &expr.kind else {
+            unreachable!()
+        };
+
+        let typed_base = self.check_expression(base)?;
+
+        match &typed_base.ty.kind {
+            TypeKind::Struct(struct_ty) => {
+                let field_info = struct_ty
+                    .fields
+                    .iter()
+                    .find(|field| &field.name == field_name)
+                    .ok_or_else(|| {
+                        TypeError::new(
+                            format!("no field `{}` on type `{}`", field_name, struct_ty.name),
+                            expr.span,
+                        )
+                    })?;
+
+                Ok(hir::Expr {
+                    kind: hir::ExprKind::Field(Box::new(typed_base.clone()), field_name.clone()),
+                    ty: field_info.ty.clone(),
+                    span: expr.span,
+                })
+            }
+            _ => Err(TypeError::new(
+                format!(
+                    "cannot access field on non-struct type `{:?}`",
+                    typed_base.ty
+                ),
+                base.span,
+            )),
         }
     }
 

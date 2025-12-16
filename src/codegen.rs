@@ -441,6 +441,34 @@ impl CodeGen {
 
                 Ok(elem_addr)
             }
+            // base.field -> calculate field address
+            ExprKind::Field(base, field_name) => {
+                let base_addr = self.address_of(qfunc, base)?;
+
+                let TypeKind::Struct(struct_ty) = &base.ty.kind else {
+                    unreachable!()
+                };
+
+                let field_info = struct_ty
+                    .fields
+                    .iter()
+                    .find(|field| &field.name == field_name)
+                    .expect("field should exist after type checking");
+
+                let field_addr = if field_info.offset == 0 {
+                    base_addr
+                } else {
+                    let temp = qbe::Value::Temporary(self.new_temp());
+                    qfunc.assign_instr(
+                        temp.clone(),
+                        qbe::Type::Long,
+                        qbe::Instr::Add(base_addr, qbe::Value::Const(field_info.offset as u64)),
+                    );
+                    temp
+                };
+
+                Ok(field_addr)
+            }
             _ => Err(CodeGenError::new(
                 format!("Cannot take address of this expression: {:?}", expr.kind),
                 expr.span,
@@ -1059,6 +1087,19 @@ impl CodeGen {
         Ok(self.load_value(qfunc, addr, &expr.ty))
     }
 
+    fn generate_expr_field(
+        &mut self,
+        qfunc: &mut qbe::Function<'static>,
+        expr: &Expr,
+    ) -> Result<GenValue, CodeGenError> {
+        let ExprKind::Field(..) = &expr.kind else {
+            unreachable!()
+        };
+
+        let addr = self.address_of(qfunc, expr)?;
+        Ok(self.load_value(qfunc, addr, &expr.ty))
+    }
+
     fn generate_expression(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
@@ -1080,6 +1121,7 @@ impl CodeGen {
             ExprKind::Array(..) => self.generate_expr_array(qfunc, expr),
             ExprKind::Repeat(..) => self.generate_expr_repeat(qfunc, expr),
             ExprKind::Index(..) => self.generate_expr_index(qfunc, expr),
+            ExprKind::Field(..) => self.generate_expr_field(qfunc, expr),
         }?;
 
         if expr.ty.kind == TypeKind::Never {
