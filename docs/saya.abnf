@@ -66,8 +66,9 @@ unary-expr = unary-op unary-expr / postfix-expr
 unary-op = "-" / "!" / "&" / "*"
 
 postfix-expr = primary-expr *postfix-op
-postfix-op = index-op / call-op
+postfix-op = field-op / index-op / call-op
 
+field-op = "." identifier
 index-op = "[" expression "]"
 call-op = "(" [expression *("," expression)] ")"
 
