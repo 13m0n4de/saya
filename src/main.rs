@@ -24,7 +24,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let typed_program = type_checker.check_program(&program)?;
 
     let mut code_gen = CodeGen::new();
-    let qbe_il = code_gen.generate(&typed_program)?;
+    let qbe_il = code_gen.generate(&typed_program, type_checker.types())?;
 
     std::fs::write("out.ssa", qbe_il)?;
 

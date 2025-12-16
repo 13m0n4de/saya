@@ -1,23 +1,4 @@
-use crate::span::Span;
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct TypeAnn {
-    pub kind: TypeAnnKind,
-    pub span: Span,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum TypeAnnKind {
-    I64,
-    U8,
-    Bool,
-    Pointer(Box<TypeAnn>),
-    Array(Box<TypeAnn>, usize),
-    Slice(Box<TypeAnn>),
-    Named(String),
-    Unit,
-    Never,
-}
+use crate::{ast, span::Span, ty::Type};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
@@ -29,7 +10,6 @@ pub enum Item {
     Const(ConstDef),
     Static(StaticDef),
     Function(FunctionDef),
-    Struct(StructDef),
     Extern(ExternItem),
 }
 
@@ -42,7 +22,7 @@ pub enum ExternItem {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExternStaticDecl {
     pub name: String,
-    pub type_ann: TypeAnn,
+    pub ty: Type,
     pub span: Span,
 }
 
@@ -50,14 +30,14 @@ pub struct ExternStaticDecl {
 pub struct ExternFunctionDecl {
     pub name: String,
     pub params: Vec<Param>,
-    pub return_type_ann: TypeAnn,
+    pub return_ty: Type,
     pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConstDef {
     pub name: String,
-    pub type_ann: TypeAnn,
+    pub ty: Type,
     pub init: Box<Expr>,
     pub span: Span,
 }
@@ -65,22 +45,8 @@ pub struct ConstDef {
 #[derive(Debug, Clone, PartialEq)]
 pub struct StaticDef {
     pub name: String,
-    pub type_ann: TypeAnn,
+    pub ty: Type,
     pub init: Box<Expr>,
-    pub span: Span,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct StructDef {
-    pub name: String,
-    pub fields: Vec<Field>,
-    pub span: Span,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct Field {
-    pub name: String,
-    pub type_ann: TypeAnn,
     pub span: Span,
 }
 
@@ -88,7 +54,7 @@ pub struct Field {
 pub struct FunctionDef {
     pub name: String,
     pub params: Vec<Param>,
-    pub return_type_ann: TypeAnn,
+    pub return_ty: Type,
     pub body: Block,
     pub span: Span,
 }
@@ -96,13 +62,14 @@ pub struct FunctionDef {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param {
     pub name: String,
-    pub type_ann: TypeAnn,
+    pub ty: Type,
     pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Block {
     pub stmts: Vec<Stmt>,
+    pub ty: Type,
     pub span: Span,
 }
 
@@ -122,7 +89,7 @@ pub enum StmtKind {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Let {
     pub name: String,
-    pub type_ann: TypeAnn,
+    pub ty: Type,
     pub init: Expr,
     pub span: Span,
 }
@@ -130,6 +97,7 @@ pub struct Let {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Expr {
     pub kind: ExprKind,
+    pub ty: Type,
     pub span: Span,
 }
 
@@ -222,4 +190,37 @@ pub enum BinaryOp {
     BitOr,  // |
     And,    // &&
     Or,     // ||
+}
+
+impl From<&ast::UnaryOp> for UnaryOp {
+    fn from(value: &ast::UnaryOp) -> Self {
+        match value {
+            ast::UnaryOp::Neg => Self::Neg,
+            ast::UnaryOp::Not => Self::Not,
+            ast::UnaryOp::Ref => Self::Ref,
+            ast::UnaryOp::Deref => Self::Deref,
+        }
+    }
+}
+
+impl From<&ast::BinaryOp> for BinaryOp {
+    fn from(value: &ast::BinaryOp) -> Self {
+        match value {
+            ast::BinaryOp::Add => Self::Add,
+            ast::BinaryOp::Sub => Self::Sub,
+            ast::BinaryOp::Mul => Self::Mul,
+            ast::BinaryOp::Div => Self::Div,
+            ast::BinaryOp::Rem => Self::Rem,
+            ast::BinaryOp::Lt => Self::Lt,
+            ast::BinaryOp::Le => Self::Le,
+            ast::BinaryOp::Gt => Self::Gt,
+            ast::BinaryOp::Ge => Self::Ge,
+            ast::BinaryOp::Eq => Self::Eq,
+            ast::BinaryOp::Ne => Self::Ne,
+            ast::BinaryOp::BitAnd => Self::BitAnd,
+            ast::BinaryOp::BitOr => Self::BitOr,
+            ast::BinaryOp::And => Self::And,
+            ast::BinaryOp::Or => Self::Or,
+        }
+    }
 }

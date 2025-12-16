@@ -49,6 +49,66 @@ fn test_bool_literal() {
 }
 
 #[test]
+fn test_struct_literal() {
+    let expr =
+        parse_expr!("Line { start: Point { x: 0, y: 0 }, end: Point { x: 10, y: 10 } }").unwrap();
+
+    match expr.kind {
+        ExprKind::Struct(struct_expr) => {
+            assert_eq!(struct_expr.name, "Line");
+            assert_eq!(struct_expr.fields.len(), 2);
+
+            assert_eq!(struct_expr.fields[0].name, "start");
+            match &struct_expr.fields[0].value.kind {
+                ExprKind::Struct(start_point) => {
+                    assert_eq!(start_point.name, "Point");
+                    assert_eq!(start_point.fields.len(), 2);
+
+                    // start.x = 0
+                    assert_eq!(start_point.fields[0].name, "x");
+                    assert!(matches!(
+                        start_point.fields[0].value.kind,
+                        ExprKind::Literal(Literal::Integer(0))
+                    ));
+
+                    // start.y = 0
+                    assert_eq!(start_point.fields[1].name, "y");
+                    assert!(matches!(
+                        start_point.fields[1].value.kind,
+                        ExprKind::Literal(Literal::Integer(0))
+                    ));
+                }
+                _ => panic!("Expected nested struct literal for 'start'"),
+            }
+
+            assert_eq!(struct_expr.fields[1].name, "end");
+            match &struct_expr.fields[1].value.kind {
+                ExprKind::Struct(end_point) => {
+                    assert_eq!(end_point.name, "Point");
+                    assert_eq!(end_point.fields.len(), 2);
+
+                    // end.x = 10
+                    assert_eq!(end_point.fields[0].name, "x");
+                    assert!(matches!(
+                        end_point.fields[0].value.kind,
+                        ExprKind::Literal(Literal::Integer(10))
+                    ));
+
+                    // end.y = 10
+                    assert_eq!(end_point.fields[1].name, "y");
+                    assert!(matches!(
+                        end_point.fields[1].value.kind,
+                        ExprKind::Literal(Literal::Integer(10))
+                    ));
+                }
+                _ => panic!("Expected nested struct literal for 'end'"),
+            }
+        }
+        _ => panic!("Expected struct literal"),
+    }
+}
+
+#[test]
 fn test_operator_precedence() {
     let expr = parse_expr!("1 + 2 * 3").unwrap();
 
@@ -155,7 +215,7 @@ fn test_let_binding() {
         Item::Function(func) => match &func.body.stmts[0].kind {
             StmtKind::Let(let_stmt) => {
                 assert_eq!(let_stmt.name, "x");
-                assert_eq!(let_stmt.type_ann, Type::I64);
+                assert_eq!(let_stmt.type_ann.kind, TypeAnnKind::I64);
             }
             _ => panic!("Expected let statement"),
         },
@@ -256,7 +316,7 @@ fn test_function_definition() {
             assert_eq!(func.params.len(), 2);
             assert_eq!(func.params[0].name, "a");
             assert_eq!(func.params[1].name, "b");
-            assert_eq!(func.return_type_ann, Type::I64);
+            assert_eq!(func.return_type_ann.kind, TypeAnnKind::I64);
         }
         _ => panic!("Expected function"),
     }
@@ -269,7 +329,7 @@ fn test_const_definition() {
     match &program.items[0] {
         Item::Const(const_def) => {
             assert_eq!(const_def.name, "PI");
-            assert_eq!(const_def.type_ann, Type::I64);
+            assert_eq!(const_def.type_ann.kind, TypeAnnKind::I64);
         }
         _ => panic!("Expected const"),
     }
@@ -282,9 +342,25 @@ fn test_static_definition() {
     match &program.items[0] {
         Item::Static(static_def) => {
             assert_eq!(static_def.name, "GLOBAL");
-            assert_eq!(static_def.type_ann, Type::I64);
+            assert_eq!(static_def.type_ann.kind, TypeAnnKind::I64);
         }
         _ => panic!("Expected static"),
+    }
+}
+
+#[test]
+fn test_struct_definition() {
+    let program = parse!("struct Position { x: i64, y: i64 }").unwrap();
+
+    match &program.items[0] {
+        Item::Struct(struct_def) => {
+            assert_eq!(struct_def.name, "Position");
+            assert_eq!(struct_def.fields[0].name, "x");
+            assert_eq!(struct_def.fields[0].type_ann.kind, TypeAnnKind::I64);
+            assert_eq!(struct_def.fields[1].name, "y");
+            assert_eq!(struct_def.fields[1].type_ann.kind, TypeAnnKind::I64);
+        }
+        _ => panic!("Expected struct"),
     }
 }
 
@@ -312,7 +388,7 @@ fn test_array_type() {
     match &program.items[0] {
         Item::Function(func) => match &func.body.stmts[0].kind {
             StmtKind::Let(let_stmt) => {
-                assert!(matches!(let_stmt.type_ann, Type::Array(_, 3)));
+                assert!(matches!(let_stmt.type_ann.kind, TypeAnnKind::Array(_, 3)));
             }
             _ => panic!("Expected let statement"),
         },
@@ -365,7 +441,7 @@ fn test_extern_declarations() {
     match &program.items[0] {
         Item::Extern(ExternItem::Static(static_decl)) => {
             assert_eq!(static_decl.name, "stderr");
-            assert_eq!(static_decl.type_ann, Type::I64);
+            assert_eq!(static_decl.type_ann.kind, TypeAnnKind::I64);
         }
         _ => panic!("Expected extern static"),
     }
@@ -375,7 +451,7 @@ fn test_extern_declarations() {
             assert_eq!(func.name, "puts");
             assert_eq!(func.params.len(), 1);
             assert_eq!(func.params[0].name, "s");
-            assert_eq!(func.return_type_ann, Type::I64);
+            assert_eq!(func.return_type_ann.kind, TypeAnnKind::I64);
         }
         _ => panic!("Expected extern function"),
     }

@@ -7,6 +7,7 @@ pub enum TokenKind {
     Fn,       // fn
     Extern,   // extern
     Return,   // return
+    Struct,   // struct
     Let,      // let
     If,       // if
     Else,     // else
@@ -50,6 +51,7 @@ pub enum TokenKind {
     CloseBrace,   // }
     OpenBracket,  // [
     CloseBracket, // ]
+    Dot,          // .
     Comma,        // ,
     Colon,        // :
     Semi,         // ;
@@ -145,6 +147,10 @@ impl<'a> Lexer<'a> {
             Some(']') => {
                 self.advance();
                 TokenKind::CloseBracket
+            }
+            Some('.') => {
+                self.advance();
+                TokenKind::Dot
             }
             Some(',') => {
                 self.advance();
@@ -307,6 +313,7 @@ impl<'a> Lexer<'a> {
             "fn" => TokenKind::Fn,
             "extern" => TokenKind::Extern,
             "return" => TokenKind::Return,
+            "struct" => TokenKind::Struct,
             "let" => TokenKind::Let,
             "if" => TokenKind::If,
             "else" => TokenKind::Else,
