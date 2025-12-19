@@ -90,6 +90,7 @@ impl fmt::Display for LexError {
 
 impl Error for LexError {}
 
+#[derive(Clone)]
 pub struct Lexer<'a> {
     chars: Chars<'a>,
     current: Option<char>,
@@ -271,6 +272,11 @@ impl<'a> Lexer<'a> {
             kind,
             span: self.start_span,
         })
+    }
+
+    pub fn peek_token(&self) -> Result<Token, LexError> {
+        let mut temp = self.clone();
+        temp.next_token()
     }
 
     fn advance(&mut self) {

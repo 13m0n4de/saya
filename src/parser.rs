@@ -844,11 +844,27 @@ impl<'a> Parser<'a> {
         })
     }
 
+    fn parse_expr_cond(&mut self) -> Result<Expr, ParseError> {
+        if matches!(self.current.kind, TokenKind::Ident(_)) {
+            let next = self.lexer.peek_token()?;
+            if next.kind == TokenKind::OpenBrace {
+                let span = self.current.span;
+                let name = self.expect_identifier()?;
+                return Ok(Expr {
+                    kind: ExprKind::Ident(name),
+                    span,
+                });
+            }
+        }
+
+        self.parse_expression()
+    }
+
     fn parse_if(&mut self) -> Result<If, ParseError> {
         let if_span = self.current.span;
         self.expect(TokenKind::If)?;
 
-        let cond = Box::new(self.parse_expression()?);
+        let cond = Box::new(self.parse_expr_cond()?);
         let then_body = Box::new(self.parse_block()?);
         let else_body = if self.eat(TokenKind::Else)? {
             if self.current.kind == TokenKind::If {
@@ -882,7 +898,7 @@ impl<'a> Parser<'a> {
         let while_span = self.current.span;
         self.expect(TokenKind::While)?;
 
-        let cond = Box::new(self.parse_expression()?);
+        let cond = Box::new(self.parse_expr_cond()?);
         let body = Box::new(self.parse_block()?);
 
         Ok(While {
