@@ -216,6 +216,54 @@ impl<'a> CodeGen<'a> {
         Box::leak(def)
     }
 
+    fn build_array_def(
+        &mut self,
+        type_id: TypeId,
+        elem_type_id: TypeId,
+        count: usize,
+    ) -> &'static qbe::TypeDef<'static> {
+        let ty = self.ctx.get(type_id);
+        let elem_ty = self.ctx.get(elem_type_id);
+
+        let qbe_elem_ty = if elem_ty.is_aggregate() {
+            let elem_def = self
+                .type_defs
+                .get(&elem_type_id)
+                .expect("element type should be generated first");
+            qbe::Type::Aggregate(elem_def)
+        } else {
+            self.qbe_store_type(elem_type_id)
+        };
+
+        let items = vec![(qbe_elem_ty, count)];
+
+        let name = format!("type.{}", type_id.0);
+
+        let def = Box::new(qbe::TypeDef {
+            name,
+            align: Some(ty.align),
+            items,
+        });
+
+        Box::leak(def)
+    }
+
+    fn build_slice_def(&mut self, type_id: TypeId) -> &'static qbe::TypeDef<'static> {
+        let ty = self.ctx.get(type_id);
+
+        let items = vec![(qbe::Type::Long, 1), (qbe::Type::Long, 1)];
+
+        let name = format!("type.{}", type_id.0);
+
+        let def = Box::new(qbe::TypeDef {
+            name,
+            align: Some(ty.align),
+            items,
+        });
+
+        Box::leak(def)
+    }
+
     fn new_temp(&mut self) -> String {
         let name = format!("temp.{}", self.temp_counter);
         self.temp_counter += 1;
@@ -646,6 +694,14 @@ impl<'a> CodeGen<'a> {
 
                 self.build_struct_def(type_id, &fields)
             }
+            TypeKind::Array(elem_type_id, count) => {
+                if self.ctx.get(elem_type_id).is_aggregate() {
+                    self.generate_type_def(elem_type_id);
+                }
+
+                self.build_array_def(type_id, elem_type_id, count)
+            }
+            TypeKind::Slice(_) => self.build_slice_def(type_id),
             _ => unreachable!("non-aggregate type: {:?}", type_kind),
         };
 
