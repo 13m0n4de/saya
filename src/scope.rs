@@ -1,6 +1,6 @@
-use std::collections::HashMap;
+use std::{cell::Cell, collections::HashMap};
 
-use crate::types::TypeId;
+use crate::{ast, types::TypeId};
 
 #[derive(Debug, Clone)]
 pub enum ScopeObject {
@@ -9,6 +9,13 @@ pub enum ScopeObject {
     Function(Vec<TypeId>, TypeId),
     Const(TypeId),
     Static(TypeId),
+    Scan(Incomplete),
+}
+
+#[derive(Debug, Clone)]
+pub struct Incomplete {
+    pub def: ast::StructDef,
+    pub in_progress: Cell<bool>,
 }
 
 #[derive(Default)]

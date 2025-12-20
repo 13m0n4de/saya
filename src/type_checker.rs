@@ -1,4 +1,5 @@
 use std::{
+    cell::Cell,
     collections::{HashMap, HashSet},
     error::Error,
     fmt,
@@ -6,7 +7,7 @@ use std::{
 
 use crate::{
     ast, hir,
-    scope::{Scope, ScopeObject},
+    scope::{Incomplete, Scope, ScopeObject},
     span::Span,
     types::{Field, TypeContext, TypeId, TypeKind},
 };
@@ -101,6 +102,22 @@ impl<'a> TypeChecker<'a> {
 
             ast::TypeAnnKind::Named(name) => match self.lookup(name) {
                 Some(ScopeObject::Type(type_id)) => Ok(*type_id),
+                Some(ScopeObject::Scan(incomplete)) => {
+                    if incomplete.in_progress.get() {
+                        return Err(TypeError::new(
+                            format!("Circular dependency for struct `{name}`"),
+                            type_ann.span,
+                        ));
+                    }
+
+                    incomplete.in_progress.set(true);
+
+                    let type_id = self.register_struct_type(&incomplete.def.clone())?;
+                    self.global_scope()
+                        .insert(name.clone(), ScopeObject::Type(type_id));
+
+                    Ok(type_id)
+                }
                 _ => Err(TypeError::new(
                     format!("undefined type `{name}`"),
                     type_ann.span,
@@ -110,11 +127,12 @@ impl<'a> TypeChecker<'a> {
     }
 
     pub fn check_program(&mut self, prog: &ast::Program) -> Result<hir::Program, TypeError> {
-        self.collect_signatures(prog)?;
+        self.scan_types(prog)?;
+        self.resolve_signatures(prog)?;
         self.check_items(prog)
     }
 
-    fn register_struct_type(&mut self, def: &ast::StructDef) -> Result<(), TypeError> {
+    fn register_struct_type(&mut self, def: &ast::StructDef) -> Result<TypeId, TypeError> {
         let mut field_names = HashSet::new();
         let mut fields = Vec::new();
         let mut offset = 0;
@@ -148,20 +166,47 @@ impl<'a> TypeChecker<'a> {
         }
 
         let type_id = self.ctx.mk_struct(fields);
-        if self
+
+        match self
             .global_scope()
             .insert(def.name.clone(), ScopeObject::Type(type_id))
-            .is_some()
         {
-            return Err(TypeError::new(
-                format!("name `{}` already defined", def.name),
-                def.span,
-            ));
+            Some(ScopeObject::Scan(_)) | None => {}
+            Some(_) => {
+                return Err(TypeError::new(
+                    format!("name `{}` already defined", def.name),
+                    def.span,
+                ));
+            }
         }
+
+        Ok(type_id)
+    }
+
+    fn scan_types(&mut self, prog: &ast::Program) -> Result<(), TypeError> {
+        for item in &prog.items {
+            if let ast::Item::Struct(def) = item {
+                let incomplete = Incomplete {
+                    def: def.clone(),
+                    in_progress: Cell::new(false),
+                };
+                if self
+                    .global_scope()
+                    .insert(def.name.clone(), ScopeObject::Scan(incomplete))
+                    .is_some()
+                {
+                    return Err(TypeError::new(
+                        format!("name `{}` already defined", def.name),
+                        def.span,
+                    ));
+                }
+            }
+        }
+
         Ok(())
     }
 
-    fn collect_signatures(&mut self, prog: &ast::Program) -> Result<(), TypeError> {
+    fn resolve_signatures(&mut self, prog: &ast::Program) -> Result<(), TypeError> {
         for item in &prog.items {
             match item {
                 ast::Item::Const(def) => {
@@ -243,7 +288,11 @@ impl<'a> TypeChecker<'a> {
                         }
                     }
                 },
-                ast::Item::Struct(def) => self.register_struct_type(def)?,
+                ast::Item::Struct(def) => {
+                    if matches!(self.lookup(&def.name), Some(ScopeObject::Scan(_))) {
+                        self.register_struct_type(def)?;
+                    }
+                }
             }
         }
         Ok(())
