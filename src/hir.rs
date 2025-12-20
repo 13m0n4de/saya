@@ -1,4 +1,4 @@
-use crate::{ast, span::Span, ty::Type};
+use crate::{ast, span::Span, types::TypeId};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
@@ -22,7 +22,7 @@ pub enum ExternItem {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExternStaticDecl {
     pub name: String,
-    pub ty: Type,
+    pub type_id: TypeId,
     pub span: Span,
 }
 
@@ -30,14 +30,14 @@ pub struct ExternStaticDecl {
 pub struct ExternFunctionDecl {
     pub name: String,
     pub params: Vec<Param>,
-    pub return_ty: Type,
+    pub return_type_id: TypeId,
     pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConstDef {
     pub name: String,
-    pub ty: Type,
+    pub type_id: TypeId,
     pub init: Box<Expr>,
     pub span: Span,
 }
@@ -45,7 +45,7 @@ pub struct ConstDef {
 #[derive(Debug, Clone, PartialEq)]
 pub struct StaticDef {
     pub name: String,
-    pub ty: Type,
+    pub type_id: TypeId,
     pub init: Box<Expr>,
     pub span: Span,
 }
@@ -54,7 +54,7 @@ pub struct StaticDef {
 pub struct FunctionDef {
     pub name: String,
     pub params: Vec<Param>,
-    pub return_ty: Type,
+    pub return_type_id: TypeId,
     pub body: Block,
     pub span: Span,
 }
@@ -62,14 +62,14 @@ pub struct FunctionDef {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param {
     pub name: String,
-    pub ty: Type,
+    pub type_id: TypeId,
     pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Block {
     pub stmts: Vec<Stmt>,
-    pub ty: Type,
+    pub type_id: TypeId,
     pub span: Span,
 }
 
@@ -89,7 +89,7 @@ pub enum StmtKind {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Let {
     pub name: String,
-    pub ty: Type,
+    pub type_id: TypeId,
     pub init: Expr,
     pub span: Span,
 }
@@ -97,7 +97,7 @@ pub struct Let {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Expr {
     pub kind: ExprKind,
-    pub ty: Type,
+    pub type_id: TypeId,
     pub span: Span,
 }
 

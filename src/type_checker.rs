@@ -6,8 +6,9 @@ use std::{
 
 use crate::{
     ast, hir,
+    scope::{Scope, ScopeObject},
     span::Span,
-    ty::{FieldInfo, Type, TypeKind},
+    types::{Field, TypeContext, TypeId, TypeKind},
 };
 
 #[derive(Debug, Clone)]
@@ -34,120 +35,128 @@ impl fmt::Display for TypeError {
 
 impl Error for TypeError {}
 
-#[derive(Default)]
-pub struct TypeChecker {
-    scopes: Vec<HashMap<String, Type>>,
-    functions: HashMap<String, FunctionSig>,
-    globals: HashMap<String, Type>,
-    constants: HashMap<String, Type>,
-    current_fn_return_ty: Option<Type>,
-    types: HashMap<String, Type>,
+pub struct TypeChecker<'a> {
+    ctx: &'a mut TypeContext,
+    scopes: Vec<Scope>,
+    current_fn_return_type_id: Option<TypeId>,
 }
 
-#[derive(Clone)]
-struct FunctionSig {
-    params: Vec<Type>,
-    return_ty: Type,
-}
-
-impl TypeChecker {
-    pub fn new() -> Self {
+impl<'a> TypeChecker<'a> {
+    pub fn new(ctx: &'a mut TypeContext) -> Self {
         Self {
-            scopes: Vec::new(),
-            functions: HashMap::new(),
-            globals: HashMap::new(),
-            constants: HashMap::new(),
-            current_fn_return_ty: None,
-            types: HashMap::new(),
+            ctx,
+            scopes: vec![Scope::new()],
+            current_fn_return_type_id: None,
         }
     }
 
     fn push_scope(&mut self) {
-        self.scopes.push(HashMap::new());
+        self.scopes.push(Scope::new());
     }
 
     fn pop_scope(&mut self) {
-        self.scopes.pop();
-    }
-
-    fn lookup_var_type(&self, name: &str) -> Option<&Type> {
         self.scopes
-            .iter()
-            .rev()
-            .find_map(|scope| scope.get(name))
-            .or_else(|| self.globals.get(name))
-            .or_else(|| self.constants.get(name))
+            .pop()
+            .expect("ICE: cannot pop scope, scopes stack is empty");
     }
 
-    fn insert_local_var(&mut self, name: String, ty: Type) {
+    fn current_scope(&mut self) -> &mut Scope {
         self.scopes
             .last_mut()
-            .expect("ICE: scope stack should not be empty")
-            .insert(name, ty);
+            .expect("scope stack should not be empty")
     }
 
-    pub fn types(&self) -> &HashMap<String, Type> {
-        &self.types
+    fn global_scope(&mut self) -> &mut Scope {
+        self.scopes
+            .first_mut()
+            .expect("scope stack should not be empty")
     }
 
-    fn resolve_type(&mut self, type_ann: &ast::TypeAnn) -> Result<Type, TypeError> {
+    fn lookup(&self, name: &str) -> Option<&ScopeObject> {
+        self.scopes.iter().rev().find_map(|s| s.get(name))
+    }
+
+    fn resolve_type(&mut self, type_ann: &ast::TypeAnn) -> Result<TypeId, TypeError> {
         match &type_ann.kind {
-            ast::TypeAnnKind::I64 => Ok(Type::i64()),
-            ast::TypeAnnKind::U8 => Ok(Type::u8()),
-            ast::TypeAnnKind::Bool => Ok(Type::bool()),
-            ast::TypeAnnKind::Unit => Ok(Type::unit()),
-            ast::TypeAnnKind::Never => Ok(Type::never()),
+            ast::TypeAnnKind::I64 => Ok(TypeId::I64),
+            ast::TypeAnnKind::U8 => Ok(TypeId::U8),
+            ast::TypeAnnKind::Bool => Ok(TypeId::BOOL),
+            ast::TypeAnnKind::Unit => Ok(TypeId::UNIT),
+            ast::TypeAnnKind::Never => Ok(TypeId::NEVER),
 
             ast::TypeAnnKind::Pointer(inner) => {
-                let inner_ty = self.resolve_type(inner)?;
-                Ok(Type::pointer(inner_ty))
+                let inner_type_id = self.resolve_type(inner)?;
+                Ok(self.ctx.mk_pointer(inner_type_id))
             }
 
             ast::TypeAnnKind::Array(elem, count) => {
-                let elem_ty = self.resolve_type(elem)?;
-                Ok(Type::array(elem_ty, *count))
+                let elem_type_id = self.resolve_type(elem)?;
+                Ok(self.ctx.mk_array(elem_type_id, *count))
             }
 
             ast::TypeAnnKind::Slice(elem) => {
-                let elem_ty = self.resolve_type(elem)?;
-                Ok(Type::slice(elem_ty))
+                let elem_type_id = self.resolve_type(elem)?;
+                Ok(self.ctx.mk_slice(elem_type_id))
             }
 
-            ast::TypeAnnKind::Named(name) => {
-                self.types.get(name).cloned().ok_or_else(|| {
-                    TypeError::new(format!("undefined type `{name}`"), type_ann.span)
-                })
-            }
+            ast::TypeAnnKind::Named(name) => match self.lookup(name) {
+                Some(ScopeObject::Type(type_id)) => Ok(*type_id),
+                _ => Err(TypeError::new(
+                    format!("undefined type `{name}`"),
+                    type_ann.span,
+                )),
+            },
         }
     }
 
     pub fn check_program(&mut self, prog: &ast::Program) -> Result<hir::Program, TypeError> {
-        self.collect_types(prog)?;
-        self.resolve_types(prog)?;
         self.collect_signatures(prog)?;
         self.check_items(prog)
     }
 
-    fn collect_types(&mut self, prog: &ast::Program) -> Result<(), TypeError> {
-        for item in &prog.items {
-            if let ast::Item::Struct(def) = item {
-                if self.types.contains_key(&def.name) {
-                    return Err(TypeError::new(
-                        format!("duplicate struct definition `{}`", def.name),
-                        def.span,
-                    ));
-                }
-                self.types.insert(def.name.clone(), Type::unit());
-            }
-        }
-        Ok(())
-    }
+    fn register_struct_type(&mut self, def: &ast::StructDef) -> Result<(), TypeError> {
+        let mut field_names = HashSet::new();
+        let mut fields = Vec::new();
+        let mut offset = 0;
+        let mut max_align = 1;
 
-    fn resolve_types(&mut self, prog: &ast::Program) -> Result<(), TypeError> {
-        for item in &prog.items {
-            if let ast::Item::Struct(def) = item {
-                self.resolve_struct(def)?;
+        for field in &def.fields {
+            if !field_names.insert(&field.name) {
+                return Err(TypeError::new(
+                    format!("duplicate field `{}` in struct `{}`", field.name, def.name),
+                    field.span,
+                ));
             }
+
+            let field_type_id = self.resolve_type(&field.type_ann)?;
+            let field_type = self.ctx.get(field_type_id);
+
+            let field_align = field_type.align as usize;
+            max_align = max_align.max(field_align);
+
+            if offset % field_align != 0 {
+                offset += field_align - (offset % field_align);
+            }
+
+            fields.push(Field {
+                name: field.name.clone(),
+                type_id: field_type_id,
+                offset,
+            });
+
+            offset += field_type.size;
+        }
+
+        let type_id = self.ctx.mk_struct(fields);
+        if self
+            .global_scope()
+            .insert(def.name.clone(), ScopeObject::Type(type_id))
+            .is_some()
+        {
+            return Err(TypeError::new(
+                format!("name `{}` already defined", def.name),
+                def.span,
+            ));
         }
         Ok(())
     }
@@ -156,12 +165,30 @@ impl TypeChecker {
         for item in &prog.items {
             match item {
                 ast::Item::Const(def) => {
-                    let ty = self.resolve_type(&def.type_ann)?;
-                    self.constants.insert(def.name.clone(), ty);
+                    let type_id = self.resolve_type(&def.type_ann)?;
+                    if self
+                        .global_scope()
+                        .insert(def.name.clone(), ScopeObject::Const(type_id))
+                        .is_some()
+                    {
+                        return Err(TypeError::new(
+                            format!("name `{}` already defined", def.name),
+                            def.span,
+                        ));
+                    }
                 }
                 ast::Item::Static(def) => {
-                    let ty = self.resolve_type(&def.type_ann)?;
-                    self.globals.insert(def.name.clone(), ty);
+                    let type_id = self.resolve_type(&def.type_ann)?;
+                    if self
+                        .global_scope()
+                        .insert(def.name.clone(), ScopeObject::Static(type_id))
+                        .is_some()
+                    {
+                        return Err(TypeError::new(
+                            format!("name `{}` already defined", def.name),
+                            def.span,
+                        ));
+                    }
                 }
                 ast::Item::Function(def) => {
                     let params = def
@@ -171,13 +198,30 @@ impl TypeChecker {
                         .collect::<Result<Vec<_>, _>>()?;
                     let return_ty = self.resolve_type(&def.return_type_ann)?;
 
-                    self.functions
-                        .insert(def.name.clone(), FunctionSig { params, return_ty });
+                    if self
+                        .global_scope()
+                        .insert(def.name.clone(), ScopeObject::Function(params, return_ty))
+                        .is_some()
+                    {
+                        return Err(TypeError::new(
+                            format!("name `{}` already defined", def.name),
+                            def.span,
+                        ));
+                    }
                 }
                 ast::Item::Extern(extern_item) => match extern_item {
                     ast::ExternItem::Static(decl) => {
-                        let ty = self.resolve_type(&decl.type_ann)?;
-                        self.globals.insert(decl.name.clone(), ty);
+                        let type_id = self.resolve_type(&decl.type_ann)?;
+                        if self
+                            .global_scope()
+                            .insert(decl.name.clone(), ScopeObject::Static(type_id))
+                            .is_some()
+                        {
+                            return Err(TypeError::new(
+                                format!("name `{}` already defined", decl.name),
+                                decl.span,
+                            ));
+                        }
                     }
                     ast::ExternItem::Function(decl) => {
                         let params = decl
@@ -187,11 +231,19 @@ impl TypeChecker {
                             .collect::<Result<Vec<_>, _>>()?;
                         let return_ty = self.resolve_type(&decl.return_type_ann)?;
 
-                        self.functions
-                            .insert(decl.name.clone(), FunctionSig { params, return_ty });
+                        if self
+                            .global_scope()
+                            .insert(decl.name.clone(), ScopeObject::Function(params, return_ty))
+                            .is_some()
+                        {
+                            return Err(TypeError::new(
+                                format!("name `{}` already defined", decl.name),
+                                decl.span,
+                            ));
+                        }
                     }
                 },
-                ast::Item::Struct(_) => {}
+                ast::Item::Struct(def) => self.register_struct_type(def)?,
             }
         }
         Ok(())
@@ -202,14 +254,14 @@ impl TypeChecker {
         for item in &prog.items {
             let typed_item = match item {
                 ast::Item::Const(def) => {
-                    let declared_ty = self.resolve_type(&def.type_ann)?;
+                    let declared_type_id = self.resolve_type(&def.type_ann)?;
                     let typed_init = self.check_expression(&def.init)?;
 
-                    if typed_init.ty != declared_ty {
+                    if typed_init.type_id != declared_type_id {
                         return Err(TypeError::new(
                             format!(
                                 "type mismatch in const `{}`: expected `{:?}`, found `{:?}`",
-                                def.name, declared_ty, typed_init.ty
+                                def.name, declared_type_id, typed_init.type_id
                             ),
                             def.init.span,
                         ));
@@ -217,20 +269,20 @@ impl TypeChecker {
 
                     hir::Item::Const(hir::ConstDef {
                         name: def.name.clone(),
-                        ty: declared_ty,
+                        type_id: declared_type_id,
                         init: Box::new(typed_init),
                         span: def.span,
                     })
                 }
                 ast::Item::Static(def) => {
-                    let declared_ty = self.resolve_type(&def.type_ann)?;
+                    let declared_type_id = self.resolve_type(&def.type_ann)?;
                     let typed_init = self.check_expression(&def.init)?;
 
-                    if typed_init.ty != declared_ty {
+                    if typed_init.type_id != declared_type_id {
                         return Err(TypeError::new(
                             format!(
                                 "type mismatch in static `{}`: expected `{:?}`, found `{:?}`",
-                                def.name, declared_ty, typed_init.ty
+                                def.name, declared_type_id, typed_init.type_id
                             ),
                             def.init.span,
                         ));
@@ -238,7 +290,7 @@ impl TypeChecker {
 
                     hir::Item::Static(hir::StaticDef {
                         name: def.name.clone(),
-                        ty: declared_ty,
+                        type_id: declared_type_id,
                         init: Box::new(typed_init),
                         span: def.span,
                     })
@@ -250,10 +302,10 @@ impl TypeChecker {
                 ast::Item::Extern(extern_item) => {
                     let hir_extern = match extern_item {
                         ast::ExternItem::Static(decl) => {
-                            let ty = self.resolve_type(&decl.type_ann)?;
+                            let type_id = self.resolve_type(&decl.type_ann)?;
                             hir::ExternItem::Static(hir::ExternStaticDecl {
                                 name: decl.name.clone(),
-                                ty,
+                                type_id,
                                 span: decl.span,
                             })
                         }
@@ -262,19 +314,19 @@ impl TypeChecker {
                                 .params
                                 .iter()
                                 .map(|p| {
-                                    let ty = self.resolve_type(&p.type_ann)?;
+                                    let type_id = self.resolve_type(&p.type_ann)?;
                                     Ok(hir::Param {
                                         name: p.name.clone(),
-                                        ty,
+                                        type_id,
                                         span: p.span,
                                     })
                                 })
                                 .collect::<Result<Vec<_>, _>>()?;
-                            let return_ty = self.resolve_type(&decl.return_type_ann)?;
+                            let return_type_id = self.resolve_type(&decl.return_type_ann)?;
                             hir::ExternItem::Function(hir::ExternFunctionDecl {
                                 name: decl.name.clone(),
                                 params,
-                                return_ty,
+                                return_type_id,
                                 span: decl.span,
                             })
                         }
@@ -292,72 +344,27 @@ impl TypeChecker {
         Ok(hir::Program { items: typed_items })
     }
 
-    fn resolve_struct(&mut self, struct_def: &ast::StructDef) -> Result<(), TypeError> {
-        let mut fields = Vec::new();
-        let mut offset = 0;
-        let mut max_align = 1;
-
-        // Check field name uniqueness
-        let mut field_names = HashSet::new();
-        for field in &struct_def.fields {
-            if !field_names.insert(&field.name) {
-                return Err(TypeError::new(
-                    format!(
-                        "duplicate field `{}` in struct `{}`",
-                        field.name, struct_def.name
-                    ),
-                    field.span,
-                ));
-            }
-        }
-
-        // Resolve field types and compute layout
-        for field in &struct_def.fields {
-            let field_ty = self.resolve_type(&field.type_ann)?;
-
-            let field_align = field_ty.align as usize;
-            max_align = max_align.max(field_align);
-
-            if offset % field_align != 0 {
-                offset += field_align - (offset % field_align);
-            }
-
-            fields.push(FieldInfo {
-                name: field.name.clone(),
-                ty: field_ty.clone(),
-                offset,
-            });
-
-            offset += field_ty.size;
-        }
-
-        // Final size must be aligned to struct alignment
-        let size = if offset % max_align != 0 {
-            offset + max_align - (offset % max_align)
-        } else {
-            offset
-        };
-
-        let struct_type =
-            Type::struct_type(struct_def.name.clone(), fields, size, max_align as u64);
-
-        self.types.insert(struct_def.name.clone(), struct_type);
-
-        Ok(())
-    }
-
     fn check_function(&mut self, func: &ast::FunctionDef) -> Result<hir::FunctionDef, TypeError> {
-        let return_ty = self.resolve_type(&func.return_type_ann)?;
-        self.current_fn_return_ty = Some(return_ty.clone());
+        let return_type_id = self.resolve_type(&func.return_type_ann)?;
+        self.current_fn_return_type_id = Some(return_type_id);
         self.push_scope();
 
         let mut hir_params = Vec::new();
         for param in &func.params {
-            let param_ty = self.resolve_type(&param.type_ann)?;
-            self.insert_local_var(param.name.clone(), param_ty.clone());
+            let param_type_id = self.resolve_type(&param.type_ann)?;
+            if self
+                .current_scope()
+                .insert(param.name.clone(), ScopeObject::Var(param_type_id))
+                .is_some()
+            {
+                return Err(TypeError::new(
+                    format!("parameter `{}` already defined", param.name),
+                    param.span,
+                ));
+            }
             hir_params.push(hir::Param {
                 name: param.name.clone(),
-                ty: param_ty,
+                type_id: param_type_id,
                 span: param.span,
             });
         }
@@ -365,30 +372,30 @@ impl TypeChecker {
         let typed_body = self.check_block(&func.body)?;
 
         // The `Never` type is compatible with any return type
-        if typed_body.ty != return_ty && typed_body.ty.kind != TypeKind::Never {
+        if typed_body.type_id != return_type_id && typed_body.type_id != TypeId::NEVER {
             return Err(TypeError::new(
                 format!(
                     "mismatched return type in function `{}`: expected `{:?}`, found `{:?}`",
-                    func.name, return_ty, typed_body.ty
+                    func.name, return_type_id, typed_body.type_id
                 ),
                 func.body.span,
             ));
         }
 
         self.pop_scope();
-        self.current_fn_return_ty = None;
+        self.current_fn_return_type_id = None;
 
         Ok(hir::FunctionDef {
             name: func.name.clone(),
             params: hir_params,
-            return_ty,
+            return_type_id,
             body: typed_body,
             span: func.span,
         })
     }
 
     fn check_block(&mut self, block: &ast::Block) -> Result<hir::Block, TypeError> {
-        self.push_scope();
+        self.scopes.push(Scope::new());
 
         let mut typed_stmts = Vec::new();
         let mut has_never = false;
@@ -407,19 +414,19 @@ impl TypeChecker {
             match &typed_stmt.kind {
                 hir::StmtKind::Expr(expr)
                     if !is_last
-                        && expr.ty.kind != TypeKind::Unit
-                        && expr.ty.kind != TypeKind::Never =>
+                        && expr.type_id != TypeId::UNIT
+                        && expr.type_id != TypeId::NEVER =>
                 {
                     return Err(TypeError::new(
                         format!(
                             "expected `;` after expression: expected `()`, found `{:?}`",
-                            expr.ty
+                            expr.type_id
                         ),
                         expr.span,
                     ));
                 }
                 hir::StmtKind::Expr(expr) | hir::StmtKind::Semi(expr)
-                    if expr.ty.kind == TypeKind::Never =>
+                    if expr.type_id == TypeId::NEVER =>
                 {
                     has_never = true;
                 }
@@ -429,23 +436,23 @@ impl TypeChecker {
             typed_stmts.push(typed_stmt);
         }
 
-        let block_ty = match typed_stmts.last() {
+        let block_type_id = match typed_stmts.last() {
             Some(hir::Stmt {
                 kind: hir::StmtKind::Expr(expr),
                 ..
-            }) => expr.ty.clone(),
+            }) => expr.type_id,
             Some(hir::Stmt {
                 kind: hir::StmtKind::Semi(expr),
                 ..
-            }) if expr.ty.kind == TypeKind::Never => Type::never(),
-            _ => Type::unit(),
+            }) if expr.type_id == TypeId::NEVER => TypeId::NEVER,
+            _ => TypeId::UNIT,
         };
 
         self.pop_scope();
 
         Ok(hir::Block {
             stmts: typed_stmts,
-            ty: block_ty,
+            type_id: block_type_id,
             span: block.span,
         })
     }
@@ -453,24 +460,33 @@ impl TypeChecker {
     fn check_statement(&mut self, stmt: &ast::Stmt) -> Result<hir::Stmt, TypeError> {
         let kind = match &stmt.kind {
             ast::StmtKind::Let(let_stmt) => {
-                let declared_ty = self.resolve_type(&let_stmt.type_ann)?;
+                let declared_type_id = self.resolve_type(&let_stmt.type_ann)?;
                 let typed_init = self.check_expression(&let_stmt.init)?;
 
-                if typed_init.ty != declared_ty {
+                if typed_init.type_id != declared_type_id {
                     return Err(TypeError::new(
                         format!(
                             "type mismatch in let binding: expected `{:?}`, found `{:?}`",
-                            declared_ty, typed_init.ty
+                            declared_type_id, typed_init.type_id
                         ),
                         let_stmt.init.span,
                     ));
                 }
 
-                self.insert_local_var(let_stmt.name.clone(), declared_ty.clone());
+                if self
+                    .current_scope()
+                    .insert(let_stmt.name.clone(), ScopeObject::Var(declared_type_id))
+                    .is_some()
+                {
+                    return Err(TypeError::new(
+                        format!("variable `{}` already defined", let_stmt.name),
+                        let_stmt.span,
+                    ));
+                }
 
                 hir::StmtKind::Let(hir::Let {
                     name: let_stmt.name.clone(),
-                    ty: declared_ty,
+                    type_id: declared_type_id,
                     init: typed_init,
                     span: let_stmt.span,
                 })
@@ -493,7 +509,7 @@ impl TypeChecker {
 
     fn check_expression(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
         match &expr.kind {
-            ast::ExprKind::Literal(..) => Ok(Self::check_expr_literal(expr)),
+            ast::ExprKind::Literal(..) => Ok(self.check_expr_literal(expr)),
             ast::ExprKind::Struct(..) => self.check_expr_struct(expr),
             ast::ExprKind::Ident(..) => self.check_expr_ident(expr),
             ast::ExprKind::Array(..) => self.check_expr_array(expr),
@@ -510,37 +526,37 @@ impl TypeChecker {
             ast::ExprKind::While(..) => self.check_expr_while(expr),
             ast::ExprKind::Break => Ok(hir::Expr {
                 kind: hir::ExprKind::Break,
-                ty: Type::never(),
+                type_id: TypeId::NEVER,
                 span: expr.span,
             }),
             ast::ExprKind::Continue => Ok(hir::Expr {
                 kind: hir::ExprKind::Continue,
-                ty: Type::never(),
+                type_id: TypeId::NEVER,
                 span: expr.span,
             }),
         }
     }
 
-    fn check_expr_literal(expr: &ast::Expr) -> hir::Expr {
+    fn check_expr_literal(&mut self, expr: &ast::Expr) -> hir::Expr {
         let ast::ExprKind::Literal(lit) = &expr.kind else {
             unreachable!()
         };
 
         let (ty, kind) = match lit {
             ast::Literal::Integer(n) => (
-                Type::i64(),
+                TypeId::I64,
                 hir::ExprKind::Literal(hir::Literal::Integer(*n)),
             ),
             ast::Literal::String(s) => (
-                Type::slice(Type::u8()),
+                self.ctx.mk_slice(TypeId::U8),
                 hir::ExprKind::Literal(hir::Literal::String(s.clone())),
             ),
-            ast::Literal::Bool(b) => (Type::bool(), hir::ExprKind::Literal(hir::Literal::Bool(*b))),
+            ast::Literal::Bool(b) => (TypeId::BOOL, hir::ExprKind::Literal(hir::Literal::Bool(*b))),
         };
 
         hir::Expr {
             kind,
-            ty,
+            type_id: ty,
             span: expr.span,
         }
     }
@@ -550,25 +566,26 @@ impl TypeChecker {
             unreachable!()
         };
 
-        let struct_ty = self
-            .types
-            .get(&struct_expr.name)
-            .ok_or_else(|| {
-                TypeError::new(
+        let struct_type_id = match self.lookup(&struct_expr.name) {
+            Some(ScopeObject::Type(type_id)) => *type_id,
+            _ => {
+                return Err(TypeError::new(
                     format!("undefined struct `{}`", struct_expr.name),
                     expr.span,
-                )
-            })?
-            .clone();
-
-        let TypeKind::Struct(struct_info) = &struct_ty.kind else {
-            return Err(TypeError::new(
-                format!("`{}` is not a struct type", struct_expr.name),
-                expr.span,
-            ));
+                ));
+            }
         };
 
-        // Build a map of provided fields
+        let expected_fields = match &self.ctx.get(struct_type_id).kind {
+            TypeKind::Struct(fields) => fields.clone(),
+            _ => {
+                return Err(TypeError::new(
+                    format!("`{}` is not a struct", struct_expr.name),
+                    expr.span,
+                ));
+            }
+        };
+
         let mut provided_fields = HashMap::new();
         for field_init in &struct_expr.fields {
             if let Some(prev) = provided_fields.insert(&field_init.name, field_init) {
@@ -579,15 +596,13 @@ impl TypeChecker {
             }
         }
 
-        // Check all expected fields
-        // Remove fields from the provided fields map, so any remaining are extra
         let mut typed_fields = Vec::new();
-        for field_info in &struct_info.fields {
-            let field_init = provided_fields.remove(&field_info.name).ok_or_else(|| {
+        for field in &expected_fields {
+            let field_init = provided_fields.remove(&field.name).ok_or_else(|| {
                 TypeError::new(
                     format!(
                         "missing field `{}` in struct literal for `{}`",
-                        field_info.name, struct_expr.name
+                        field.name, struct_expr.name
                     ),
                     expr.span,
                 )
@@ -595,18 +610,18 @@ impl TypeChecker {
 
             let typed_value = self.check_expression(&field_init.value)?;
 
-            if typed_value.ty != field_info.ty {
+            if typed_value.type_id != field.type_id {
                 return Err(TypeError::new(
                     format!(
                         "field `{}` has wrong type: expected `{:?}`, found `{:?}`",
-                        field_info.name, field_info.ty, typed_value.ty
+                        field.name, field.type_id, typed_value.type_id
                     ),
                     field_init.value.span,
                 ));
             }
 
             typed_fields.push(hir::FieldInit {
-                name: field_info.name.clone(),
+                name: field.name.clone(),
                 value: Box::new(typed_value),
                 span: field_init.span,
             });
@@ -626,7 +641,7 @@ impl TypeChecker {
                 fields: typed_fields,
                 span: struct_expr.span,
             }),
-            ty: struct_ty,
+            type_id: struct_type_id,
             span: expr.span,
         })
     }
@@ -636,14 +651,23 @@ impl TypeChecker {
             unreachable!()
         };
 
-        let ty = self
-            .lookup_var_type(name)
-            .ok_or_else(|| TypeError::new(format!("undefined variable `{name}`"), expr.span))?
-            .clone();
+        let type_id = match self.lookup(name) {
+            Some(
+                ScopeObject::Var(type_id)
+                | ScopeObject::Const(type_id)
+                | ScopeObject::Static(type_id),
+            ) => *type_id,
+            _ => {
+                return Err(TypeError::new(
+                    format!("undefined variable `{name}`"),
+                    expr.span,
+                ));
+            }
+        };
 
         Ok(hir::Expr {
             kind: hir::ExprKind::Ident(name.clone()),
-            ty,
+            type_id,
             span: expr.span,
         })
     }
@@ -662,16 +686,16 @@ impl TypeChecker {
 
         let mut typed_elems = Vec::new();
         let first_elem = self.check_expression(&elems[0])?;
-        let elem_ty = first_elem.ty.clone();
+        let elem_type_id = first_elem.type_id;
         typed_elems.push(first_elem);
 
         for elem in &elems[1..] {
             let typed_elem = self.check_expression(elem)?;
-            if typed_elem.ty != elem_ty {
+            if typed_elem.type_id != elem_type_id {
                 return Err(TypeError::new(
                     format!(
                         "array element type mismatch: expected `{:?}`, found `{:?}`",
-                        elem_ty, typed_elem.ty
+                        elem_type_id, typed_elem.type_id
                     ),
                     elem.span,
                 ));
@@ -679,10 +703,10 @@ impl TypeChecker {
             typed_elems.push(typed_elem);
         }
 
-        let array_ty = Type::array(elem_ty, elems.len());
+        let type_id = self.ctx.mk_array(elem_type_id, elems.len());
         Ok(hir::Expr {
             kind: hir::ExprKind::Array(typed_elems),
-            ty: array_ty,
+            type_id,
             span: expr.span,
         })
     }
@@ -695,9 +719,12 @@ impl TypeChecker {
         let typed_elem = self.check_expression(elem)?;
         let typed_count = self.check_expression(count)?;
 
-        if typed_count.ty.kind != TypeKind::I64 {
+        if typed_count.type_id != TypeId::I64 {
             return Err(TypeError::new(
-                format!("repeat count must be `i64`, found `{:?}`", typed_count.ty),
+                format!(
+                    "repeat count must be `i64`, found `{:?}`",
+                    typed_count.type_id
+                ),
                 count.span,
             ));
         }
@@ -705,7 +732,7 @@ impl TypeChecker {
         if let hir::ExprKind::Literal(hir::Literal::Integer(n)) = typed_count.kind {
             Ok(hir::Expr {
                 kind: hir::ExprKind::Repeat(Box::new(typed_elem.clone()), Box::new(typed_count)),
-                ty: Type::array(typed_elem.ty, n as usize),
+                type_id: self.ctx.mk_array(typed_elem.type_id, n as usize),
                 span: expr.span,
             })
         } else {
@@ -723,33 +750,25 @@ impl TypeChecker {
 
         let typed_base = self.check_expression(base)?;
 
-        match &typed_base.ty.kind {
-            TypeKind::Struct(struct_ty) => {
-                let field_info = struct_ty
-                    .fields
-                    .iter()
-                    .find(|field| &field.name == field_name)
-                    .ok_or_else(|| {
-                        TypeError::new(
-                            format!("no field `{}` on type `{}`", field_name, struct_ty.name),
-                            expr.span,
-                        )
-                    })?;
-
-                Ok(hir::Expr {
-                    kind: hir::ExprKind::Field(Box::new(typed_base.clone()), field_name.clone()),
-                    ty: field_info.ty.clone(),
-                    span: expr.span,
-                })
-            }
-            _ => Err(TypeError::new(
-                format!(
-                    "cannot access field on non-struct type `{:?}`",
-                    typed_base.ty
-                ),
+        let TypeKind::Struct(fields) = &self.ctx.get(typed_base.type_id).kind else {
+            return Err(TypeError::new(
+                "cannot access field on non-struct type".to_string(),
                 base.span,
-            )),
-        }
+            ));
+        };
+
+        let field_info = fields
+            .iter()
+            .find(|field| &field.name == field_name)
+            .ok_or_else(|| {
+                TypeError::new(format!("no field `{field_name}` on struct"), expr.span)
+            })?;
+
+        Ok(hir::Expr {
+            kind: hir::ExprKind::Field(Box::new(typed_base), field_name.clone()),
+            type_id: field_info.type_id,
+            span: expr.span,
+        })
     }
 
     fn check_expr_index(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
@@ -760,24 +779,30 @@ impl TypeChecker {
         let typed_array = self.check_expression(array)?;
         let typed_index = self.check_expression(index)?;
 
-        if typed_index.ty.kind != TypeKind::I64 {
+        if typed_index.type_id != TypeId::I64 {
             return Err(TypeError::new(
-                format!("array index must be `i64`, found `{:?}`", typed_index.ty),
+                format!(
+                    "array index must be `i64`, found `{:?}`",
+                    typed_index.type_id
+                ),
                 index.span,
             ));
         }
 
-        match typed_array.ty.kind {
-            TypeKind::Array(ref elem_ty, _) | TypeKind::Slice(ref elem_ty) => Ok(hir::Expr {
-                kind: hir::ExprKind::Index(Box::new(typed_array.clone()), Box::new(typed_index)),
-                ty: *elem_ty.clone(),
-                span: expr.span,
-            }),
-            _ => Err(TypeError::new(
-                format!("cannot index into type `{:?}`", typed_array.ty),
+        let (TypeKind::Slice(elem_type_id) | TypeKind::Array(elem_type_id, _)) =
+            self.ctx.get(typed_array.type_id).kind
+        else {
+            return Err(TypeError::new(
+                format!("cannot index into type `{:?}`", typed_array.type_id),
                 array.span,
-            )),
-        }
+            ));
+        };
+
+        Ok(hir::Expr {
+            kind: hir::ExprKind::Index(Box::new(typed_array.clone()), Box::new(typed_index)),
+            type_id: elem_type_id,
+            span: expr.span,
+        })
     }
 
     fn check_expr_call(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
@@ -794,19 +819,21 @@ impl TypeChecker {
             ));
         };
 
-        let func_sig = self
-            .functions
-            .get(&callee_name)
-            .ok_or_else(|| {
-                TypeError::new(format!("undefined function `{callee_name}`"), call.span)
-            })?
-            .clone();
+        let (params, return_ty) = match self.lookup(&callee_name) {
+            Some(ScopeObject::Function(params, return_ty)) => (params.clone(), *return_ty),
+            _ => {
+                return Err(TypeError::new(
+                    format!("undefined function `{callee_name}`"),
+                    call.span,
+                ));
+            }
+        };
 
-        if call.args.len() != func_sig.params.len() {
+        if call.args.len() != params.len() {
             return Err(TypeError::new(
                 format!(
                     "function `{callee_name}` expects {} arguments, got {}",
-                    func_sig.params.len(),
+                    params.len(),
                     call.args.len()
                 ),
                 call.span,
@@ -814,13 +841,13 @@ impl TypeChecker {
         }
 
         let mut typed_args = Vec::new();
-        for (arg, param_ty) in call.args.iter().zip(func_sig.params) {
+        for (arg, param_type_id) in call.args.iter().zip(params) {
             let typed_arg = self.check_expression(arg)?;
-            if typed_arg.ty != param_ty {
+            if typed_arg.type_id != param_type_id {
                 return Err(TypeError::new(
                     format!(
                         "argument type mismatch: expected `{:?}`, found `{:?}`",
-                        param_ty, typed_arg.ty
+                        param_type_id, typed_arg.type_id
                     ),
                     arg.span,
                 ));
@@ -830,7 +857,7 @@ impl TypeChecker {
 
         let typed_callee = hir::Expr {
             kind: hir::ExprKind::Ident(callee_name),
-            ty: func_sig.return_ty.clone(),
+            type_id: return_ty,
             span: call.callee.span,
         };
 
@@ -840,7 +867,7 @@ impl TypeChecker {
                 args: typed_args,
                 span: call.span,
             }),
-            ty: func_sig.return_ty,
+            type_id: return_ty,
             span: expr.span,
         })
     }
@@ -855,42 +882,42 @@ impl TypeChecker {
 
         let ty = match typed_op {
             hir::UnaryOp::Neg => {
-                if typed_operand.ty.kind != TypeKind::I64 {
+                if typed_operand.type_id != TypeId::I64 {
                     return Err(TypeError::new(
-                        format!("cannot apply `-` to type `{:?}`", typed_operand.ty),
+                        format!("cannot apply `-` to type `{:?}`", typed_operand.type_id),
                         operand.span,
                     ));
                 }
-                Type::i64()
+                TypeId::I64
             }
-            hir::UnaryOp::Not => match typed_operand.ty.kind {
-                TypeKind::Bool => Type::bool(),
-                TypeKind::I64 => Type::i64(),
+            hir::UnaryOp::Not => match typed_operand.type_id {
+                TypeId::BOOL => TypeId::BOOL,
+                TypeId::I64 => TypeId::I64,
                 _ => {
                     return Err(TypeError::new(
-                        format!("cannot apply `!` to type `{:?}`", typed_operand.ty),
+                        format!("cannot apply `!` to type `{:?}`", typed_operand.type_id),
                         operand.span,
                     ));
                 }
             },
             hir::UnaryOp::Ref => {
                 if let hir::ExprKind::Ident(name) = &typed_operand.kind
-                    && self.constants.contains_key(name)
+                    && matches!(self.lookup(name), Some(ScopeObject::Const { .. }))
                 {
                     return Err(TypeError::new(
                         format!("cannot take address of constant `{name}`"),
                         operand.span,
                     ));
                 }
-                Type::pointer(typed_operand.ty.clone())
+                self.ctx.mk_pointer(typed_operand.type_id)
             }
-            hir::UnaryOp::Deref => match &typed_operand.ty.kind {
-                TypeKind::Pointer(inner) => *inner.clone(),
+            hir::UnaryOp::Deref => match self.ctx.get(typed_operand.type_id).kind {
+                TypeKind::Pointer(elem) => elem,
                 _ => {
                     return Err(TypeError::new(
                         format!(
                             "cannot dereference non-pointer type `{:?}`",
-                            typed_operand.ty
+                            typed_operand.type_id
                         ),
                         operand.span,
                     ));
@@ -900,7 +927,7 @@ impl TypeChecker {
 
         Ok(hir::Expr {
             kind: hir::ExprKind::Unary(typed_op, Box::new(typed_operand)),
-            ty,
+            type_id: ty,
             span: expr.span,
         })
     }
@@ -922,58 +949,58 @@ impl TypeChecker {
             | hir::BinaryOp::Rem
             | hir::BinaryOp::BitAnd
             | hir::BinaryOp::BitOr => {
-                if typed_left.ty.kind != TypeKind::I64 || typed_right.ty.kind != TypeKind::I64 {
+                if typed_left.type_id != TypeId::I64 || typed_right.type_id != TypeId::I64 {
                     return Err(TypeError::new(
                         format!(
                             "arithmetic operator requires `i64` operands, found `{:?}` and `{:?}`",
-                            typed_left.ty, typed_right.ty
+                            typed_left.type_id, typed_right.type_id
                         ),
                         expr.span,
                     ));
                 }
-                Type::i64()
+                TypeId::I64
             }
             hir::BinaryOp::Lt | hir::BinaryOp::Le | hir::BinaryOp::Gt | hir::BinaryOp::Ge => {
-                if typed_left.ty.kind != TypeKind::I64 || typed_right.ty.kind != TypeKind::I64 {
+                if typed_left.type_id != TypeId::I64 || typed_right.type_id != TypeId::I64 {
                     return Err(TypeError::new(
                         format!(
                             "comparison operator requires `i64` operands, found `{:?}` and `{:?}`",
-                            typed_left.ty, typed_right.ty
+                            typed_left.type_id, typed_right.type_id
                         ),
                         expr.span,
                     ));
                 }
-                Type::bool()
+                TypeId::BOOL
             }
             hir::BinaryOp::Eq | hir::BinaryOp::Ne => {
-                if typed_left.ty != typed_right.ty {
+                if typed_left.type_id != typed_right.type_id {
                     return Err(TypeError::new(
                         format!(
                             "equality operator requires same types, found `{:?}` and `{:?}`",
-                            typed_left.ty, typed_right.ty
+                            typed_left.type_id, typed_right.type_id
                         ),
                         expr.span,
                     ));
                 }
-                Type::bool()
+                TypeId::BOOL
             }
             hir::BinaryOp::And | hir::BinaryOp::Or => {
-                if typed_left.ty.kind != TypeKind::Bool || typed_right.ty.kind != TypeKind::Bool {
+                if typed_left.type_id != TypeId::BOOL || typed_right.type_id != TypeId::BOOL {
                     return Err(TypeError::new(
                         format!(
                             "logical operator requires `bool` operands, found `{:?}` and `{:?}`",
-                            typed_left.ty, typed_right.ty
+                            typed_left.type_id, typed_right.type_id
                         ),
                         expr.span,
                     ));
                 }
-                Type::bool()
+                TypeId::BOOL
             }
         };
 
         Ok(hir::Expr {
             kind: hir::ExprKind::Binary(typed_op, Box::new(typed_left), Box::new(typed_right)),
-            ty,
+            type_id: ty,
             span: expr.span,
         })
     }
@@ -986,11 +1013,11 @@ impl TypeChecker {
         let typed_lhs = self.check_expression(lhs)?;
         let typed_rhs = self.check_expression(rhs)?;
 
-        if typed_lhs.ty != typed_rhs.ty {
+        if typed_lhs.type_id != typed_rhs.type_id {
             return Err(TypeError::new(
                 format!(
                     "assignment type mismatch: expected `{:?}`, found `{:?}`",
-                    typed_lhs.ty, typed_rhs.ty
+                    typed_lhs.type_id, typed_rhs.type_id
                 ),
                 expr.span,
             ));
@@ -998,7 +1025,7 @@ impl TypeChecker {
 
         Ok(hir::Expr {
             kind: hir::ExprKind::Assign(Box::new(typed_lhs), Box::new(typed_rhs)),
-            ty: Type::unit(),
+            type_id: TypeId::UNIT,
             span: expr.span,
         })
     }
@@ -1008,27 +1035,26 @@ impl TypeChecker {
             unreachable!()
         };
 
-        let return_ty = self
-            .current_fn_return_ty
-            .clone()
+        let return_type_id = self
+            .current_fn_return_type_id
             .ok_or_else(|| TypeError::new("return outside of function".to_string(), expr.span))?;
 
         let kind = if let Some(v) = val {
             let typed_val = self.check_expression(v)?;
-            if typed_val.ty != return_ty {
+            if typed_val.type_id != return_type_id {
                 return Err(TypeError::new(
                     format!(
                         "return type mismatch: expected `{:?}`, found `{:?}`",
-                        return_ty, typed_val.ty
+                        return_type_id, typed_val.type_id
                     ),
                     v.span,
                 ));
             }
             hir::ExprKind::Return(Some(Box::new(typed_val)))
         } else {
-            if return_ty.kind != TypeKind::Unit {
+            if return_type_id != TypeId::UNIT {
                 return Err(TypeError::new(
-                    format!("expected return value of type `{return_ty:?}`"),
+                    format!("expected return value of type `{return_type_id:?}`"),
                     expr.span,
                 ));
             }
@@ -1037,7 +1063,7 @@ impl TypeChecker {
 
         Ok(hir::Expr {
             kind,
-            ty: Type::never(),
+            type_id: TypeId::NEVER,
             span: expr.span,
         })
     }
@@ -1048,11 +1074,11 @@ impl TypeChecker {
         };
 
         let typed_block = self.check_block(block)?;
-        let block_ty = typed_block.ty.clone();
+        let type_id = typed_block.type_id;
 
         Ok(hir::Expr {
             kind: hir::ExprKind::Block(typed_block),
-            ty: block_ty,
+            type_id,
             span: expr.span,
         })
     }
@@ -1064,9 +1090,12 @@ impl TypeChecker {
 
         let typed_cond = self.check_expression(&if_expr.cond)?;
 
-        if typed_cond.ty.kind != TypeKind::Bool {
+        if typed_cond.type_id != TypeId::BOOL {
             return Err(TypeError::new(
-                format!("if condition must be `bool`, found `{:?}`", typed_cond.ty),
+                format!(
+                    "if condition must be `bool`, found `{:?}`",
+                    typed_cond.type_id
+                ),
                 if_expr.cond.span,
             ));
         }
@@ -1076,11 +1105,11 @@ impl TypeChecker {
         let (ty, typed_else) = if let Some(else_expr) = &if_expr.else_body {
             let typed_else = self.check_expression(else_expr)?;
 
-            let result_ty = match (&typed_then.ty.kind, &typed_else.ty.kind) {
-                (TypeKind::Never, TypeKind::Never) => Type::never(),
-                (_, TypeKind::Never) => typed_then.ty.clone(),
-                (TypeKind::Never, _) => typed_else.ty.clone(),
-                (then_ty, else_ty) if then_ty == else_ty => typed_then.ty.clone(),
+            let result_ty = match (typed_then.type_id, typed_else.type_id) {
+                (TypeId::NEVER, TypeId::NEVER) => TypeId::NEVER,
+                (_, TypeId::NEVER) => typed_then.type_id,
+                (TypeId::NEVER, _) => typed_else.type_id,
+                (then_ty, else_ty) if then_ty == else_ty => typed_then.type_id,
                 (then_ty, else_ty) => {
                     return Err(TypeError::new(
                         format!(
@@ -1096,7 +1125,7 @@ impl TypeChecker {
             // when there is no else-branch, the implicit else branch returns `Unit`,
             // so the entire `Expr` is always `Unit`
             // (even if the then-branch is `Never`)
-            (Type::unit(), None)
+            (TypeId::UNIT, None)
         };
 
         Ok(hir::Expr {
@@ -1106,7 +1135,7 @@ impl TypeChecker {
                 else_body: typed_else,
                 span: if_expr.span,
             }),
-            ty,
+            type_id: ty,
             span: expr.span,
         })
     }
@@ -1118,11 +1147,11 @@ impl TypeChecker {
 
         let typed_cond = self.check_expression(&while_expr.cond)?;
 
-        if typed_cond.ty.kind != TypeKind::Bool {
+        if typed_cond.type_id != TypeId::BOOL {
             return Err(TypeError::new(
                 format!(
                     "while condition must be `bool`, found `{:?}`",
-                    typed_cond.ty
+                    typed_cond.type_id
                 ),
                 while_expr.cond.span,
             ));
@@ -1136,7 +1165,7 @@ impl TypeChecker {
                 body: Box::new(typed_body),
                 span: while_expr.span,
             }),
-            ty: Type::unit(),
+            type_id: TypeId::UNIT,
             span: expr.span,
         })
     }

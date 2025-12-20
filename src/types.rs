@@ -1,0 +1,193 @@
+use std::collections::HashMap;
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub struct TypeId(pub u32);
+
+impl TypeId {
+    pub const I64: TypeId = TypeId(0);
+    pub const U8: TypeId = TypeId(1);
+    pub const BOOL: TypeId = TypeId(2);
+    pub const UNIT: TypeId = TypeId(3);
+    pub const NEVER: TypeId = TypeId(4);
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Type {
+    pub kind: TypeKind,
+    pub size: usize,
+    pub align: u64,
+}
+
+impl Type {
+    pub fn i64() -> Self {
+        Type {
+            kind: TypeKind::I64,
+            size: 8,
+            align: 8,
+        }
+    }
+
+    pub fn u8() -> Self {
+        Type {
+            kind: TypeKind::U8,
+            size: 1,
+            align: 1,
+        }
+    }
+
+    pub fn bool() -> Self {
+        Type {
+            kind: TypeKind::Bool,
+            size: 1,
+            align: 1,
+        }
+    }
+
+    pub fn unit() -> Self {
+        Type {
+            kind: TypeKind::Unit,
+            size: 0,
+            align: 1,
+        }
+    }
+
+    pub fn never() -> Self {
+        Type {
+            kind: TypeKind::Never,
+            size: 0,
+            align: 1,
+        }
+    }
+
+    pub fn pointer(referent: TypeId) -> Self {
+        Type {
+            kind: TypeKind::Pointer(referent),
+            size: 8,
+            align: 8,
+        }
+    }
+
+    pub fn slice(elem: TypeId) -> Self {
+        Type {
+            kind: TypeKind::Slice(elem),
+            size: 16, // ptr + len
+            align: 8,
+        }
+    }
+
+    pub fn is_aggregate(&self) -> bool {
+        matches!(
+            self.kind,
+            TypeKind::Slice(_) | TypeKind::Array { .. } | TypeKind::Struct { .. }
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum TypeKind {
+    I64,
+    U8,
+    Bool,
+    Unit,
+    Never,
+    Pointer(TypeId),
+    Array(TypeId, usize),
+    Slice(TypeId),
+    Struct(Vec<Field>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Field {
+    pub name: String,
+    pub type_id: TypeId,
+    pub offset: usize,
+}
+
+#[derive(Default)]
+pub struct TypeContext {
+    types: Vec<Type>,
+    cache: HashMap<Type, TypeId>,
+}
+
+impl TypeContext {
+    pub fn new() -> Self {
+        let mut ctx = Self {
+            types: Vec::new(),
+            cache: HashMap::new(),
+        };
+
+        assert_eq!(ctx.intern(Type::i64()), TypeId::I64);
+        assert_eq!(ctx.intern(Type::u8()), TypeId::U8);
+        assert_eq!(ctx.intern(Type::bool()), TypeId::BOOL);
+        assert_eq!(ctx.intern(Type::unit()), TypeId::UNIT);
+        assert_eq!(ctx.intern(Type::never()), TypeId::NEVER);
+
+        ctx
+    }
+
+    fn intern(&mut self, data: Type) -> TypeId {
+        if let Some(&id) = self.cache.get(&data) {
+            return id;
+        }
+
+        let id = TypeId(self.types.len() as u32);
+        self.cache.insert(data.clone(), id);
+        self.types.push(data);
+        id
+    }
+
+    pub fn mk_pointer(&mut self, referent: TypeId) -> TypeId {
+        let data = Type {
+            kind: TypeKind::Pointer(referent),
+            size: 8,
+            align: 8,
+        };
+        self.intern(data)
+    }
+
+    pub fn mk_array(&mut self, elem: TypeId, len: usize) -> TypeId {
+        let elem_data = self.get(elem);
+        let data = Type {
+            kind: TypeKind::Array(elem, len),
+            size: elem_data.size * len,
+            align: elem_data.align,
+        };
+        self.intern(data)
+    }
+
+    pub fn mk_slice(&mut self, elem: TypeId) -> TypeId {
+        let data = Type {
+            kind: TypeKind::Slice(elem),
+            size: 16,
+            align: 8,
+        };
+        self.intern(data)
+    }
+
+    pub fn mk_struct(&mut self, fields: Vec<Field>) -> TypeId {
+        let mut size = 0;
+        let mut max_align = 1;
+
+        for field in &fields {
+            let field_type = self.get(field.type_id);
+            let field_align = field_type.align as usize;
+            max_align = max_align.max(field_align);
+            size = field.offset + field_type.size;
+        }
+
+        if size % max_align != 0 {
+            size += max_align - (size % max_align);
+        }
+
+        let data = Type {
+            kind: TypeKind::Struct(fields),
+            size,
+            align: max_align as u64,
+        };
+        self.intern(data)
+    }
+
+    pub fn get(&self, id: TypeId) -> &Type {
+        &self.types[id.0 as usize]
+    }
+}
