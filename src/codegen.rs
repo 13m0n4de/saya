@@ -4,6 +4,8 @@ use std::{
     fmt,
 };
 
+use indexmap::IndexMap;
+
 use crate::{
     hir::*,
     span::Span,
@@ -75,7 +77,7 @@ pub struct CodeGen<'a> {
     constants: HashMap<String, Literal>,
     globals: HashSet<String>,
     data_defs: Vec<qbe::DataDef<'static>>,
-    type_defs: HashMap<TypeId, &'static qbe::TypeDef<'static>>,
+    type_defs: IndexMap<TypeId, &'static qbe::TypeDef<'static>>,
 }
 
 impl<'a> CodeGen<'a> {
@@ -90,7 +92,7 @@ impl<'a> CodeGen<'a> {
             constants: HashMap::new(),
             globals: HashSet::new(),
             data_defs: Vec::new(),
-            type_defs: HashMap::new(),
+            type_defs: IndexMap::new(),
         }
     }
 
