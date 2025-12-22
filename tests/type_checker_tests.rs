@@ -2,7 +2,7 @@ use saya::hir::*;
 use saya::lexer::Lexer;
 use saya::parser::Parser;
 use saya::type_checker::TypeChecker;
-use saya::types::{TypeContext, TypeId};
+use saya::types::{TypeContext, TypeId, TypeKind};
 
 macro_rules! typecheck {
     ($input:expr) => {{
@@ -30,12 +30,19 @@ fn test_integer_literal() {
 
 #[test]
 fn test_string_literal() {
-    let program = typecheck!(r#"fn main() -> [u8] { "hello" }"#).unwrap();
+    let code = r#"fn main() -> [u8] { "hello" }"#;
+    let lexer = Lexer::new(&code);
+    let mut parser = Parser::new(lexer).unwrap();
+    let program = parser.parse().unwrap();
+    let mut type_context = TypeContext::new();
+    let mut type_checker = TypeChecker::new(&mut type_context);
+    let program = type_checker.check_program(&program).unwrap();
 
     match &program.items[0] {
         Item::Function(func) => {
             let body = &func.body;
-            assert_eq!(body.type_id, TypeId(5));
+            let ty = type_context.get(body.type_id);
+            assert!(matches!(ty.kind, TypeKind::Slice(TypeId::U8)));
         }
         _ => panic!("Expected function"),
     }
