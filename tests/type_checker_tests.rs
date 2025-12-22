@@ -1,15 +1,16 @@
 use saya::hir::*;
 use saya::lexer::Lexer;
 use saya::parser::Parser;
-use saya::ty::{Type, TypeKind};
 use saya::type_checker::TypeChecker;
+use saya::types::{TypeContext, TypeId};
 
 macro_rules! typecheck {
     ($input:expr) => {{
         let lexer = Lexer::new($input);
         let mut parser = Parser::new(lexer).unwrap();
         let program = parser.parse().unwrap();
-        let mut type_checker = TypeChecker::new();
+        let mut type_context = TypeContext::new();
+        let mut type_checker = TypeChecker::new(&mut type_context);
         type_checker.check_program(&program)
     }};
 }
@@ -21,7 +22,7 @@ fn test_integer_literal() {
     match &program.items[0] {
         Item::Function(func) => {
             let body = &func.body;
-            assert_eq!(body.ty.kind, TypeKind::I64);
+            assert_eq!(body.type_id, TypeId::I64);
         }
         _ => panic!("Expected function"),
     }
@@ -34,7 +35,7 @@ fn test_string_literal() {
     match &program.items[0] {
         Item::Function(func) => {
             let body = &func.body;
-            assert_eq!(body.ty, Type::slice(Type::u8()));
+            assert_eq!(body.type_id, TypeId(5));
         }
         _ => panic!("Expected function"),
     }
@@ -47,7 +48,7 @@ fn test_bool_literal() {
     match &program.items[0] {
         Item::Function(func) => {
             let body = &func.body;
-            assert_eq!(body.ty, Type::bool());
+            assert_eq!(body.type_id, TypeId::BOOL);
         }
         _ => panic!("Expected function"),
     }
@@ -493,5 +494,83 @@ fn test_ref_constant() {
         fn test() -> *i64 { &X }
         "#
     );
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_structs() {
+    let result = typecheck!(
+        r#"
+          struct Point { x: i64, y: i64 }
+          fn test() -> i64 { let p: Point = Point { x: 1, y: 2 }; p.x }
+          "#
+    );
+    assert!(result.is_ok());
+
+    let result = typecheck!(
+        r#"
+          struct Node { value: i64, next: *Node }
+          "#
+    );
+    assert!(result.is_ok());
+
+    let result = typecheck!(
+        r#"
+          struct A { b_ptr: *B }
+          struct B { a_ptr: *A, value: i64 }
+          "#
+    );
+    assert!(result.is_ok());
+
+    let result = typecheck!(
+        r#"
+          struct A { b: B }
+          struct B { a: A }
+          "#
+    );
+    assert!(result.is_err());
+
+    let result = typecheck!("struct C { c: C }");
+    assert!(result.is_err());
+
+    let result = typecheck!("struct Point { x: i64, x: i64 }");
+    assert!(result.is_err());
+
+    let result = typecheck!("struct Point { x: Foo }");
+    assert!(result.is_err());
+
+    let result = typecheck!(
+        r#"
+          struct Point { x: i64, y: i64 }
+          fn test() { let p: Point = Point { x: 1 }; }
+          "#
+    );
+    assert!(result.is_err());
+
+    let result = typecheck!(
+        r#"
+          struct Point { x: i64, y: i64 }
+          fn test() { let p: Point = Point { x: 1, y: true }; }
+          "#
+    );
+    assert!(result.is_err());
+
+    let result = typecheck!(
+        r#"
+          struct Point { x: i64, y: i64 }
+          fn test() { let p: Point = Point { x: 1, y: 2, z: 3 }; }
+          "#
+    );
+    assert!(result.is_err());
+
+    let result = typecheck!(
+        r#"
+          struct Point { x: i64, y: i64 }
+          fn test() -> i64 { let p: Point = Point { x: 1, y: 2 }; p.z }
+          "#
+    );
+    assert!(result.is_err());
+
+    let result = typecheck!("fn test() -> i64 { let x: i64 = 42; x.field }");
     assert!(result.is_err());
 }
