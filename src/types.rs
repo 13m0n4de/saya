@@ -136,6 +136,10 @@ impl TypeContext {
         id
     }
 
+    pub fn get(&self, id: TypeId) -> &Type {
+        &self.types[id.0 as usize]
+    }
+
     pub fn mk_pointer(&mut self, referent: TypeId) -> TypeId {
         let data = Type {
             kind: TypeKind::Pointer(referent),
@@ -164,30 +168,22 @@ impl TypeContext {
         self.intern(data)
     }
 
-    pub fn mk_struct(&mut self, fields: Vec<Field>) -> TypeId {
-        let mut size = 0;
-        let mut max_align = 1;
-
-        for field in &fields {
-            let field_type = self.get(field.type_id);
-            let field_align = field_type.align as usize;
-            max_align = max_align.max(field_align);
-            size = field.offset + field_type.size;
-        }
-
-        if size % max_align != 0 {
-            size += max_align - (size % max_align);
-        }
-
+    pub fn mk_empty_struct(&mut self) -> TypeId {
         let data = Type {
-            kind: TypeKind::Struct(fields),
-            size,
-            align: max_align as u64,
+            kind: TypeKind::Struct(vec![]),
+            size: 0,
+            align: 1,
         };
-        self.intern(data)
+        let id = TypeId(self.types.len() as u32);
+        self.types.push(data);
+        id
     }
 
-    pub fn get(&self, id: TypeId) -> &Type {
-        &self.types[id.0 as usize]
+    pub fn set_struct(&mut self, id: TypeId, fields: Vec<Field>, size: usize, align: u64) {
+        self.types[id.0 as usize] = Type {
+            kind: TypeKind::Struct(fields),
+            size,
+            align,
+        };
     }
 }

@@ -36,6 +36,8 @@ impl fmt::Display for TypeError {
 
 impl Error for TypeError {}
 
+type StructLayout = (Vec<(String, usize)>, usize, u64);
+
 pub struct TypeChecker<'a> {
     ctx: &'a mut TypeContext,
     scopes: Vec<Scope>,
@@ -77,6 +79,54 @@ impl<'a> TypeChecker<'a> {
         self.scopes.iter().rev().find_map(|s| s.get(name))
     }
 
+    fn type_dimensions(&mut self, type_ann: &ast::TypeAnn) -> Result<(usize, u64), TypeError> {
+        match &type_ann.kind {
+            ast::TypeAnnKind::I64 | ast::TypeAnnKind::Pointer(_) => Ok((8, 8)),
+            ast::TypeAnnKind::U8 | ast::TypeAnnKind::Bool => Ok((1, 1)),
+            ast::TypeAnnKind::Unit | ast::TypeAnnKind::Never => Ok((0, 1)),
+
+            ast::TypeAnnKind::Slice(_) => Ok((16, 8)),
+
+            ast::TypeAnnKind::Array(elem, count) => {
+                let (elem_size, elem_align) = self.type_dimensions(elem)?;
+                Ok((elem_size * count, elem_align))
+            }
+
+            ast::TypeAnnKind::Named(name) => match self.lookup(name) {
+                Some(ScopeObject::Type(type_id)) => {
+                    let t = self.ctx.get(*type_id);
+                    Ok((t.size, t.align))
+                }
+                Some(ScopeObject::Scan(incomplete)) => {
+                    if incomplete.in_progress.get() {
+                        return Err(TypeError::new(
+                            format!("circular dependency for struct `{name}`"),
+                            type_ann.span,
+                        ));
+                    }
+
+                    incomplete.in_progress.set(true);
+
+                    let def = incomplete.def.clone();
+                    let result = self.struct_layout(&def);
+
+                    let Some(ScopeObject::Scan(incomplete)) = self.lookup(name) else {
+                        unreachable!()
+                    };
+                    incomplete.in_progress.set(false);
+
+                    let (_, size, align) = result?;
+
+                    Ok((size, align))
+                }
+                _ => Err(TypeError::new(
+                    format!("undefined type `{name}`"),
+                    type_ann.span,
+                )),
+            },
+        }
+    }
+
     fn resolve_type(&mut self, type_ann: &ast::TypeAnn) -> Result<TypeId, TypeError> {
         match &type_ann.kind {
             ast::TypeAnnKind::I64 => Ok(TypeId::I64),
@@ -103,20 +153,8 @@ impl<'a> TypeChecker<'a> {
             ast::TypeAnnKind::Named(name) => match self.lookup(name) {
                 Some(ScopeObject::Type(type_id)) => Ok(*type_id),
                 Some(ScopeObject::Scan(incomplete)) => {
-                    if incomplete.in_progress.get() {
-                        return Err(TypeError::new(
-                            format!("Circular dependency for struct `{name}`"),
-                            type_ann.span,
-                        ));
-                    }
-
-                    incomplete.in_progress.set(true);
-
-                    let type_id = self.register_struct_type(&incomplete.def.clone())?;
-                    self.global_scope()
-                        .insert(name.clone(), ScopeObject::Type(type_id));
-
-                    Ok(type_id)
+                    let def = incomplete.def.clone();
+                    self.register_struct_type(&def)
                 }
                 _ => Err(TypeError::new(
                     format!("undefined type `{name}`"),
@@ -132,12 +170,35 @@ impl<'a> TypeChecker<'a> {
         self.check_items(prog)
     }
 
+    fn struct_layout(&mut self, def: &ast::StructDef) -> Result<StructLayout, TypeError> {
+        let mut field_layouts = Vec::new();
+        let mut offset = 0;
+        let mut max_align = 1u64;
+
+        for field in &def.fields {
+            let (field_size, field_align) = self.type_dimensions(&field.type_ann)?;
+            max_align = max_align.max(field_align);
+
+            let align = field_align as usize;
+            if offset % align != 0 {
+                offset += align - (offset % align);
+            }
+
+            field_layouts.push((field.name.clone(), offset));
+            offset += field_size;
+        }
+
+        let size = if offset % max_align as usize != 0 {
+            offset + max_align as usize - (offset % max_align as usize)
+        } else {
+            offset
+        };
+
+        Ok((field_layouts, size, max_align))
+    }
+
     fn register_struct_type(&mut self, def: &ast::StructDef) -> Result<TypeId, TypeError> {
         let mut field_names = HashSet::new();
-        let mut fields = Vec::new();
-        let mut offset = 0;
-        let mut max_align = 1;
-
         for field in &def.fields {
             if !field_names.insert(&field.name) {
                 return Err(TypeError::new(
@@ -145,31 +206,14 @@ impl<'a> TypeChecker<'a> {
                     field.span,
                 ));
             }
-
-            let field_type_id = self.resolve_type(&field.type_ann)?;
-            let field_type = self.ctx.get(field_type_id);
-
-            let field_align = field_type.align as usize;
-            max_align = max_align.max(field_align);
-
-            if offset % field_align != 0 {
-                offset += field_align - (offset % field_align);
-            }
-
-            fields.push(Field {
-                name: field.name.clone(),
-                type_id: field_type_id,
-                offset,
-            });
-
-            offset += field_type.size;
         }
 
-        let type_id = self.ctx.mk_struct(fields);
+        let (field_layouts, size, align) = self.struct_layout(def)?;
 
+        let struct_type_id = self.ctx.mk_empty_struct();
         match self
             .global_scope()
-            .insert(def.name.clone(), ScopeObject::Type(type_id))
+            .insert(def.name.clone(), ScopeObject::Type(struct_type_id))
         {
             Some(ScopeObject::Scan(_)) | None => {}
             Some(_) => {
@@ -180,7 +224,23 @@ impl<'a> TypeChecker<'a> {
             }
         }
 
-        Ok(type_id)
+        let fields = def
+            .fields
+            .iter()
+            .zip(field_layouts.iter())
+            .map(|(field, (name, offset))| {
+                let type_id = self.resolve_type(&field.type_ann)?;
+                Ok(Field {
+                    name: name.clone(),
+                    type_id,
+                    offset: *offset,
+                })
+            })
+            .collect::<Result<Vec<_>, TypeError>>()?;
+
+        self.ctx.set_struct(struct_type_id, fields, size, align);
+
+        Ok(struct_type_id)
     }
 
     fn scan_types(&mut self, prog: &ast::Program) -> Result<(), TypeError> {
