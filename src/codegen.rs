@@ -613,7 +613,7 @@ impl<'a> CodeGen<'a> {
                 ]
             }
             Literal::CString(s) => {
-                let label = self.emit_string_data(s);
+                let label = self.emit_cstring_data(s);
                 vec![(qbe::Type::Long, qbe::DataItem::Symbol(label, None))]
             }
         }
@@ -808,7 +808,7 @@ impl<'a> CodeGen<'a> {
             Literal::Bool(b) => GenValue::Const(u64::from(*b), TypeId::BOOL),
             Literal::String(_) => self.generate_string_slice(qfunc, expr),
             Literal::CString(s) => {
-                let label = self.emit_string_data(s);
+                let label = self.emit_cstring_data(s);
                 GenValue::Global(label, expr.type_id)
             }
         }
@@ -870,7 +870,7 @@ impl<'a> CodeGen<'a> {
                 Literal::Bool(b) => Ok(GenValue::Const(u64::from(b), TypeId::BOOL)),
                 Literal::String(_) => Ok(self.generate_string_slice(qfunc, expr)),
                 Literal::CString(s) => {
-                    let label = self.emit_string_data(&s);
+                    let label = self.emit_cstring_data(&s);
                     Ok(GenValue::Global(label, expr.type_id))
                 }
             };
@@ -1216,6 +1216,20 @@ impl<'a> CodeGen<'a> {
                 (qbe::Type::Byte, qbe::DataItem::Str(s.to_string())),
                 (qbe::Type::Byte, qbe::DataItem::Const(0)),
             ],
+        ));
+
+        label
+    }
+
+    fn emit_cstring_data(&mut self, s: &str) -> String {
+        let label = format!("cstr.{}", self.string_counter);
+        self.string_counter += 1;
+
+        self.data_defs.push(qbe::DataDef::new(
+            qbe::Linkage::private(),
+            label.clone(),
+            None,
+            vec![(qbe::Type::Byte, qbe::DataItem::Str(s.to_string()))],
         ));
 
         label
