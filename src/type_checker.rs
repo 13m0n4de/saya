@@ -42,6 +42,7 @@ pub struct TypeChecker<'a> {
     ctx: &'a mut TypeContext,
     scopes: Vec<Scope>,
     current_fn_return_type_id: Option<TypeId>,
+    constants: HashMap<String, hir::Literal>,
 }
 
 impl<'a> TypeChecker<'a> {
@@ -50,6 +51,7 @@ impl<'a> TypeChecker<'a> {
             ctx,
             scopes: vec![Scope::new()],
             current_fn_return_type_id: None,
+            constants: HashMap::new(),
         }
     }
 
@@ -77,6 +79,75 @@ impl<'a> TypeChecker<'a> {
 
     fn lookup(&self, name: &str) -> Option<&ScopeObject> {
         self.scopes.iter().rev().find_map(|s| s.get(name))
+    }
+
+    fn eval_const_expr(&mut self, expr: &hir::Expr) -> Result<hir::Literal, TypeError> {
+        match &expr.kind {
+            hir::ExprKind::Literal(lit) => Ok(lit.clone()),
+            hir::ExprKind::Ident(name) => {
+                self.constants.get(name).cloned().ok_or_else(|| {
+                    TypeError::new(format!("Constant `{name}` not found"), expr.span)
+                })
+            }
+            hir::ExprKind::Unary(hir::UnaryOp::Neg, operand) => {
+                match self.eval_const_expr(operand)? {
+                    hir::Literal::Integer(n) => Ok(hir::Literal::Integer(-n)),
+                    _ => Err(TypeError::new(
+                        "Cannot negate a non-integer value".to_string(),
+                        expr.span,
+                    )),
+                }
+            }
+            hir::ExprKind::Binary(op, left, right) => {
+                let left_val = self.eval_const_expr(left)?;
+                let right_val = self.eval_const_expr(right)?;
+
+                match (left_val, right_val) {
+                    (hir::Literal::Integer(l), hir::Literal::Integer(r)) => match op {
+                        // Arithmetic operators
+                        hir::BinaryOp::Add => Ok(hir::Literal::Integer(l + r)),
+                        hir::BinaryOp::Sub => Ok(hir::Literal::Integer(l - r)),
+                        hir::BinaryOp::Mul => Ok(hir::Literal::Integer(l * r)),
+                        hir::BinaryOp::Div => Ok(hir::Literal::Integer(l / r)),
+                        hir::BinaryOp::Rem => Ok(hir::Literal::Integer(l % r)),
+                        // Bitwise operators
+                        hir::BinaryOp::BitAnd => Ok(hir::Literal::Integer(l & r)),
+                        hir::BinaryOp::BitOr => Ok(hir::Literal::Integer(l | r)),
+                        // Comparison operators
+                        hir::BinaryOp::Lt => Ok(hir::Literal::Bool(l < r)),
+                        hir::BinaryOp::Le => Ok(hir::Literal::Bool(l <= r)),
+                        hir::BinaryOp::Gt => Ok(hir::Literal::Bool(l > r)),
+                        hir::BinaryOp::Ge => Ok(hir::Literal::Bool(l >= r)),
+                        hir::BinaryOp::Eq => Ok(hir::Literal::Bool(l == r)),
+                        hir::BinaryOp::Ne => Ok(hir::Literal::Bool(l != r)),
+                        _ => Err(TypeError::new(
+                            "Invalid operator for integer operands".to_string(),
+                            expr.span,
+                        )),
+                    },
+                    (hir::Literal::Bool(l), hir::Literal::Bool(r)) => match op {
+                        // Logical operators
+                        hir::BinaryOp::And => Ok(hir::Literal::Bool(l && r)),
+                        hir::BinaryOp::Or => Ok(hir::Literal::Bool(l || r)),
+                        // Equality operators
+                        hir::BinaryOp::Eq => Ok(hir::Literal::Bool(l == r)),
+                        hir::BinaryOp::Ne => Ok(hir::Literal::Bool(l != r)),
+                        _ => Err(TypeError::new(
+                            "Invalid operator for boolean operands".to_string(),
+                            expr.span,
+                        )),
+                    },
+                    _ => Err(TypeError::new(
+                        "Type mismatch in constant expression".to_string(),
+                        expr.span,
+                    )),
+                }
+            }
+            _ => Err(TypeError::new(
+                "Invalid constant expression".to_string(),
+                expr.span,
+            )),
+        }
     }
 
     pub fn check_program(&mut self, prog: &ast::Program) -> Result<hir::Program, TypeError> {
@@ -218,10 +289,14 @@ impl<'a> TypeChecker<'a> {
                         ));
                     }
 
+                    let evaluated_init = self.eval_const_expr(&typed_init)?;
+                    self.constants
+                        .insert(def.name.clone(), evaluated_init.clone());
+
                     hir::Item::Const(hir::ConstDef {
                         name: def.name.clone(),
                         type_id: declared_type_id,
-                        init: Box::new(typed_init),
+                        init: evaluated_init,
                         span: def.span,
                     })
                 }
@@ -239,10 +314,14 @@ impl<'a> TypeChecker<'a> {
                         ));
                     }
 
+                    let evaluated_init = self.eval_const_expr(&typed_init)?;
+                    self.constants
+                        .insert(def.name.clone(), evaluated_init.clone());
+
                     hir::Item::Static(hir::StaticDef {
                         name: def.name.clone(),
                         type_id: declared_type_id,
-                        init: Box::new(typed_init),
+                        init: evaluated_init,
                         span: def.span,
                     })
                 }
@@ -303,9 +382,39 @@ impl<'a> TypeChecker<'a> {
 
             ast::TypeAnnKind::Slice(_) => Ok((16, 8)),
 
-            ast::TypeAnnKind::Array(elem, count) => {
+            ast::TypeAnnKind::Array(elem, len_expr) => {
                 let (elem_size, elem_align) = self.type_dimensions(elem)?;
-                Ok((elem_size * count, elem_align))
+
+                let typed_len = self.check_expression(len_expr)?;
+
+                if typed_len.type_id != TypeId::I64 {
+                    return Err(TypeError::new(
+                        format!(
+                            "Array length must be `i64`, found `{:?}`",
+                            typed_len.type_id
+                        ),
+                        len_expr.span,
+                    ));
+                }
+
+                let evaluated_len = self.eval_const_expr(&typed_len)?;
+
+                let hir::Literal::Integer(len_val) = evaluated_len else {
+                    return Err(TypeError::new(
+                        "Array length must be an integer".to_string(),
+                        len_expr.span,
+                    ));
+                };
+
+                if len_val <= 0 {
+                    return Err(TypeError::new(
+                        format!("Array length must be positive, found {len_val}"),
+                        len_expr.span,
+                    ));
+                }
+
+                let len = len_val as usize;
+                Ok((elem_size * len, elem_align))
             }
 
             ast::TypeAnnKind::Named(name) => match self.lookup(name) {
@@ -356,9 +465,39 @@ impl<'a> TypeChecker<'a> {
                 Ok(self.ctx.mk_pointer(inner_type_id))
             }
 
-            ast::TypeAnnKind::Array(elem, count) => {
+            ast::TypeAnnKind::Array(elem, len_expr) => {
                 let elem_type_id = self.resolve_type(elem)?;
-                Ok(self.ctx.mk_array(elem_type_id, *count))
+
+                let typed_len = self.check_expression(len_expr)?;
+
+                if typed_len.type_id != TypeId::I64 {
+                    return Err(TypeError::new(
+                        format!(
+                            "Array length must be `i64`, found `{:?}`",
+                            typed_len.type_id
+                        ),
+                        len_expr.span,
+                    ));
+                }
+
+                let evaluated_len = self.eval_const_expr(&typed_len)?;
+
+                let hir::Literal::Integer(len_val) = evaluated_len else {
+                    return Err(TypeError::new(
+                        "Array length must be an integer".to_string(),
+                        len_expr.span,
+                    ));
+                };
+
+                if len_val <= 0 {
+                    return Err(TypeError::new(
+                        format!("Array length must be positive, found {len_val}"),
+                        len_expr.span,
+                    ));
+                }
+
+                let len = len_val as usize;
+                Ok(self.ctx.mk_array(elem_type_id, len))
             }
 
             ast::TypeAnnKind::Slice(elem) => {
@@ -618,7 +757,7 @@ impl<'a> TypeChecker<'a> {
 
     fn check_expression(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
         match &expr.kind {
-            ast::ExprKind::Literal(..) => Ok(self.check_expr_literal(expr)),
+            ast::ExprKind::Literal(..) => self.check_expr_literal(expr),
             ast::ExprKind::Struct(..) => self.check_expr_struct(expr),
             ast::ExprKind::Ident(..) => self.check_expr_ident(expr),
             ast::ExprKind::Array(..) => self.check_expr_array(expr),
@@ -646,16 +785,36 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    fn check_expr_literal(&mut self, expr: &ast::Expr) -> hir::Expr {
+    fn check_expr_literal(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
         let ast::ExprKind::Literal(lit) = &expr.kind else {
             unreachable!()
         };
 
         let (ty, kind) = match lit {
-            ast::Literal::Integer(n) => (
-                TypeId::I64,
-                hir::ExprKind::Literal(hir::Literal::Integer(*n)),
-            ),
+            ast::Literal::Integer(n, suffix_opt) => {
+                let type_id = match suffix_opt.as_deref() {
+                    Some("i64") => TypeId::I64,
+                    Some("u8") => {
+                        if *n < 0 || *n > 255 {
+                            return Err(TypeError::new(
+                                format!(
+                                    "Integer literal `{n}` is out of range for type u8 (0..=255)"
+                                ),
+                                expr.span,
+                            ));
+                        }
+                        TypeId::U8
+                    }
+                    Some(unknown) => {
+                        return Err(TypeError::new(
+                            format!("Unknown integer suffix `{unknown}`"),
+                            expr.span,
+                        ));
+                    }
+                    None => TypeId::I64,
+                };
+                (type_id, hir::ExprKind::Literal(hir::Literal::Integer(*n)))
+            }
             ast::Literal::String(s) => (
                 self.ctx.mk_slice(TypeId::U8),
                 hir::ExprKind::Literal(hir::Literal::String(s.clone())),
@@ -663,11 +822,11 @@ impl<'a> TypeChecker<'a> {
             ast::Literal::Bool(b) => (TypeId::BOOL, hir::ExprKind::Literal(hir::Literal::Bool(*b))),
         };
 
-        hir::Expr {
+        Ok(hir::Expr {
             kind,
             type_id: ty,
             span: expr.span,
-        }
+        })
     }
 
     fn check_expr_struct(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
@@ -838,9 +997,11 @@ impl<'a> TypeChecker<'a> {
             ));
         }
 
+        let evaluated_count = self.eval_const_expr(&typed_count)?;
+
         if let hir::ExprKind::Literal(hir::Literal::Integer(n)) = typed_count.kind {
             Ok(hir::Expr {
-                kind: hir::ExprKind::Repeat(Box::new(typed_elem.clone()), Box::new(typed_count)),
+                kind: hir::ExprKind::Repeat(Box::new(typed_elem.clone()), evaluated_count),
                 type_id: self.ctx.mk_array(typed_elem.type_id, n as usize),
                 span: expr.span,
             })

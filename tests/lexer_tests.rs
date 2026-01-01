@@ -43,7 +43,7 @@ fn test_keywords() {
 
 #[test]
 fn test_identifiers_and_integers() {
-    let input = "x y123 _foo 42 0 9999";
+    let input = "x y123 _foo 42 0 9999 255u8 100i64";
     let tokens = tokenize(input).unwrap();
 
     assert_eq!(
@@ -52,9 +52,11 @@ fn test_identifiers_and_integers() {
             TokenKind::Ident("x".to_string()),
             TokenKind::Ident("y123".to_string()),
             TokenKind::Ident("_foo".to_string()),
-            TokenKind::Integer(42),
-            TokenKind::Integer(0),
-            TokenKind::Integer(9999),
+            TokenKind::Integer(42, None),
+            TokenKind::Integer(0, None),
+            TokenKind::Integer(9999, None),
+            TokenKind::Integer(255, Some("u8".to_string())),
+            TokenKind::Integer(100, Some("i64".to_string())),
             TokenKind::Eof,
         ]
     );
@@ -160,7 +162,7 @@ fn test_compact_code() {
             TokenKind::Let,
             TokenKind::Ident("x".to_string()),
             TokenKind::Eq,
-            TokenKind::Integer(42),
+            TokenKind::Integer(42, None),
             TokenKind::Semi,
             TokenKind::Eof,
         ]
@@ -182,7 +184,7 @@ fn test_comments() {
             TokenKind::Let,
             TokenKind::Ident("x".to_string()),
             TokenKind::Eq,
-            TokenKind::Integer(42),
+            TokenKind::Integer(42, None),
             TokenKind::Semi,
             TokenKind::Eof,
         ]

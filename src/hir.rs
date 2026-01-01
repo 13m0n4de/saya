@@ -38,7 +38,7 @@ pub struct ExternFunctionDecl {
 pub struct ConstDef {
     pub name: String,
     pub type_id: TypeId,
-    pub init: Box<Expr>,
+    pub init: Literal,
     pub span: Span,
 }
 
@@ -46,7 +46,7 @@ pub struct ConstDef {
 pub struct StaticDef {
     pub name: String,
     pub type_id: TypeId,
-    pub init: Box<Expr>,
+    pub init: Literal,
     pub span: Span,
 }
 
@@ -107,7 +107,7 @@ pub enum ExprKind {
     Struct(StructExpr),
     Ident(String),
     Array(Vec<Expr>),
-    Repeat(Box<Expr>, Box<Expr>),
+    Repeat(Box<Expr>, Literal),
     Field(Box<Expr>, String),
     Index(Box<Expr>, Box<Expr>),
     Call(Call),

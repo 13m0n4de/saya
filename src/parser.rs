@@ -120,24 +120,9 @@ impl<'a> Parser<'a> {
                     // Array: [T; N]
                     TokenKind::Semi => {
                         self.advance()?;
-                        let size = if let TokenKind::Integer(n) = self.current.kind {
-                            if n < 0 {
-                                return Err(ParseError::new(
-                                    "Array size cannot be negative".to_string(),
-                                    self.current.span,
-                                ));
-                            }
-                            n as usize
-                        } else {
-                            return Err(ParseError::new(
-                                "Expected array size".to_string(),
-                                self.current.span,
-                            ));
-                        };
-
-                        self.advance()?;
+                        let count_expr = self.parse_expression()?;
                         self.expect(TokenKind::CloseBracket)?;
-                        TypeAnnKind::Array(Box::new(elem_type_ann), size)
+                        TypeAnnKind::Array(Box::new(elem_type_ann), Box::new(count_expr))
                     }
                     _ => {
                         return Err(ParseError::new(
@@ -717,10 +702,11 @@ impl<'a> Parser<'a> {
         let start_span = self.current.span;
 
         let kind = match &self.current.kind {
-            TokenKind::Integer(val) => {
+            TokenKind::Integer(val, suffix) => {
                 let val = *val;
+                let suffix = suffix.clone();
                 self.advance()?;
-                ExprKind::Literal(Literal::Integer(val))
+                ExprKind::Literal(Literal::Integer(val, suffix))
             }
             TokenKind::String(str) => {
                 let val = str.to_owned();
