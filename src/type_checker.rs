@@ -819,6 +819,10 @@ impl<'a> TypeChecker<'a> {
                 self.ctx.mk_slice(TypeId::U8),
                 hir::ExprKind::Literal(hir::Literal::String(s.clone())),
             ),
+            ast::Literal::CString(s) => (
+                self.ctx.mk_pointer(TypeId::U8),
+                hir::ExprKind::Literal(hir::Literal::CString(s.clone())),
+            ),
             ast::Literal::Bool(b) => (TypeId::BOOL, hir::ExprKind::Literal(hir::Literal::Bool(*b))),
         };
 

@@ -713,6 +713,11 @@ impl<'a> Parser<'a> {
                 self.advance()?;
                 ExprKind::Literal(Literal::String(val))
             }
+            TokenKind::CString(str) => {
+                let val = str.to_owned();
+                self.advance()?;
+                ExprKind::Literal(Literal::CString(val))
+            }
             TokenKind::True => {
                 self.advance()?;
                 ExprKind::Literal(Literal::Bool(true))

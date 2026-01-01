@@ -22,6 +22,7 @@ pub enum TokenKind {
     Ident(String),
     Integer(i64, Option<String>),
     String(String),
+    CString(String),
 
     Plus,    // +
     Minus,   // -
@@ -122,6 +123,10 @@ impl<'a> Lexer<'a> {
         self.start_span = self.span;
 
         let kind = match self.current {
+            Some('c') if self.peek == Some('"') => {
+                self.advance(); // skip 'c'
+                self.read_cstring()?
+            }
             Some(ch) if ch.is_ascii_alphabetic() || ch == '_' => self.read_identifier(),
             Some(ch) if ch.is_ascii_digit() => self.read_number()?,
 
@@ -369,6 +374,16 @@ impl<'a> Lexer<'a> {
     }
 
     fn read_string(&mut self) -> Result<TokenKind, LexError> {
+        let content = self.read_string_content()?;
+        Ok(TokenKind::String(content))
+    }
+
+    fn read_cstring(&mut self) -> Result<TokenKind, LexError> {
+        let content = self.read_string_content()?;
+        Ok(TokenKind::CString(content))
+    }
+
+    fn read_string_content(&mut self) -> Result<String, LexError> {
         if self.current != Some('"') {
             return Err(LexError::new(
                 "Expected '\"' at start of string".to_string(),
@@ -384,7 +399,7 @@ impl<'a> Lexer<'a> {
             match ch {
                 '"' => {
                     self.advance();
-                    return Ok(TokenKind::String(string));
+                    return Ok(string);
                 }
                 '\\' => {
                     self.advance();
