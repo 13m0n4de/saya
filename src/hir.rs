@@ -125,8 +125,9 @@ pub enum ExprKind {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
     Integer(i64),
-    String(String),
     Bool(bool),
+    String(String),
+    CString(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]

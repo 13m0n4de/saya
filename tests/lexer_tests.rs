@@ -137,7 +137,7 @@ fn test_delimiters() {
 
 #[test]
 fn test_string_literal() {
-    let input = r#""hello" "world 123" "with\nescape""#;
+    let input = r#""hello" "world 123" "with\nescape" c"cstring" c"C FFI\0test""#;
     let tokens = tokenize(input).unwrap();
 
     assert_eq!(
@@ -146,6 +146,8 @@ fn test_string_literal() {
             TokenKind::String("hello".to_string()),
             TokenKind::String("world 123".to_string()),
             TokenKind::String("with\\nescape".to_string()),
+            TokenKind::CString("cstring".to_string()),
+            TokenKind::CString("C FFI\\0test".to_string()),
             TokenKind::Eof,
         ]
     );

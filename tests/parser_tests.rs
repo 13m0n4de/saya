@@ -46,6 +46,12 @@ fn test_string_literal() {
         expr.kind,
         ExprKind::Literal(Literal::String(s)) if s == "hello"
     ));
+
+    let expr_c = parse_expr!(r#"c"hello C FFI""#).unwrap();
+    assert!(matches!(
+        expr_c.kind,
+        ExprKind::Literal(Literal::CString(s)) if s == "hello C FFI"
+    ));
 }
 
 #[test]

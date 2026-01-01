@@ -49,6 +49,26 @@ fn test_string_literal() {
 }
 
 #[test]
+fn test_cstring_literal() {
+    let code = r#"fn main() -> *u8 { c"hello C FFI" }"#;
+    let lexer = Lexer::new(&code);
+    let mut parser = Parser::new(lexer).unwrap();
+    let program = parser.parse().unwrap();
+    let mut type_context = TypeContext::new();
+    let mut type_checker = TypeChecker::new(&mut type_context);
+    let program = type_checker.check_program(&program).unwrap();
+
+    match &program.items[0] {
+        Item::Function(func) => {
+            let body = &func.body;
+            let ty = type_context.get(body.type_id);
+            assert!(matches!(ty.kind, TypeKind::Pointer(TypeId::U8)));
+        }
+        _ => panic!("Expected function"),
+    }
+}
+
+#[test]
 fn test_bool_literal() {
     let program = typecheck!("fn main() -> bool { true }").unwrap();
 

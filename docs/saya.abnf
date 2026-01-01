@@ -85,7 +85,7 @@ array-expr = "[" [array-list / array-repeat] "]"
 array-list = expression *("," expression)
 array-repeat = expression ";" expression
 
-literal = integer / string / bool
+literal = integer / cstring / string / bool
 
 integer = 1*DIGIT [int-suffix]
 int-suffix = "i64" / "u8"
@@ -93,6 +93,7 @@ int-suffix = "i64" / "u8"
 bool = "true" / "false"
 
 string = DQUOTE *string-char DQUOTE
+cstring = "c" DQUOTE *string-char DQUOTE
 string-char = unescaped-char / escape-sequence
 unescaped-char = %x20-21 / %x23-5B / %x5D-7E
 escape-sequence = "\" escape-code
