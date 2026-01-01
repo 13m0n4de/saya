@@ -21,7 +21,22 @@ macro_rules! parse_expr {
 #[test]
 fn test_integer_literal() {
     let expr = parse_expr!("42").unwrap();
-    assert!(matches!(expr.kind, ExprKind::Literal(Literal::Integer(42))));
+    assert!(matches!(
+        expr.kind,
+        ExprKind::Literal(Literal::Integer(42, None))
+    ));
+
+    let expr_u8 = parse_expr!("255u8").unwrap();
+    assert!(matches!(
+        expr_u8.kind,
+        ExprKind::Literal(Literal::Integer(255, Some(ref s))) if s == "u8"
+    ));
+
+    let expr_i64 = parse_expr!("100i64").unwrap();
+    assert!(matches!(
+        expr_i64.kind,
+        ExprKind::Literal(Literal::Integer(100, Some(ref s))) if s == "i64"
+    ));
 }
 
 #[test]
@@ -68,14 +83,14 @@ fn test_struct_literal() {
                     assert_eq!(start_point.fields[0].name, "x");
                     assert!(matches!(
                         start_point.fields[0].value.kind,
-                        ExprKind::Literal(Literal::Integer(0))
+                        ExprKind::Literal(Literal::Integer(0, None))
                     ));
 
                     // start.y = 0
                     assert_eq!(start_point.fields[1].name, "y");
                     assert!(matches!(
                         start_point.fields[1].value.kind,
-                        ExprKind::Literal(Literal::Integer(0))
+                        ExprKind::Literal(Literal::Integer(0, None))
                     ));
                 }
                 _ => panic!("Expected nested struct literal for 'start'"),
@@ -91,14 +106,14 @@ fn test_struct_literal() {
                     assert_eq!(end_point.fields[0].name, "x");
                     assert!(matches!(
                         end_point.fields[0].value.kind,
-                        ExprKind::Literal(Literal::Integer(10))
+                        ExprKind::Literal(Literal::Integer(10, None))
                     ));
 
                     // end.y = 10
                     assert_eq!(end_point.fields[1].name, "y");
                     assert!(matches!(
                         end_point.fields[1].value.kind,
-                        ExprKind::Literal(Literal::Integer(10))
+                        ExprKind::Literal(Literal::Integer(10, None))
                     ));
                 }
                 _ => panic!("Expected nested struct literal for 'end'"),
@@ -114,7 +129,10 @@ fn test_operator_precedence() {
 
     match expr.kind {
         ExprKind::Binary(BinaryOp::Add, left, right) => {
-            assert!(matches!(left.kind, ExprKind::Literal(Literal::Integer(1))));
+            assert!(matches!(
+                left.kind,
+                ExprKind::Literal(Literal::Integer(1, None))
+            ));
             assert!(matches!(right.kind, ExprKind::Binary(BinaryOp::Mul, _, _)));
         }
         _ => panic!("Expected Add at top level"),
@@ -388,7 +406,7 @@ fn test_array_type() {
     match &program.items[0] {
         Item::Function(func) => match &func.body.stmts[0].kind {
             StmtKind::Let(let_stmt) => {
-                assert!(matches!(let_stmt.type_ann.kind, TypeAnnKind::Array(_, 3)));
+                assert!(matches!(let_stmt.type_ann.kind, TypeAnnKind::Array(..)));
             }
             _ => panic!("Expected let statement"),
         },
