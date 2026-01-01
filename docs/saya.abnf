@@ -87,7 +87,8 @@ array-repeat = expression ";" expression
 
 literal = integer / string / bool
 
-integer = 1*DIGIT
+integer = 1*DIGIT [int-suffix]
+int-suffix = "i64" / "u8"
 
 bool = "true" / "false"
 
