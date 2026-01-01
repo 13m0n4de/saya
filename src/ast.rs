@@ -12,7 +12,7 @@ pub enum TypeAnnKind {
     U8,
     Bool,
     Pointer(Box<TypeAnn>),
-    Array(Box<TypeAnn>, usize),
+    Array(Box<TypeAnn>, Box<Expr>),
     Slice(Box<TypeAnn>),
     Named(String),
     Unit,
@@ -156,7 +156,7 @@ pub enum ExprKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
-    Integer(i64),
+    Integer(i64, Option<String>),
     String(String),
     Bool(bool),
 }

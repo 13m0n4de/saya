@@ -20,7 +20,7 @@ pub enum TokenKind {
     False,    // false
 
     Ident(String),
-    Integer(i64),
+    Integer(i64, Option<String>),
     String(String),
 
     Plus,    // +
@@ -304,16 +304,7 @@ impl<'a> Lexer<'a> {
     }
 
     fn read_identifier(&mut self) -> TokenKind {
-        let mut ident = String::new();
-
-        while let Some(ch) = self.current {
-            if ch.is_ascii_alphanumeric() || ch == '_' {
-                ident.push(ch);
-                self.advance();
-            } else {
-                break;
-            }
-        }
+        let ident = self.read_raw_identifier();
 
         match ident.as_str() {
             "fn" => TokenKind::Fn,
@@ -334,6 +325,21 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    fn read_raw_identifier(&mut self) -> String {
+        let mut ident = String::new();
+
+        while let Some(ch) = self.current {
+            if ch.is_ascii_alphanumeric() || ch == '_' {
+                ident.push(ch);
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
+        ident
+    }
+
     fn read_number(&mut self) -> Result<TokenKind, LexError> {
         let mut num = String::new();
 
@@ -346,13 +352,20 @@ impl<'a> Lexer<'a> {
             }
         }
 
-        match num.parse::<i64>() {
-            Ok(value) => Ok(TokenKind::Integer(value)),
-            Err(_) => Err(LexError::new(
+        let suffix = if matches!(self.current, Some(c) if c.is_alphabetic()) {
+            Some(self.read_raw_identifier())
+        } else {
+            None
+        };
+
+        let value = num.parse::<i64>().map_err(|_| {
+            LexError::new(
                 format!("Integer literal is too large: {num}"),
                 self.start_span,
-            )),
-        }
+            )
+        })?;
+
+        Ok(TokenKind::Integer(value, suffix))
     }
 
     fn read_string(&mut self) -> Result<TokenKind, LexError> {

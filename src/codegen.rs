@@ -102,8 +102,8 @@ impl<'a> CodeGen<'a> {
         // Constants
         for item in &prog.items {
             if let Item::Const(const_def) = item {
-                let value = self.eval_const_expr(&const_def.init)?;
-                self.constants.insert(const_def.name.clone(), value);
+                self.constants
+                    .insert(const_def.name.clone(), const_def.init.clone());
             }
         }
 
@@ -111,7 +111,7 @@ impl<'a> CodeGen<'a> {
         for item in &prog.items {
             match item {
                 Item::Static(static_def) => {
-                    self.generate_static(static_def)?;
+                    self.generate_static(static_def);
                     self.globals.insert(static_def.name.clone());
                 }
                 Item::Extern(ExternItem::Static(static_decl)) => {
@@ -222,7 +222,7 @@ impl<'a> CodeGen<'a> {
         &mut self,
         type_id: TypeId,
         elem_type_id: TypeId,
-        count: usize,
+        len: usize,
     ) -> &'static qbe::TypeDef<'static> {
         let ty = self.ctx.get(type_id);
         let elem_ty = self.ctx.get(elem_type_id);
@@ -237,7 +237,7 @@ impl<'a> CodeGen<'a> {
             self.qbe_store_type(elem_type_id)
         };
 
-        let items = vec![(qbe_elem_ty, count)];
+        let items = vec![(qbe_elem_ty, len)];
 
         let name = format!("type.{}", type_id.0);
 
@@ -615,71 +615,6 @@ impl<'a> CodeGen<'a> {
         }
     }
 
-    fn eval_const_expr(&mut self, expr: &Expr) -> Result<Literal, CodeGenError> {
-        match &expr.kind {
-            ExprKind::Literal(lit) => Ok(lit.clone()),
-            ExprKind::Ident(name) => self.constants.get(name).cloned().ok_or_else(|| {
-                CodeGenError::new(format!("Constant `{name}` not found"), expr.span)
-            }),
-            ExprKind::Unary(UnaryOp::Neg, operand) => match self.eval_const_expr(operand)? {
-                Literal::Integer(n) => Ok(Literal::Integer(-n)),
-                _ => Err(CodeGenError::new(
-                    "Cannot negate a non-integer value".to_string(),
-                    expr.span,
-                )),
-            },
-            ExprKind::Binary(op, left, right) => {
-                let left_val = self.eval_const_expr(left)?;
-                let right_val = self.eval_const_expr(right)?;
-
-                match (left_val, right_val) {
-                    (Literal::Integer(l), Literal::Integer(r)) => match op {
-                        // Arithmetic operators
-                        BinaryOp::Add => Ok(Literal::Integer(l + r)),
-                        BinaryOp::Sub => Ok(Literal::Integer(l - r)),
-                        BinaryOp::Mul => Ok(Literal::Integer(l * r)),
-                        BinaryOp::Div => Ok(Literal::Integer(l / r)),
-                        BinaryOp::Rem => Ok(Literal::Integer(l % r)),
-                        // Bitwise operators
-                        BinaryOp::BitAnd => Ok(Literal::Integer(l & r)),
-                        BinaryOp::BitOr => Ok(Literal::Integer(l | r)),
-                        // Comparison operators
-                        BinaryOp::Lt => Ok(Literal::Bool(l < r)),
-                        BinaryOp::Le => Ok(Literal::Bool(l <= r)),
-                        BinaryOp::Gt => Ok(Literal::Bool(l > r)),
-                        BinaryOp::Ge => Ok(Literal::Bool(l >= r)),
-                        BinaryOp::Eq => Ok(Literal::Bool(l == r)),
-                        BinaryOp::Ne => Ok(Literal::Bool(l != r)),
-                        _ => Err(CodeGenError::new(
-                            "Invalid operator for integer operands".to_string(),
-                            expr.span,
-                        )),
-                    },
-                    (Literal::Bool(l), Literal::Bool(r)) => match op {
-                        // Logical operators
-                        BinaryOp::And => Ok(Literal::Bool(l && r)),
-                        BinaryOp::Or => Ok(Literal::Bool(l || r)),
-                        // Equality operators
-                        BinaryOp::Eq => Ok(Literal::Bool(l == r)),
-                        BinaryOp::Ne => Ok(Literal::Bool(l != r)),
-                        _ => Err(CodeGenError::new(
-                            "Invalid operator for boolean operands".to_string(),
-                            expr.span,
-                        )),
-                    },
-                    _ => Err(CodeGenError::new(
-                        "Type mismatch in constant expression".to_string(),
-                        expr.span,
-                    )),
-                }
-            }
-            _ => Err(CodeGenError::new(
-                "Invalid constant expression".to_string(),
-                expr.span,
-            )),
-        }
-    }
-
     fn generate_type_def(&mut self, type_id: TypeId) -> &'static qbe::TypeDef<'static> {
         if let Some(&def) = self.type_defs.get(&type_id) {
             return def;
@@ -696,12 +631,12 @@ impl<'a> CodeGen<'a> {
 
                 self.build_struct_def(type_id, &fields)
             }
-            TypeKind::Array(elem_type_id, count) => {
+            TypeKind::Array(elem_type_id, len) => {
                 if self.ctx.get(elem_type_id).is_aggregate() {
                     self.generate_type_def(elem_type_id);
                 }
 
-                self.build_array_def(type_id, elem_type_id, count)
+                self.build_array_def(type_id, elem_type_id, len)
             }
             TypeKind::Slice(_) => self.build_slice_def(type_id),
             _ => unreachable!("non-aggregate type: {:?}", type_kind),
@@ -712,9 +647,8 @@ impl<'a> CodeGen<'a> {
         def
     }
 
-    fn generate_static(&mut self, static_def: &StaticDef) -> Result<(), CodeGenError> {
-        let literal = self.eval_const_expr(&static_def.init)?;
-        let data_items = self.literal_to_data_items(&literal);
+    fn generate_static(&mut self, static_def: &StaticDef) {
+        let data_items = self.literal_to_data_items(&static_def.init);
 
         self.data_defs.push(qbe::DataDef::new(
             qbe::Linkage::private(),
@@ -722,8 +656,6 @@ impl<'a> CodeGen<'a> {
             None,
             data_items,
         ));
-
-        Ok(())
     }
 
     fn generate_function(
@@ -868,7 +800,7 @@ impl<'a> CodeGen<'a> {
         };
 
         match lit {
-            Literal::Integer(n) => GenValue::Const(n.cast_unsigned(), TypeId::I64),
+            Literal::Integer(n) => GenValue::Const(n.cast_unsigned(), expr.type_id),
             Literal::String(_) => self.generate_string_slice(qfunc, expr),
             Literal::Bool(b) => GenValue::Const(u64::from(*b), TypeId::BOOL),
         }
@@ -926,7 +858,7 @@ impl<'a> CodeGen<'a> {
         // Constants
         if let Some(literal) = self.constants.get(name).cloned() {
             return match literal {
-                Literal::Integer(n) => Ok(GenValue::Const(n.cast_unsigned(), TypeId::I64)),
+                Literal::Integer(n) => Ok(GenValue::Const(n.cast_unsigned(), expr.type_id)),
                 Literal::Bool(b) => Ok(GenValue::Const(u64::from(b), TypeId::BOOL)),
                 Literal::String(_) => Ok(self.generate_string_slice(qfunc, expr)),
             };
@@ -1159,18 +1091,8 @@ impl<'a> CodeGen<'a> {
         qfunc: &mut qbe::Function<'static>,
         expr: &Expr,
     ) -> Result<GenValue, CodeGenError> {
-        let ExprKind::Repeat(elem, count) = &expr.kind else {
+        let ExprKind::Repeat(elem, Literal::Integer(count)) = &expr.kind else {
             unreachable!()
-        };
-
-        let count_num = match self.eval_const_expr(count)? {
-            Literal::Integer(n) => n as usize,
-            _ => {
-                return Err(CodeGenError::new(
-                    "Expected integer constant".to_string(),
-                    expr.span,
-                ));
-            }
         };
 
         let TypeKind::Array(elem_ty, _) = self.ctx.get(expr.type_id).kind else {
@@ -1182,7 +1104,7 @@ impl<'a> CodeGen<'a> {
 
         let elem_type = self.ctx.get(elem_ty);
         let elem_size = elem_type.size as u64;
-        let array_size = count_num as u64 * elem_size;
+        let array_size = *count as u64 * elem_size;
         let array_name = self.new_temp();
         let array_ptr = qbe::Value::Temporary(array_name.clone());
         qfunc.assign_instr(
@@ -1194,7 +1116,7 @@ impl<'a> CodeGen<'a> {
         let elem_val = qbe::Value::from(self.generate_expression(qfunc, elem)?);
         let elem_store_ty = self.qbe_store_type(elem_ty);
 
-        for i in 0..count_num {
+        for i in 0..*count {
             let offset = i as u64 * elem_size;
             let elem_addr = qbe::Value::Temporary(self.new_temp());
             qfunc.assign_instr(
