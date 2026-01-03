@@ -42,12 +42,17 @@ impl Error for ParseError {}
 pub struct Parser<'a> {
     lexer: Lexer<'a>,
     current: Token,
+    no_struct_literal: bool,
 }
 
 impl<'a> Parser<'a> {
     pub fn new(mut lexer: Lexer<'a>) -> Result<Self, ParseError> {
         let current = lexer.next_token()?;
-        Ok(Self { lexer, current })
+        Ok(Self {
+            lexer,
+            current,
+            no_struct_literal: false,
+        })
     }
 
     pub fn parse(&mut self) -> Result<Program, ParseError> {
@@ -730,7 +735,10 @@ impl<'a> Parser<'a> {
                 let name = name.clone();
                 self.advance()?;
 
-                if self.eat(TokenKind::OpenBrace)? {
+                if self.current.kind != TokenKind::OpenBrace || self.no_struct_literal {
+                    ExprKind::Ident(name)
+                } else {
+                    self.advance()?;
                     let fields = if self.current.kind == TokenKind::CloseBrace {
                         Vec::new()
                     } else {
@@ -743,8 +751,6 @@ impl<'a> Parser<'a> {
                         fields,
                         span: start_span,
                     })
-                } else {
-                    ExprKind::Ident(name)
                 }
             }
 
@@ -836,19 +842,11 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_expr_cond(&mut self) -> Result<Expr, ParseError> {
-        if matches!(self.current.kind, TokenKind::Ident(_)) {
-            let next = self.lexer.peek_token()?;
-            if next.kind == TokenKind::OpenBrace {
-                let span = self.current.span;
-                let name = self.expect_identifier()?;
-                return Ok(Expr {
-                    kind: ExprKind::Ident(name),
-                    span,
-                });
-            }
-        }
-
-        self.parse_expression()
+        let old_flag = self.no_struct_literal;
+        self.no_struct_literal = true;
+        let result = self.parse_expression();
+        self.no_struct_literal = old_flag;
+        result
     }
 
     fn parse_if(&mut self) -> Result<If, ParseError> {

@@ -279,11 +279,6 @@ impl<'a> Lexer<'a> {
         })
     }
 
-    pub fn peek_token(&self) -> Result<Token, LexError> {
-        let mut temp = self.clone();
-        temp.next_token()
-    }
-
     fn advance(&mut self) {
         if let Some(ch) = self.current {
             if ch == '\n' {
