@@ -328,6 +328,10 @@ impl<'a> CodeGen<'a> {
             temp
         };
 
+        if self.ctx.get(type_id).is_aggregate() {
+            return addr;
+        }
+
         let base_ty = self.qbe_type(type_id);
         let load_ty = self.qbe_load_type(type_id);
         let result = qbe::Value::Temporary(self.new_temp());
@@ -355,8 +359,12 @@ impl<'a> CodeGen<'a> {
             temp
         };
 
-        let store_ty = self.qbe_store_type(type_id);
-        qfunc.add_instr(qbe::Instr::Store(store_ty, addr, value));
+        if self.ctx.get(type_id).is_aggregate() {
+            self.copy_aggregate(qfunc, addr, value, type_id);
+        } else {
+            let store_ty = self.qbe_store_type(type_id);
+            qfunc.add_instr(qbe::Instr::Store(store_ty, addr, value));
+        }
     }
 
     fn copy_aggregate(
@@ -1078,21 +1086,10 @@ impl<'a> CodeGen<'a> {
             qbe::Instr::Alloc8(array_size),
         );
 
-        let elem_store_ty = self.qbe_store_type(elem_ty);
         for (i, elem) in elements.iter().enumerate() {
-            let elem_val = self.generate_expression(qfunc, elem)?.into();
+            let elem_val: qbe::Value = self.generate_expression(qfunc, elem)?.into();
             let offset = i as u64 * elem_size;
-            let elem_addr = qbe::Value::Temporary(self.new_temp());
-            qfunc.assign_instr(
-                elem_addr.clone(),
-                qbe::Type::Long,
-                qbe::Instr::Add(array_ptr.clone(), qbe::Value::Const(offset)),
-            );
-            qfunc.add_instr(qbe::Instr::Store(
-                elem_store_ty.clone(),
-                elem_addr,
-                elem_val,
-            ));
+            self.store_field(qfunc, array_ptr.clone(), offset, elem_val, elem_ty);
         }
 
         Ok(GenValue::Temp(array_name, expr.type_id))
@@ -1125,22 +1122,11 @@ impl<'a> CodeGen<'a> {
             qbe::Instr::Alloc8(array_size),
         );
 
-        let elem_val = qbe::Value::from(self.generate_expression(qfunc, elem)?);
-        let elem_store_ty = self.qbe_store_type(elem_ty);
+        let elem_val: qbe::Value = self.generate_expression(qfunc, elem)?.into();
 
         for i in 0..*count {
             let offset = i as u64 * elem_size;
-            let elem_addr = qbe::Value::Temporary(self.new_temp());
-            qfunc.assign_instr(
-                elem_addr.clone(),
-                qbe::Type::Long,
-                qbe::Instr::Add(array_ptr.clone(), qbe::Value::Const(offset)),
-            );
-            qfunc.add_instr(qbe::Instr::Store(
-                elem_store_ty.clone(),
-                elem_addr,
-                elem_val.clone(),
-            ));
+            self.store_field(qfunc, array_ptr.clone(), offset, elem_val.clone(), elem_ty);
         }
 
         Ok(GenValue::Temp(array_name, expr.type_id))
