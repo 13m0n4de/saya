@@ -1,21 +1,42 @@
-use std::{cell::Cell, collections::HashMap};
+use std::{collections::HashMap, rc::Rc};
 
-use crate::{ast, types::TypeId};
+use crate::{ast, hir, types::TypeId};
 
 #[derive(Debug, Clone)]
 pub enum ScopeObject {
     Var(TypeId),
-    Type(TypeId),
-    Function(Vec<TypeId>, TypeId),
-    Const(TypeId),
-    Static(TypeId),
-    Scan(Incomplete),
+    Const(ConstDecl),
+    Static(StaticDecl),
+    Function(FunctionDecl),
+    Struct(StructDecl),
 }
 
 #[derive(Debug, Clone)]
-pub struct Incomplete {
-    pub def: ast::StructDef,
-    pub in_progress: Cell<bool>,
+pub enum ConstDecl {
+    Unresolved(Rc<ast::ConstDef>),
+    Resolving(Rc<ast::ConstDef>),
+    Resolved(TypeId, hir::Literal),
+}
+
+#[derive(Debug, Clone)]
+pub enum StaticDecl {
+    Unresolved(Rc<ast::StaticDef>),
+    Resolving(Rc<ast::StaticDef>),
+    Resolved(TypeId, hir::Literal),
+}
+
+#[derive(Debug, Clone)]
+pub enum FunctionDecl {
+    Unresolved(Rc<ast::FunctionDef>),
+    Resolving(Rc<ast::FunctionDef>),
+    Resolved(Vec<TypeId>, TypeId),
+}
+
+#[derive(Debug, Clone)]
+pub enum StructDecl {
+    Unresolved(Rc<ast::StructDef>),
+    Resolving(Rc<ast::StructDef>),
+    Resolved(TypeId),
 }
 
 #[derive(Default)]

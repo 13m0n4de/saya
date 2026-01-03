@@ -1,13 +1,13 @@
 use std::{
-    cell::Cell,
     collections::{HashMap, HashSet},
     error::Error,
     fmt,
+    rc::Rc,
 };
 
 use crate::{
     ast, hir,
-    scope::{Incomplete, Scope, ScopeObject},
+    scope::{ConstDecl, FunctionDecl, Scope, ScopeObject, StaticDecl, StructDecl},
     span::Span,
     types::{Field, TypeContext, TypeId, TypeKind},
 };
@@ -42,7 +42,6 @@ pub struct TypeChecker<'a> {
     ctx: &'a mut TypeContext,
     scopes: Vec<Scope>,
     current_fn_return_type_id: Option<TypeId>,
-    constants: HashMap<String, hir::Literal>,
 }
 
 impl<'a> TypeChecker<'a> {
@@ -51,7 +50,6 @@ impl<'a> TypeChecker<'a> {
             ctx,
             scopes: vec![Scope::new()],
             current_fn_return_type_id: None,
-            constants: HashMap::new(),
         }
     }
 
@@ -84,11 +82,13 @@ impl<'a> TypeChecker<'a> {
     fn eval_const_expr(&mut self, expr: &hir::Expr) -> Result<hir::Literal, TypeError> {
         match &expr.kind {
             hir::ExprKind::Literal(lit) => Ok(lit.clone()),
-            hir::ExprKind::Ident(name) => {
-                self.constants.get(name).cloned().ok_or_else(|| {
-                    TypeError::new(format!("Constant `{name}` not found"), expr.span)
-                })
-            }
+            hir::ExprKind::Ident(name) => match self.lookup(name) {
+                Some(ScopeObject::Const(ConstDecl::Resolved(_, value))) => Ok(value.clone()),
+                _ => Err(TypeError::new(
+                    format!("Constant `{name}` not found"),
+                    expr.span,
+                )),
+            },
             hir::ExprKind::Unary(hir::UnaryOp::Neg, operand) => {
                 match self.eval_const_expr(operand)? {
                     hir::Literal::Integer(n) => Ok(hir::Literal::Integer(-n)),
@@ -151,124 +151,281 @@ impl<'a> TypeChecker<'a> {
     }
 
     pub fn check_program(&mut self, prog: &ast::Program) -> Result<hir::Program, TypeError> {
-        self.scan_types(prog)?;
-        self.resolve_signatures(prog)?;
+        self.scan_declarations(prog)?;
+        self.resolve_declarations(prog)?;
         self.check_items(prog)
     }
 
-    fn scan_types(&mut self, prog: &ast::Program) -> Result<(), TypeError> {
+    fn scan_declarations(&mut self, prog: &ast::Program) -> Result<(), TypeError> {
         for item in &prog.items {
-            if let ast::Item::Struct(def) = item {
-                let incomplete = Incomplete {
-                    def: def.clone(),
-                    in_progress: Cell::new(false),
-                };
-                if self
-                    .global_scope()
-                    .insert(def.name.clone(), ScopeObject::Scan(incomplete))
-                    .is_some()
-                {
-                    return Err(TypeError::new(
-                        format!("name `{}` already defined", def.name),
-                        def.span,
-                    ));
-                }
+            let (name, obj, span) = match item {
+                ast::Item::Const(def) => (
+                    &def.name,
+                    ScopeObject::Const(ConstDecl::Unresolved(Rc::new(def.clone()))),
+                    def.span,
+                ),
+                ast::Item::Static(def) => (
+                    &def.name,
+                    ScopeObject::Static(StaticDecl::Unresolved(Rc::new(def.clone()))),
+                    def.span,
+                ),
+                ast::Item::Function(def) => (
+                    &def.name,
+                    ScopeObject::Function(FunctionDecl::Unresolved(Rc::new(def.clone()))),
+                    def.span,
+                ),
+                ast::Item::Struct(def) => (
+                    &def.name,
+                    ScopeObject::Struct(StructDecl::Unresolved(Rc::new(def.clone()))),
+                    def.span,
+                ),
+                ast::Item::Extern(_) => continue,
+            };
+
+            if self.global_scope().insert(name.clone(), obj).is_some() {
+                return Err(TypeError::new(
+                    format!("name `{name}` already defined"),
+                    span,
+                ));
             }
         }
 
         Ok(())
     }
 
-    fn resolve_signatures(&mut self, prog: &ast::Program) -> Result<(), TypeError> {
+    fn resolve_declarations(&mut self, prog: &ast::Program) -> Result<(), TypeError> {
         for item in &prog.items {
             match item {
-                ast::Item::Const(def) => {
-                    let type_id = self.resolve_type(&def.type_ann)?;
+                ast::Item::Extern(ast::ExternItem::Static(decl)) => {
+                    let type_id = self.lower_type(&decl.type_ann)?;
                     if self
                         .global_scope()
-                        .insert(def.name.clone(), ScopeObject::Const(type_id))
+                        .insert(
+                            decl.name.clone(),
+                            ScopeObject::Static(StaticDecl::Resolved(
+                                type_id,
+                                hir::Literal::Integer(0),
+                            )),
+                        )
                         .is_some()
                     {
                         return Err(TypeError::new(
-                            format!("name `{}` already defined", def.name),
-                            def.span,
+                            format!("name `{}` already defined", decl.name),
+                            decl.span,
                         ));
                     }
                 }
-                ast::Item::Static(def) => {
-                    let type_id = self.resolve_type(&def.type_ann)?;
-                    if self
-                        .global_scope()
-                        .insert(def.name.clone(), ScopeObject::Static(type_id))
-                        .is_some()
-                    {
-                        return Err(TypeError::new(
-                            format!("name `{}` already defined", def.name),
-                            def.span,
-                        ));
-                    }
-                }
-                ast::Item::Function(def) => {
-                    let params = def
+                ast::Item::Extern(ast::ExternItem::Function(decl)) => {
+                    let params = decl
                         .params
                         .iter()
-                        .map(|param| self.resolve_type(&param.type_ann))
+                        .map(|p| self.lower_type(&p.type_ann))
                         .collect::<Result<Vec<_>, _>>()?;
-                    let return_ty = self.resolve_type(&def.return_type_ann)?;
-
+                    let return_ty = self.lower_type(&decl.return_type_ann)?;
                     if self
                         .global_scope()
-                        .insert(def.name.clone(), ScopeObject::Function(params, return_ty))
+                        .insert(
+                            decl.name.clone(),
+                            ScopeObject::Function(FunctionDecl::Resolved(params, return_ty)),
+                        )
                         .is_some()
                     {
                         return Err(TypeError::new(
-                            format!("name `{}` already defined", def.name),
-                            def.span,
+                            format!("name `{}` already defined", decl.name),
+                            decl.span,
                         ));
                     }
                 }
-                ast::Item::Extern(extern_item) => match extern_item {
-                    ast::ExternItem::Static(decl) => {
-                        let type_id = self.resolve_type(&decl.type_ann)?;
-                        if self
-                            .global_scope()
-                            .insert(decl.name.clone(), ScopeObject::Static(type_id))
-                            .is_some()
-                        {
-                            return Err(TypeError::new(
-                                format!("name `{}` already defined", decl.name),
-                                decl.span,
-                            ));
-                        }
-                    }
-                    ast::ExternItem::Function(decl) => {
-                        let params = decl
-                            .params
-                            .iter()
-                            .map(|param| self.resolve_type(&param.type_ann))
-                            .collect::<Result<Vec<_>, _>>()?;
-                        let return_ty = self.resolve_type(&decl.return_type_ann)?;
-
-                        if self
-                            .global_scope()
-                            .insert(decl.name.clone(), ScopeObject::Function(params, return_ty))
-                            .is_some()
-                        {
-                            return Err(TypeError::new(
-                                format!("name `{}` already defined", decl.name),
-                                decl.span,
-                            ));
-                        }
-                    }
-                },
-                ast::Item::Struct(def) => {
-                    if matches!(self.lookup(&def.name), Some(ScopeObject::Scan(_))) {
-                        self.register_struct_type(def)?;
-                    }
-                }
+                _ => {}
             }
         }
+
+        let names_to_resolve: Vec<String> = self
+            .global_scope()
+            .iter()
+            .filter_map(|(name, obj)| match obj {
+                ScopeObject::Const(ConstDecl::Unresolved(_))
+                | ScopeObject::Static(StaticDecl::Unresolved(_))
+                | ScopeObject::Function(FunctionDecl::Unresolved(_))
+                | ScopeObject::Struct(StructDecl::Unresolved(_)) => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
+
+        for name in names_to_resolve {
+            self.resolve_declaration(&name)?;
+        }
+
         Ok(())
+    }
+
+    fn resolve_declaration(&mut self, name: &str) -> Result<(), TypeError> {
+        match self.lookup(name).cloned() {
+            Some(ScopeObject::Const(decl)) => self.resolve_const_decl(name, decl),
+            Some(ScopeObject::Static(decl)) => self.resolve_static_decl(name, decl),
+            Some(ScopeObject::Function(decl)) => self.resolve_function_decl(name, decl),
+            Some(ScopeObject::Struct(decl)) => self.resolve_struct_decl(name, decl),
+            _ => Ok(()),
+        }
+    }
+
+    fn resolve_const_decl(&mut self, name: &str, decl: ConstDecl) -> Result<(), TypeError> {
+        match decl {
+            ConstDecl::Unresolved(def) => {
+                self.global_scope().insert(
+                    name.to_string(),
+                    ScopeObject::Const(ConstDecl::Resolving(def.clone())),
+                );
+
+                let type_id = self.lower_type(&def.type_ann)?;
+                let typed_init = self.check_expression(&def.init)?;
+
+                if typed_init.type_id != type_id {
+                    return Err(TypeError::new(
+                        format!(
+                            "type mismatch in const `{}`: expected `{:?}`, found `{:?}`",
+                            def.name, type_id, typed_init.type_id
+                        ),
+                        def.init.span,
+                    ));
+                }
+
+                let value = self.eval_const_expr(&typed_init)?;
+
+                self.global_scope().insert(
+                    def.name.clone(),
+                    ScopeObject::Const(ConstDecl::Resolved(type_id, value)),
+                );
+
+                Ok(())
+            }
+            ConstDecl::Resolving(def) => Err(TypeError::new(
+                format!("Circular dependency for const `{name}`"),
+                def.span,
+            )),
+            ConstDecl::Resolved(_, _) => Ok(()),
+        }
+    }
+
+    fn resolve_static_decl(&mut self, name: &str, decl: StaticDecl) -> Result<(), TypeError> {
+        match decl {
+            StaticDecl::Unresolved(def) => {
+                self.global_scope().insert(
+                    name.to_string(),
+                    ScopeObject::Static(StaticDecl::Resolving(def.clone())),
+                );
+
+                let type_id = self.lower_type(&def.type_ann)?;
+                let typed_init = self.check_expression(&def.init)?;
+
+                if typed_init.type_id != type_id {
+                    return Err(TypeError::new(
+                        format!(
+                            "type mismatch in static `{}`: expected `{:?}`, found `{:?}`",
+                            def.name, type_id, typed_init.type_id
+                        ),
+                        def.init.span,
+                    ));
+                }
+
+                let value = self.eval_const_expr(&typed_init)?;
+
+                self.global_scope().insert(
+                    def.name.clone(),
+                    ScopeObject::Static(StaticDecl::Resolved(type_id, value)),
+                );
+
+                Ok(())
+            }
+            StaticDecl::Resolving(def) => Err(TypeError::new(
+                format!("Circular dependency for static `{name}`"),
+                def.span,
+            )),
+            StaticDecl::Resolved(_, _) => Ok(()),
+        }
+    }
+
+    fn resolve_function_decl(&mut self, name: &str, decl: FunctionDecl) -> Result<(), TypeError> {
+        match decl {
+            FunctionDecl::Unresolved(def) => {
+                self.global_scope().insert(
+                    name.to_string(),
+                    ScopeObject::Function(FunctionDecl::Resolving(def.clone())),
+                );
+
+                let params = def
+                    .params
+                    .iter()
+                    .map(|p| self.lower_type(&p.type_ann))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let return_ty = self.lower_type(&def.return_type_ann)?;
+
+                self.global_scope().insert(
+                    def.name.clone(),
+                    ScopeObject::Function(FunctionDecl::Resolved(params, return_ty)),
+                );
+
+                Ok(())
+            }
+            FunctionDecl::Resolving(def) => Err(TypeError::new(
+                format!("Circular dependency for function `{name}`"),
+                def.span,
+            )),
+            FunctionDecl::Resolved(_, _) => Ok(()),
+        }
+    }
+
+    fn resolve_struct_decl(&mut self, name: &str, decl: StructDecl) -> Result<(), TypeError> {
+        match decl {
+            StructDecl::Unresolved(def) => {
+                self.global_scope().insert(
+                    name.to_string(),
+                    ScopeObject::Struct(StructDecl::Resolving(def.clone())),
+                );
+
+                let mut field_names = HashSet::new();
+                for field in &def.fields {
+                    if !field_names.insert(&field.name) {
+                        return Err(TypeError::new(
+                            format!("duplicate field `{}` in struct `{}`", field.name, def.name),
+                            field.span,
+                        ));
+                    }
+                }
+
+                let (field_layouts, size, align) = self.struct_layout(&def)?;
+
+                let struct_type_id = self.ctx.mk_empty_struct();
+
+                self.global_scope().insert(
+                    def.name.clone(),
+                    ScopeObject::Struct(StructDecl::Resolved(struct_type_id)),
+                );
+
+                let fields = def
+                    .fields
+                    .iter()
+                    .zip(field_layouts.iter())
+                    .map(|(field, (name, offset))| {
+                        let type_id = self.lower_type(&field.type_ann)?;
+                        Ok(Field {
+                            name: name.clone(),
+                            type_id,
+                            offset: *offset,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, TypeError>>()?;
+
+                self.ctx.set_struct(struct_type_id, fields, size, align);
+
+                Ok(())
+            }
+            StructDecl::Resolving(def) => Err(TypeError::new(
+                format!("Circular dependency for struct `{name}`"),
+                def.span,
+            )),
+            StructDecl::Resolved(_) => Ok(()),
+        }
     }
 
     fn check_items(&mut self, prog: &ast::Program) -> Result<hir::Program, TypeError> {
@@ -276,52 +433,42 @@ impl<'a> TypeChecker<'a> {
         for item in &prog.items {
             let typed_item = match item {
                 ast::Item::Const(def) => {
-                    let declared_type_id = self.resolve_type(&def.type_ann)?;
-                    let typed_init = self.check_expression(&def.init)?;
-
-                    if typed_init.type_id != declared_type_id {
-                        return Err(TypeError::new(
-                            format!(
-                                "type mismatch in const `{}`: expected `{:?}`, found `{:?}`",
-                                def.name, declared_type_id, typed_init.type_id
-                            ),
-                            def.init.span,
-                        ));
-                    }
-
-                    let evaluated_init = self.eval_const_expr(&typed_init)?;
-                    self.constants
-                        .insert(def.name.clone(), evaluated_init.clone());
+                    let (type_id, value) = match self.lookup(&def.name) {
+                        Some(ScopeObject::Const(ConstDecl::Resolved(type_id, value))) => {
+                            (*type_id, value.clone())
+                        }
+                        _ => {
+                            return Err(TypeError::new(
+                                format!("const `{}` not resolved", def.name),
+                                def.span,
+                            ));
+                        }
+                    };
 
                     hir::Item::Const(hir::ConstDef {
                         name: def.name.clone(),
-                        type_id: declared_type_id,
-                        init: evaluated_init,
+                        type_id,
+                        init: value,
                         span: def.span,
                     })
                 }
                 ast::Item::Static(def) => {
-                    let declared_type_id = self.resolve_type(&def.type_ann)?;
-                    let typed_init = self.check_expression(&def.init)?;
-
-                    if typed_init.type_id != declared_type_id {
-                        return Err(TypeError::new(
-                            format!(
-                                "type mismatch in static `{}`: expected `{:?}`, found `{:?}`",
-                                def.name, declared_type_id, typed_init.type_id
-                            ),
-                            def.init.span,
-                        ));
-                    }
-
-                    let evaluated_init = self.eval_const_expr(&typed_init)?;
-                    self.constants
-                        .insert(def.name.clone(), evaluated_init.clone());
+                    let (type_id, value) = match self.lookup(&def.name) {
+                        Some(ScopeObject::Static(StaticDecl::Resolved(type_id, value))) => {
+                            (*type_id, value.clone())
+                        }
+                        _ => {
+                            return Err(TypeError::new(
+                                format!("static `{}` not resolved", def.name),
+                                def.span,
+                            ));
+                        }
+                    };
 
                     hir::Item::Static(hir::StaticDef {
                         name: def.name.clone(),
-                        type_id: declared_type_id,
-                        init: evaluated_init,
+                        type_id,
+                        init: value,
                         span: def.span,
                     })
                 }
@@ -332,7 +479,7 @@ impl<'a> TypeChecker<'a> {
                 ast::Item::Extern(extern_item) => {
                     let hir_extern = match extern_item {
                         ast::ExternItem::Static(decl) => {
-                            let type_id = self.resolve_type(&decl.type_ann)?;
+                            let type_id = self.lower_type(&decl.type_ann)?;
                             hir::ExternItem::Static(hir::ExternStaticDecl {
                                 name: decl.name.clone(),
                                 type_id,
@@ -344,7 +491,7 @@ impl<'a> TypeChecker<'a> {
                                 .params
                                 .iter()
                                 .map(|p| {
-                                    let type_id = self.resolve_type(&p.type_ann)?;
+                                    let type_id = self.lower_type(&p.type_ann)?;
                                     Ok(hir::Param {
                                         name: p.name.clone(),
                                         type_id,
@@ -352,7 +499,7 @@ impl<'a> TypeChecker<'a> {
                                     })
                                 })
                                 .collect::<Result<Vec<_>, _>>()?;
-                            let return_type_id = self.resolve_type(&decl.return_type_ann)?;
+                            let return_type_id = self.lower_type(&decl.return_type_ann)?;
                             hir::ExternItem::Function(hir::ExternFunctionDecl {
                                 name: decl.name.clone(),
                                 params,
@@ -417,42 +564,34 @@ impl<'a> TypeChecker<'a> {
                 Ok((elem_size * len, elem_align))
             }
 
-            ast::TypeAnnKind::Named(name) => match self.lookup(name) {
-                Some(ScopeObject::Type(type_id)) => {
-                    let t = self.ctx.get(*type_id);
-                    Ok((t.size, t.align))
+            ast::TypeAnnKind::Named(name) => {
+                if matches!(
+                    self.lookup(name),
+                    Some(
+                        ScopeObject::Const(ConstDecl::Unresolved(_))
+                            | ScopeObject::Static(StaticDecl::Unresolved(_))
+                            | ScopeObject::Function(FunctionDecl::Unresolved(_))
+                            | ScopeObject::Struct(StructDecl::Unresolved(_))
+                    )
+                ) {
+                    self.resolve_declaration(name)?;
                 }
-                Some(ScopeObject::Scan(incomplete)) => {
-                    if incomplete.in_progress.get() {
-                        return Err(TypeError::new(
-                            format!("circular dependency for struct `{name}`"),
-                            type_ann.span,
-                        ));
+
+                match self.lookup(name) {
+                    Some(ScopeObject::Struct(StructDecl::Resolved(type_id))) => {
+                        let t = self.ctx.get(*type_id);
+                        Ok((t.size, t.align))
                     }
-
-                    incomplete.in_progress.set(true);
-
-                    let def = incomplete.def.clone();
-                    let result = self.struct_layout(&def);
-
-                    let Some(ScopeObject::Scan(incomplete)) = self.lookup(name) else {
-                        unreachable!()
-                    };
-                    incomplete.in_progress.set(false);
-
-                    let (_, size, align) = result?;
-
-                    Ok((size, align))
+                    _ => Err(TypeError::new(
+                        format!("undefined type `{name}`"),
+                        type_ann.span,
+                    )),
                 }
-                _ => Err(TypeError::new(
-                    format!("undefined type `{name}`"),
-                    type_ann.span,
-                )),
-            },
+            }
         }
     }
 
-    fn resolve_type(&mut self, type_ann: &ast::TypeAnn) -> Result<TypeId, TypeError> {
+    fn lower_type(&mut self, type_ann: &ast::TypeAnn) -> Result<TypeId, TypeError> {
         match &type_ann.kind {
             ast::TypeAnnKind::I64 => Ok(TypeId::I64),
             ast::TypeAnnKind::U8 => Ok(TypeId::U8),
@@ -461,12 +600,12 @@ impl<'a> TypeChecker<'a> {
             ast::TypeAnnKind::Never => Ok(TypeId::NEVER),
 
             ast::TypeAnnKind::Pointer(inner) => {
-                let inner_type_id = self.resolve_type(inner)?;
+                let inner_type_id = self.lower_type(inner)?;
                 Ok(self.ctx.mk_pointer(inner_type_id))
             }
 
             ast::TypeAnnKind::Array(elem, len_expr) => {
-                let elem_type_id = self.resolve_type(elem)?;
+                let elem_type_id = self.lower_type(elem)?;
 
                 let typed_len = self.check_expression(len_expr)?;
 
@@ -501,21 +640,31 @@ impl<'a> TypeChecker<'a> {
             }
 
             ast::TypeAnnKind::Slice(elem) => {
-                let elem_type_id = self.resolve_type(elem)?;
+                let elem_type_id = self.lower_type(elem)?;
                 Ok(self.ctx.mk_slice(elem_type_id))
             }
 
-            ast::TypeAnnKind::Named(name) => match self.lookup(name) {
-                Some(ScopeObject::Type(type_id)) => Ok(*type_id),
-                Some(ScopeObject::Scan(incomplete)) => {
-                    let def = incomplete.def.clone();
-                    self.register_struct_type(&def)
+            ast::TypeAnnKind::Named(name) => {
+                if matches!(
+                    self.lookup(name),
+                    Some(
+                        ScopeObject::Const(ConstDecl::Unresolved(_))
+                            | ScopeObject::Static(StaticDecl::Unresolved(_))
+                            | ScopeObject::Function(FunctionDecl::Unresolved(_))
+                            | ScopeObject::Struct(StructDecl::Unresolved(_))
+                    )
+                ) {
+                    self.resolve_declaration(name)?;
                 }
-                _ => Err(TypeError::new(
-                    format!("undefined type `{name}`"),
-                    type_ann.span,
-                )),
-            },
+
+                match self.lookup(name) {
+                    Some(ScopeObject::Struct(StructDecl::Resolved(type_id))) => Ok(*type_id),
+                    _ => Err(TypeError::new(
+                        format!("undefined type `{name}`"),
+                        type_ann.span,
+                    )),
+                }
+            }
         }
     }
 
@@ -546,60 +695,14 @@ impl<'a> TypeChecker<'a> {
         Ok((field_layouts, size, max_align))
     }
 
-    fn register_struct_type(&mut self, def: &ast::StructDef) -> Result<TypeId, TypeError> {
-        let mut field_names = HashSet::new();
-        for field in &def.fields {
-            if !field_names.insert(&field.name) {
-                return Err(TypeError::new(
-                    format!("duplicate field `{}` in struct `{}`", field.name, def.name),
-                    field.span,
-                ));
-            }
-        }
-
-        let (field_layouts, size, align) = self.struct_layout(def)?;
-
-        let struct_type_id = self.ctx.mk_empty_struct();
-        match self
-            .global_scope()
-            .insert(def.name.clone(), ScopeObject::Type(struct_type_id))
-        {
-            Some(ScopeObject::Scan(_)) | None => {}
-            Some(_) => {
-                return Err(TypeError::new(
-                    format!("name `{}` already defined", def.name),
-                    def.span,
-                ));
-            }
-        }
-
-        let fields = def
-            .fields
-            .iter()
-            .zip(field_layouts.iter())
-            .map(|(field, (name, offset))| {
-                let type_id = self.resolve_type(&field.type_ann)?;
-                Ok(Field {
-                    name: name.clone(),
-                    type_id,
-                    offset: *offset,
-                })
-            })
-            .collect::<Result<Vec<_>, TypeError>>()?;
-
-        self.ctx.set_struct(struct_type_id, fields, size, align);
-
-        Ok(struct_type_id)
-    }
-
     fn check_function(&mut self, func: &ast::FunctionDef) -> Result<hir::FunctionDef, TypeError> {
-        let return_type_id = self.resolve_type(&func.return_type_ann)?;
+        let return_type_id = self.lower_type(&func.return_type_ann)?;
         self.current_fn_return_type_id = Some(return_type_id);
         self.push_scope();
 
         let mut hir_params = Vec::new();
         for param in &func.params {
-            let param_type_id = self.resolve_type(&param.type_ann)?;
+            let param_type_id = self.lower_type(&param.type_ann)?;
             if self
                 .current_scope()
                 .insert(param.name.clone(), ScopeObject::Var(param_type_id))
@@ -708,7 +811,7 @@ impl<'a> TypeChecker<'a> {
     fn check_statement(&mut self, stmt: &ast::Stmt) -> Result<hir::Stmt, TypeError> {
         let kind = match &stmt.kind {
             ast::StmtKind::Let(let_stmt) => {
-                let declared_type_id = self.resolve_type(&let_stmt.type_ann)?;
+                let declared_type_id = self.lower_type(&let_stmt.type_ann)?;
                 let typed_init = self.check_expression(&let_stmt.init)?;
 
                 if typed_init.type_id != declared_type_id {
@@ -791,9 +894,9 @@ impl<'a> TypeChecker<'a> {
         };
 
         let (ty, kind) = match lit {
-            ast::Literal::Integer(n, suffix_opt) => {
-                let type_id = match suffix_opt.as_deref() {
-                    Some("i64") => TypeId::I64,
+            ast::Literal::Integer(n, suffix) => {
+                let type_id = match suffix.as_deref() {
+                    Some("i64") | None => TypeId::I64,
                     Some("u8") => {
                         if *n < 0 || *n > 255 {
                             return Err(TypeError::new(
@@ -811,7 +914,6 @@ impl<'a> TypeChecker<'a> {
                             expr.span,
                         ));
                     }
-                    None => TypeId::I64,
                 };
                 (type_id, hir::ExprKind::Literal(hir::Literal::Integer(*n)))
             }
@@ -839,7 +941,7 @@ impl<'a> TypeChecker<'a> {
         };
 
         let struct_type_id = match self.lookup(&struct_expr.name) {
-            Some(ScopeObject::Type(type_id)) => *type_id,
+            Some(ScopeObject::Struct(StructDecl::Resolved(type_id))) => *type_id,
             _ => {
                 return Err(TypeError::new(
                     format!("undefined struct `{}`", struct_expr.name),
@@ -923,12 +1025,22 @@ impl<'a> TypeChecker<'a> {
             unreachable!()
         };
 
-        let type_id = match self.lookup(name) {
+        if matches!(
+            self.lookup(name),
             Some(
-                ScopeObject::Var(type_id)
-                | ScopeObject::Const(type_id)
-                | ScopeObject::Static(type_id),
-            ) => *type_id,
+                ScopeObject::Const(ConstDecl::Unresolved(_))
+                    | ScopeObject::Static(StaticDecl::Unresolved(_))
+                    | ScopeObject::Function(FunctionDecl::Unresolved(_))
+                    | ScopeObject::Struct(StructDecl::Unresolved(_))
+            )
+        ) {
+            self.resolve_declaration(name)?;
+        }
+
+        let type_id = match self.lookup(name) {
+            Some(ScopeObject::Var(type_id)) => *type_id,
+            Some(ScopeObject::Const(ConstDecl::Resolved(type_id, _))) => *type_id,
+            Some(ScopeObject::Static(StaticDecl::Resolved(type_id, _))) => *type_id,
             _ => {
                 return Err(TypeError::new(
                     format!("undefined variable `{name}`"),
@@ -1003,7 +1115,7 @@ impl<'a> TypeChecker<'a> {
 
         let evaluated_count = self.eval_const_expr(&typed_count)?;
 
-        if let hir::ExprKind::Literal(hir::Literal::Integer(n)) = typed_count.kind {
+        if let hir::Literal::Integer(n) = evaluated_count {
             Ok(hir::Expr {
                 kind: hir::ExprKind::Repeat(Box::new(typed_elem.clone()), evaluated_count),
                 type_id: self.ctx.mk_array(typed_elem.type_id, n as usize),
@@ -1093,8 +1205,22 @@ impl<'a> TypeChecker<'a> {
             ));
         };
 
+        if matches!(
+            self.lookup(&callee_name),
+            Some(
+                ScopeObject::Const(ConstDecl::Unresolved(_))
+                    | ScopeObject::Static(StaticDecl::Unresolved(_))
+                    | ScopeObject::Function(FunctionDecl::Unresolved(_))
+                    | ScopeObject::Struct(StructDecl::Unresolved(_))
+            )
+        ) {
+            self.resolve_declaration(&callee_name)?;
+        }
+
         let (params, return_ty) = match self.lookup(&callee_name) {
-            Some(ScopeObject::Function(params, return_ty)) => (params.clone(), *return_ty),
+            Some(ScopeObject::Function(FunctionDecl::Resolved(params, return_ty))) => {
+                (params.clone(), *return_ty)
+            }
             _ => {
                 return Err(TypeError::new(
                     format!("undefined function `{callee_name}`"),
@@ -1176,7 +1302,7 @@ impl<'a> TypeChecker<'a> {
             },
             hir::UnaryOp::Ref => {
                 if let hir::ExprKind::Ident(name) = &typed_operand.kind
-                    && matches!(self.lookup(name), Some(ScopeObject::Const { .. }))
+                    && matches!(self.lookup(name), Some(ScopeObject::Const(_)))
                 {
                     return Err(TypeError::new(
                         format!("cannot take address of constant `{name}`"),
