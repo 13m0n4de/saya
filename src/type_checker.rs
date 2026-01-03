@@ -7,7 +7,7 @@ use std::{
 
 use crate::{
     ast, hir,
-    scope::{ConstDecl, FunctionDecl, Scope, ScopeObject, StaticDecl, StructDecl},
+    scope::{Const, Function, Scope, ScopeObject, Static, Struct},
     span::Span,
     types::{Field, TypeContext, TypeId, TypeKind},
 };
@@ -83,7 +83,7 @@ impl<'a> TypeChecker<'a> {
         match &expr.kind {
             hir::ExprKind::Literal(lit) => Ok(lit.clone()),
             hir::ExprKind::Ident(name) => match self.lookup(name) {
-                Some(ScopeObject::Const(ConstDecl::Resolved(_, value))) => Ok(value.clone()),
+                Some(ScopeObject::Const(Const::Resolved(_, value))) => Ok(value.clone()),
                 _ => Err(TypeError::new(
                     format!("Constant `{name}` not found"),
                     expr.span,
@@ -161,22 +161,22 @@ impl<'a> TypeChecker<'a> {
             let (name, obj, span) = match item {
                 ast::Item::Const(def) => (
                     &def.name,
-                    ScopeObject::Const(ConstDecl::Unresolved(Rc::new(def.clone()))),
+                    ScopeObject::Const(Const::Unresolved(Rc::new(def.clone()))),
                     def.span,
                 ),
                 ast::Item::Static(def) => (
                     &def.name,
-                    ScopeObject::Static(StaticDecl::Unresolved(Rc::new(def.clone()))),
+                    ScopeObject::Static(Static::Unresolved(Rc::new(def.clone()))),
                     def.span,
                 ),
                 ast::Item::Function(def) => (
                     &def.name,
-                    ScopeObject::Function(FunctionDecl::Unresolved(Rc::new(def.clone()))),
+                    ScopeObject::Function(Function::Unresolved(Rc::new(def.clone()))),
                     def.span,
                 ),
                 ast::Item::Struct(def) => (
                     &def.name,
-                    ScopeObject::Struct(StructDecl::Unresolved(Rc::new(def.clone()))),
+                    ScopeObject::Struct(Struct::Unresolved(Rc::new(def.clone()))),
                     def.span,
                 ),
                 ast::Item::Extern(_) => continue,
@@ -202,7 +202,7 @@ impl<'a> TypeChecker<'a> {
                         .global_scope()
                         .insert(
                             decl.name.clone(),
-                            ScopeObject::Static(StaticDecl::Resolved(
+                            ScopeObject::Static(Static::Resolved(
                                 type_id,
                                 hir::Literal::Integer(0),
                             )),
@@ -226,7 +226,7 @@ impl<'a> TypeChecker<'a> {
                         .global_scope()
                         .insert(
                             decl.name.clone(),
-                            ScopeObject::Function(FunctionDecl::Resolved(params, return_ty)),
+                            ScopeObject::Function(Function::Resolved(params, return_ty)),
                         )
                         .is_some()
                     {
@@ -244,10 +244,10 @@ impl<'a> TypeChecker<'a> {
             .global_scope()
             .iter()
             .filter_map(|(name, obj)| match obj {
-                ScopeObject::Const(ConstDecl::Unresolved(_))
-                | ScopeObject::Static(StaticDecl::Unresolved(_))
-                | ScopeObject::Function(FunctionDecl::Unresolved(_))
-                | ScopeObject::Struct(StructDecl::Unresolved(_)) => Some(name.clone()),
+                ScopeObject::Const(Const::Unresolved(_))
+                | ScopeObject::Static(Static::Unresolved(_))
+                | ScopeObject::Function(Function::Unresolved(_))
+                | ScopeObject::Struct(Struct::Unresolved(_)) => Some(name.clone()),
                 _ => None,
             })
             .collect();
@@ -269,12 +269,12 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    fn resolve_const_decl(&mut self, name: &str, decl: ConstDecl) -> Result<(), TypeError> {
+    fn resolve_const_decl(&mut self, name: &str, decl: Const) -> Result<(), TypeError> {
         match decl {
-            ConstDecl::Unresolved(def) => {
+            Const::Unresolved(def) => {
                 self.global_scope().insert(
                     name.to_string(),
-                    ScopeObject::Const(ConstDecl::Resolving(def.clone())),
+                    ScopeObject::Const(Const::Resolving(def.clone())),
                 );
 
                 let type_id = self.lower_type(&def.type_ann)?;
@@ -294,25 +294,25 @@ impl<'a> TypeChecker<'a> {
 
                 self.global_scope().insert(
                     def.name.clone(),
-                    ScopeObject::Const(ConstDecl::Resolved(type_id, value)),
+                    ScopeObject::Const(Const::Resolved(type_id, value)),
                 );
 
                 Ok(())
             }
-            ConstDecl::Resolving(def) => Err(TypeError::new(
+            Const::Resolving(def) => Err(TypeError::new(
                 format!("Circular dependency for const `{name}`"),
                 def.span,
             )),
-            ConstDecl::Resolved(_, _) => Ok(()),
+            Const::Resolved(_, _) => Ok(()),
         }
     }
 
-    fn resolve_static_decl(&mut self, name: &str, decl: StaticDecl) -> Result<(), TypeError> {
+    fn resolve_static_decl(&mut self, name: &str, decl: Static) -> Result<(), TypeError> {
         match decl {
-            StaticDecl::Unresolved(def) => {
+            Static::Unresolved(def) => {
                 self.global_scope().insert(
                     name.to_string(),
-                    ScopeObject::Static(StaticDecl::Resolving(def.clone())),
+                    ScopeObject::Static(Static::Resolving(def.clone())),
                 );
 
                 let type_id = self.lower_type(&def.type_ann)?;
@@ -332,25 +332,25 @@ impl<'a> TypeChecker<'a> {
 
                 self.global_scope().insert(
                     def.name.clone(),
-                    ScopeObject::Static(StaticDecl::Resolved(type_id, value)),
+                    ScopeObject::Static(Static::Resolved(type_id, value)),
                 );
 
                 Ok(())
             }
-            StaticDecl::Resolving(def) => Err(TypeError::new(
+            Static::Resolving(def) => Err(TypeError::new(
                 format!("Circular dependency for static `{name}`"),
                 def.span,
             )),
-            StaticDecl::Resolved(_, _) => Ok(()),
+            Static::Resolved(_, _) => Ok(()),
         }
     }
 
-    fn resolve_function_decl(&mut self, name: &str, decl: FunctionDecl) -> Result<(), TypeError> {
+    fn resolve_function_decl(&mut self, name: &str, decl: Function) -> Result<(), TypeError> {
         match decl {
-            FunctionDecl::Unresolved(def) => {
+            Function::Unresolved(def) => {
                 self.global_scope().insert(
                     name.to_string(),
-                    ScopeObject::Function(FunctionDecl::Resolving(def.clone())),
+                    ScopeObject::Function(Function::Resolving(def.clone())),
                 );
 
                 let params = def
@@ -362,25 +362,25 @@ impl<'a> TypeChecker<'a> {
 
                 self.global_scope().insert(
                     def.name.clone(),
-                    ScopeObject::Function(FunctionDecl::Resolved(params, return_ty)),
+                    ScopeObject::Function(Function::Resolved(params, return_ty)),
                 );
 
                 Ok(())
             }
-            FunctionDecl::Resolving(def) => Err(TypeError::new(
+            Function::Resolving(def) => Err(TypeError::new(
                 format!("Circular dependency for function `{name}`"),
                 def.span,
             )),
-            FunctionDecl::Resolved(_, _) => Ok(()),
+            Function::Resolved(_, _) => Ok(()),
         }
     }
 
-    fn resolve_struct_decl(&mut self, name: &str, decl: StructDecl) -> Result<(), TypeError> {
+    fn resolve_struct_decl(&mut self, name: &str, decl: Struct) -> Result<(), TypeError> {
         match decl {
-            StructDecl::Unresolved(def) => {
+            Struct::Unresolved(def) => {
                 self.global_scope().insert(
                     name.to_string(),
-                    ScopeObject::Struct(StructDecl::Resolving(def.clone())),
+                    ScopeObject::Struct(Struct::Resolving(def.clone())),
                 );
 
                 let mut field_names = HashSet::new();
@@ -399,7 +399,7 @@ impl<'a> TypeChecker<'a> {
 
                 self.global_scope().insert(
                     def.name.clone(),
-                    ScopeObject::Struct(StructDecl::Resolved(struct_type_id)),
+                    ScopeObject::Struct(Struct::Resolved(struct_type_id)),
                 );
 
                 let fields = def
@@ -420,11 +420,11 @@ impl<'a> TypeChecker<'a> {
 
                 Ok(())
             }
-            StructDecl::Resolving(def) => Err(TypeError::new(
+            Struct::Resolving(def) => Err(TypeError::new(
                 format!("Circular dependency for struct `{name}`"),
                 def.span,
             )),
-            StructDecl::Resolved(_) => Ok(()),
+            Struct::Resolved(_) => Ok(()),
         }
     }
 
@@ -434,7 +434,7 @@ impl<'a> TypeChecker<'a> {
             let typed_item = match item {
                 ast::Item::Const(def) => {
                     let (type_id, value) = match self.lookup(&def.name) {
-                        Some(ScopeObject::Const(ConstDecl::Resolved(type_id, value))) => {
+                        Some(ScopeObject::Const(Const::Resolved(type_id, value))) => {
                             (*type_id, value.clone())
                         }
                         _ => {
@@ -454,7 +454,7 @@ impl<'a> TypeChecker<'a> {
                 }
                 ast::Item::Static(def) => {
                     let (type_id, value) = match self.lookup(&def.name) {
-                        Some(ScopeObject::Static(StaticDecl::Resolved(type_id, value))) => {
+                        Some(ScopeObject::Static(Static::Resolved(type_id, value))) => {
                             (*type_id, value.clone())
                         }
                         _ => {
@@ -568,17 +568,17 @@ impl<'a> TypeChecker<'a> {
                 if matches!(
                     self.lookup(name),
                     Some(
-                        ScopeObject::Const(ConstDecl::Unresolved(_))
-                            | ScopeObject::Static(StaticDecl::Unresolved(_))
-                            | ScopeObject::Function(FunctionDecl::Unresolved(_))
-                            | ScopeObject::Struct(StructDecl::Unresolved(_))
+                        ScopeObject::Const(Const::Unresolved(_))
+                            | ScopeObject::Static(Static::Unresolved(_))
+                            | ScopeObject::Function(Function::Unresolved(_))
+                            | ScopeObject::Struct(Struct::Unresolved(_))
                     )
                 ) {
                     self.resolve_declaration(name)?;
                 }
 
                 match self.lookup(name) {
-                    Some(ScopeObject::Struct(StructDecl::Resolved(type_id))) => {
+                    Some(ScopeObject::Struct(Struct::Resolved(type_id))) => {
                         let t = self.ctx.get(*type_id);
                         Ok((t.size, t.align))
                     }
@@ -648,17 +648,17 @@ impl<'a> TypeChecker<'a> {
                 if matches!(
                     self.lookup(name),
                     Some(
-                        ScopeObject::Const(ConstDecl::Unresolved(_))
-                            | ScopeObject::Static(StaticDecl::Unresolved(_))
-                            | ScopeObject::Function(FunctionDecl::Unresolved(_))
-                            | ScopeObject::Struct(StructDecl::Unresolved(_))
+                        ScopeObject::Const(Const::Unresolved(_))
+                            | ScopeObject::Static(Static::Unresolved(_))
+                            | ScopeObject::Function(Function::Unresolved(_))
+                            | ScopeObject::Struct(Struct::Unresolved(_))
                     )
                 ) {
                     self.resolve_declaration(name)?;
                 }
 
                 match self.lookup(name) {
-                    Some(ScopeObject::Struct(StructDecl::Resolved(type_id))) => Ok(*type_id),
+                    Some(ScopeObject::Struct(Struct::Resolved(type_id))) => Ok(*type_id),
                     _ => Err(TypeError::new(
                         format!("undefined type `{name}`"),
                         type_ann.span,
@@ -941,7 +941,7 @@ impl<'a> TypeChecker<'a> {
         };
 
         let struct_type_id = match self.lookup(&struct_expr.name) {
-            Some(ScopeObject::Struct(StructDecl::Resolved(type_id))) => *type_id,
+            Some(ScopeObject::Struct(Struct::Resolved(type_id))) => *type_id,
             _ => {
                 return Err(TypeError::new(
                     format!("undefined struct `{}`", struct_expr.name),
@@ -1028,10 +1028,10 @@ impl<'a> TypeChecker<'a> {
         if matches!(
             self.lookup(name),
             Some(
-                ScopeObject::Const(ConstDecl::Unresolved(_))
-                    | ScopeObject::Static(StaticDecl::Unresolved(_))
-                    | ScopeObject::Function(FunctionDecl::Unresolved(_))
-                    | ScopeObject::Struct(StructDecl::Unresolved(_))
+                ScopeObject::Const(Const::Unresolved(_))
+                    | ScopeObject::Static(Static::Unresolved(_))
+                    | ScopeObject::Function(Function::Unresolved(_))
+                    | ScopeObject::Struct(Struct::Unresolved(_))
             )
         ) {
             self.resolve_declaration(name)?;
@@ -1039,8 +1039,8 @@ impl<'a> TypeChecker<'a> {
 
         let type_id = match self.lookup(name) {
             Some(ScopeObject::Var(type_id)) => *type_id,
-            Some(ScopeObject::Const(ConstDecl::Resolved(type_id, _))) => *type_id,
-            Some(ScopeObject::Static(StaticDecl::Resolved(type_id, _))) => *type_id,
+            Some(ScopeObject::Const(Const::Resolved(type_id, _))) => *type_id,
+            Some(ScopeObject::Static(Static::Resolved(type_id, _))) => *type_id,
             _ => {
                 return Err(TypeError::new(
                     format!("undefined variable `{name}`"),
@@ -1208,17 +1208,17 @@ impl<'a> TypeChecker<'a> {
         if matches!(
             self.lookup(&callee_name),
             Some(
-                ScopeObject::Const(ConstDecl::Unresolved(_))
-                    | ScopeObject::Static(StaticDecl::Unresolved(_))
-                    | ScopeObject::Function(FunctionDecl::Unresolved(_))
-                    | ScopeObject::Struct(StructDecl::Unresolved(_))
+                ScopeObject::Const(Const::Unresolved(_))
+                    | ScopeObject::Static(Static::Unresolved(_))
+                    | ScopeObject::Function(Function::Unresolved(_))
+                    | ScopeObject::Struct(Struct::Unresolved(_))
             )
         ) {
             self.resolve_declaration(&callee_name)?;
         }
 
         let (params, return_ty) = match self.lookup(&callee_name) {
-            Some(ScopeObject::Function(FunctionDecl::Resolved(params, return_ty))) => {
+            Some(ScopeObject::Function(Function::Resolved(params, return_ty))) => {
                 (params.clone(), *return_ty)
             }
             _ => {

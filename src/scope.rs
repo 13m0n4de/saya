@@ -5,35 +5,35 @@ use crate::{ast, hir, types::TypeId};
 #[derive(Debug, Clone)]
 pub enum ScopeObject {
     Var(TypeId),
-    Const(ConstDecl),
-    Static(StaticDecl),
-    Function(FunctionDecl),
-    Struct(StructDecl),
+    Const(Const),
+    Static(Static),
+    Function(Function),
+    Struct(Struct),
 }
 
 #[derive(Debug, Clone)]
-pub enum ConstDecl {
+pub enum Const {
     Unresolved(Rc<ast::ConstDef>),
     Resolving(Rc<ast::ConstDef>),
     Resolved(TypeId, hir::Literal),
 }
 
 #[derive(Debug, Clone)]
-pub enum StaticDecl {
+pub enum Static {
     Unresolved(Rc<ast::StaticDef>),
     Resolving(Rc<ast::StaticDef>),
     Resolved(TypeId, hir::Literal),
 }
 
 #[derive(Debug, Clone)]
-pub enum FunctionDecl {
+pub enum Function {
     Unresolved(Rc<ast::FunctionDef>),
     Resolving(Rc<ast::FunctionDef>),
     Resolved(Vec<TypeId>, TypeId),
 }
 
 #[derive(Debug, Clone)]
-pub enum StructDecl {
+pub enum Struct {
     Unresolved(Rc<ast::StructDef>),
     Resolving(Rc<ast::StructDef>),
     Resolved(TypeId),
