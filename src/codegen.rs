@@ -1464,6 +1464,13 @@ impl<'a> CodeGen<'a> {
             result_ty.clone(),
             qbe::Instr::Copy(right_val),
         );
+        let rhs_predecessor = qfunc
+            .blocks
+            .last()
+            .expect("ICE: blocks should not be empty")
+            .label
+            .clone();
+
         qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
 
         qfunc.add_block(false_label.clone());
@@ -1479,7 +1486,7 @@ impl<'a> CodeGen<'a> {
         Ok(self.assign_to_temp(
             qfunc,
             expr.type_id,
-            qbe::Instr::Phi(rhs_label, right_temp, false_label, false_temp),
+            qbe::Instr::Phi(rhs_predecessor, right_temp, false_label, false_temp),
         ))
     }
 
@@ -1514,6 +1521,13 @@ impl<'a> CodeGen<'a> {
             result_ty.clone(),
             qbe::Instr::Copy(right_val),
         );
+        let rhs_predecessor = qfunc
+            .blocks
+            .last()
+            .expect("ICE: blocks should not be empty")
+            .label
+            .clone();
+
         qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
 
         qfunc.add_block(true_label.clone());
@@ -1529,7 +1543,7 @@ impl<'a> CodeGen<'a> {
         Ok(self.assign_to_temp(
             qfunc,
             expr.type_id,
-            qbe::Instr::Phi(rhs_label, right_temp, true_label, true_temp),
+            qbe::Instr::Phi(rhs_predecessor, right_temp, true_label, true_temp),
         ))
     }
 }
