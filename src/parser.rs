@@ -347,6 +347,9 @@ impl<'a> Parser<'a> {
         fields.push(self.parse_field()?);
 
         while self.eat(TokenKind::Comma)? {
+            if self.current.kind == TokenKind::CloseBrace {
+                break;
+            }
             fields.push(self.parse_field()?);
         }
 
@@ -373,6 +376,9 @@ impl<'a> Parser<'a> {
         fields.push(self.parse_field_init()?);
 
         while self.eat(TokenKind::Comma)? {
+            if self.current.kind == TokenKind::CloseBrace {
+                break;
+            }
             fields.push(self.parse_field_init()?);
         }
 
@@ -436,6 +442,9 @@ impl<'a> Parser<'a> {
         params.push(self.parse_param()?);
 
         while self.eat(TokenKind::Comma)? {
+            if self.current.kind == TokenKind::CloseParen {
+                break;
+            }
             params.push(self.parse_param()?);
         }
 
@@ -793,6 +802,9 @@ impl<'a> Parser<'a> {
                         // [expr, expr, ...]
                         let mut elements = vec![first_expr];
                         while self.eat(TokenKind::Comma)? {
+                            if self.current.kind == TokenKind::CloseBracket {
+                                break;
+                            }
                             elements.push(self.parse_expression()?);
                         }
                         self.expect(TokenKind::CloseBracket)?;
@@ -826,6 +838,9 @@ impl<'a> Parser<'a> {
                 args.push(self.parse_expression()?);
                 if self.current.kind == TokenKind::Comma {
                     self.advance()?;
+                    if self.current.kind == TokenKind::CloseParen {
+                        break;
+                    }
                 } else {
                     break;
                 }
