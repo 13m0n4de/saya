@@ -10,12 +10,12 @@ const-def = "const" identifier ":" type-name "=" expression ";"
 static-def = "static" identifier ":" type-name "=" expression ";"
 
 struct-def = "struct" identifier "{" [field-list] "}"
-field-list = field *("," field)
+field-list = field *("," field) [","]
 field = identifier ":" type-name
 
 function-def = "fn" identifier "(" [param-list] ")" ["->" type-name] block
 
-param-list = param *("," param)
+param-list = param *("," param) [","]
 param = identifier ":" type-name
 
 type-name = slice-type / array-type / pointer-type / base-type / custom-type
@@ -70,7 +70,7 @@ postfix-op = field-op / index-op / call-op
 
 field-op = "." identifier
 index-op = "[" expression "]"
-call-op = "(" [expression *("," expression)] ")"
+call-op = "(" [expression *("," expression) [","]] ")"
 
 primary-expr = literal / struct-expr / identifier / array-expr
              / if-expr / while-expr / break-expr / continue-expr
@@ -82,7 +82,7 @@ break-expr = "break"
 continue-expr = "continue"
 
 array-expr = "[" [array-list / array-repeat] "]"
-array-list = expression *("," expression)
+array-list = expression *("," expression) [","]
 array-repeat = expression ";" expression
 
 literal = integer / cstring / string / bool
@@ -100,7 +100,7 @@ escape-sequence = "\" escape-code
 escape-code = DQUOTE / "\" / "n" / "r" / "t" / "0"
 
 struct-expr = identifier "{" [field-init-list] "}"
-field-init-list = field-init *("," field-init)
+field-init-list = field-init *("," field-init) [","]
 field-init = identifier ":" expression
 
 identifier = (ALPHA / "_") *(ALPHA / "_" / DIGIT)
