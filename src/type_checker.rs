@@ -1136,11 +1136,42 @@ impl<'a> TypeChecker<'a> {
 
         let typed_base = self.check_expression(base)?;
 
-        let TypeKind::Struct(fields) = &self.ctx.get(typed_base.type_id).kind else {
-            return Err(TypeError::new(
-                "cannot access field on non-struct type".to_string(),
-                base.span,
-            ));
+        let (final_base, struct_type_id) = match self.ctx.get(typed_base.type_id).kind {
+            TypeKind::Pointer(inner_type_id) => {
+                if !matches!(self.ctx.get(inner_type_id).kind, TypeKind::Struct(_)) {
+                    return Err(TypeError::new(
+                        format!(
+                            "cannot access field on pointer to non-struct type `{inner_type_id:?}`",
+                        ),
+                        base.span,
+                    ));
+                }
+
+                let deref_expr = hir::Expr {
+                    kind: hir::ExprKind::Unary(hir::UnaryOp::Deref, Box::new(typed_base)),
+                    type_id: inner_type_id,
+                    span: base.span,
+                };
+
+                (deref_expr, inner_type_id)
+            }
+            TypeKind::Struct(_) => {
+                let type_id = typed_base.type_id;
+                (typed_base, type_id)
+            }
+            _ => {
+                return Err(TypeError::new(
+                    format!(
+                        "cannot access field on non-struct type `{:?}`",
+                        typed_base.type_id
+                    ),
+                    base.span,
+                ));
+            }
+        };
+
+        let TypeKind::Struct(fields) = &self.ctx.get(struct_type_id).kind else {
+            unreachable!()
         };
 
         let field_info = fields
@@ -1151,7 +1182,7 @@ impl<'a> TypeChecker<'a> {
             })?;
 
         Ok(hir::Expr {
-            kind: hir::ExprKind::Field(Box::new(typed_base), field_name.clone()),
+            kind: hir::ExprKind::Field(Box::new(final_base), field_name.clone()),
             type_id: field_info.type_id,
             span: expr.span,
         })
@@ -1175,17 +1206,38 @@ impl<'a> TypeChecker<'a> {
             ));
         }
 
-        let (TypeKind::Slice(elem_type_id) | TypeKind::Array(elem_type_id, _)) =
-            self.ctx.get(typed_array.type_id).kind
-        else {
-            return Err(TypeError::new(
-                format!("cannot index into type `{:?}`", typed_array.type_id),
-                array.span,
-            ));
+        let (final_array, elem_type_id) = match self.ctx.get(typed_array.type_id).kind {
+            TypeKind::Pointer(inner_type_id) => match self.ctx.get(inner_type_id).kind {
+                TypeKind::Array(elem, _) | TypeKind::Slice(elem) => {
+                    let deref_expr = hir::Expr {
+                        kind: hir::ExprKind::Unary(hir::UnaryOp::Deref, Box::new(typed_array)),
+                        type_id: inner_type_id,
+                        span: array.span,
+                    };
+                    (deref_expr, elem)
+                }
+                _ => {
+                    return Err(TypeError::new(
+                        format!(
+                            "cannot index into pointer to non-indexable type `{inner_type_id:?}`",
+                        ),
+                        array.span,
+                    ));
+                }
+            },
+            TypeKind::Array(elem_type_id, _) | TypeKind::Slice(elem_type_id) => {
+                (typed_array, elem_type_id)
+            }
+            _ => {
+                return Err(TypeError::new(
+                    format!("cannot index into type `{:?}`", typed_array.type_id),
+                    array.span,
+                ));
+            }
         };
 
         Ok(hir::Expr {
-            kind: hir::ExprKind::Index(Box::new(typed_array.clone()), Box::new(typed_index)),
+            kind: hir::ExprKind::Index(Box::new(final_array), Box::new(typed_index)),
             type_id: elem_type_id,
             span: expr.span,
         })
