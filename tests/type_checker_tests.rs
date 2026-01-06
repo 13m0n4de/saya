@@ -196,6 +196,11 @@ fn test_array_repeat() {
 fn test_array_index() {
     let result = typecheck!("fn test() -> i64 { let arr: [i64; 3] = [1, 2, 3]; arr[0] }");
     assert!(result.is_ok());
+
+    let result = typecheck!(
+        "fn test() -> i64 { let arr: [i64; 3] = [1, 2, 3]; let ptr: *[i64; 3] = &arr; ptr[0] }"
+    );
+    assert!(result.is_ok());
 }
 
 #[test]
@@ -426,6 +431,9 @@ fn test_array_index_not_i64() {
 fn test_index_non_array() {
     let result = typecheck!("fn test() -> i64 { let x: i64 = 42; x[0] }");
     assert!(result.is_err());
+
+    let result = typecheck!("fn test() -> i64 { let x: i64 = 42; let ptr: *i64 = &x; ptr[0] }");
+    assert!(result.is_err());
 }
 
 #[test]
@@ -536,6 +544,14 @@ fn test_structs() {
 
     let result = typecheck!(
         r#"
+          struct Point { x: i64, y: i64 }
+          fn test() -> i64 { let p: Point = Point { x: 10, y: 20 }; let ptr: *Point = &p; ptr.x }
+          "#
+    );
+    assert!(result.is_ok());
+
+    let result = typecheck!(
+        r#"
           struct Node { value: i64, next: *Node }
           "#
     );
@@ -599,5 +615,8 @@ fn test_structs() {
     assert!(result.is_err());
 
     let result = typecheck!("fn test() -> i64 { let x: i64 = 42; x.field }");
+    assert!(result.is_err());
+
+    let result = typecheck!("fn test() -> i64 { let x: i64 = 42; let ptr: *i64 = &x; ptr.field }");
     assert!(result.is_err());
 }
