@@ -1198,10 +1198,7 @@ impl<'a> CodeGen<'a> {
             qbe::Linkage::private(),
             label.clone(),
             None,
-            vec![
-                (qbe::Type::Byte, qbe::DataItem::Str(s.to_string())),
-                (qbe::Type::Byte, qbe::DataItem::Const(0)),
-            ],
+            vec![(qbe::Type::Byte, qbe::DataItem::Str(s.to_string()))],
         ));
 
         label
@@ -1215,7 +1212,10 @@ impl<'a> CodeGen<'a> {
             qbe::Linkage::private(),
             label.clone(),
             None,
-            vec![(qbe::Type::Byte, qbe::DataItem::Str(s.to_string()))],
+            vec![
+                (qbe::Type::Byte, qbe::DataItem::Str(s.to_string())),
+                (qbe::Type::Byte, qbe::DataItem::Const(0)),
+            ],
         ));
 
         label
