@@ -1,6 +1,9 @@
 program = *item
 
-item = extern-item / const-def / static-def / struct-def / function-def
+item = use-item / extern-item / const-def / static-def / struct-def / function-def
+
+use-item = "use" path ";"
+path = identifier *( "::" identifier)
 
 extern-item = "extern" (extern-static / extern-fn)
 extern-static = "static" identifier ":" type-name ";"
