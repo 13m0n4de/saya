@@ -158,29 +158,29 @@ impl<'a> TypeChecker<'a> {
 
     fn scan_declarations(&mut self, prog: &ast::Program) -> Result<(), TypeError> {
         for item in &prog.items {
-            let (name, obj, span) = match item {
-                ast::Item::Use(_) => todo!(),
-                ast::Item::Const(def) => (
+            let (name, obj, span) = match &item.kind {
+                ast::ItemKind::Use(_) => todo!(),
+                ast::ItemKind::Const(def) => (
                     &def.name,
                     ScopeObject::Const(Const::Unresolved(Rc::new(def.clone()))),
                     def.span,
                 ),
-                ast::Item::Static(def) => (
+                ast::ItemKind::Static(def) => (
                     &def.name,
                     ScopeObject::Static(Static::Unresolved(Rc::new(def.clone()))),
                     def.span,
                 ),
-                ast::Item::Function(def) => (
+                ast::ItemKind::Function(def) => (
                     &def.name,
                     ScopeObject::Function(Function::Unresolved(Rc::new(def.clone()))),
                     def.span,
                 ),
-                ast::Item::Struct(def) => (
+                ast::ItemKind::Struct(def) => (
                     &def.name,
                     ScopeObject::Struct(Struct::Unresolved(Rc::new(def.clone()))),
                     def.span,
                 ),
-                ast::Item::Extern(_) => continue,
+                ast::ItemKind::Extern(_) => continue,
             };
 
             if self.global_scope().insert(name.clone(), obj).is_some() {
@@ -196,8 +196,8 @@ impl<'a> TypeChecker<'a> {
 
     fn resolve_declarations(&mut self, prog: &ast::Program) -> Result<(), TypeError> {
         for item in &prog.items {
-            match item {
-                ast::Item::Extern(ast::ExternItem::Static(decl)) => {
+            match &item.kind {
+                ast::ItemKind::Extern(ast::ExternItem::Static(decl)) => {
                     let type_id = self.lower_type(&decl.type_ann)?;
                     if self
                         .global_scope()
@@ -216,7 +216,7 @@ impl<'a> TypeChecker<'a> {
                         ));
                     }
                 }
-                ast::Item::Extern(ast::ExternItem::Function(decl)) => {
+                ast::ItemKind::Extern(ast::ExternItem::Function(decl)) => {
                     let params = decl
                         .params
                         .iter()
@@ -432,9 +432,9 @@ impl<'a> TypeChecker<'a> {
     fn check_items(&mut self, prog: &ast::Program) -> Result<hir::Program, TypeError> {
         let mut typed_items = Vec::new();
         for item in &prog.items {
-            let typed_item = match item {
-                ast::Item::Use(_) => todo!(),
-                ast::Item::Const(def) => {
+            let typed_item = match &item.kind {
+                ast::ItemKind::Use(_) => todo!(),
+                ast::ItemKind::Const(def) => {
                     let (type_id, value) = match self.lookup(&def.name) {
                         Some(ScopeObject::Const(Const::Resolved(type_id, value))) => {
                             (*type_id, value.clone())
@@ -454,7 +454,7 @@ impl<'a> TypeChecker<'a> {
                         span: def.span,
                     })
                 }
-                ast::Item::Static(def) => {
+                ast::ItemKind::Static(def) => {
                     let (type_id, value) = match self.lookup(&def.name) {
                         Some(ScopeObject::Static(Static::Resolved(type_id, value))) => {
                             (*type_id, value.clone())
@@ -474,11 +474,11 @@ impl<'a> TypeChecker<'a> {
                         span: def.span,
                     })
                 }
-                ast::Item::Function(def) => {
+                ast::ItemKind::Function(def) => {
                     let typed_func = self.check_function(def)?;
                     hir::Item::Function(typed_func)
                 }
-                ast::Item::Extern(extern_item) => {
+                ast::ItemKind::Extern(extern_item) => {
                     let hir_extern = match extern_item {
                         ast::ExternItem::Static(decl) => {
                             let type_id = self.lower_type(&decl.type_ann)?;
@@ -512,7 +512,7 @@ impl<'a> TypeChecker<'a> {
                     };
                     hir::Item::Extern(hir_extern)
                 }
-                ast::Item::Struct(_) => {
+                ast::ItemKind::Struct(_) => {
                     continue;
                 }
             };

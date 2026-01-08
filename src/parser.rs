@@ -175,13 +175,21 @@ impl<'a> Parser<'a> {
         let mut items = Vec::new();
 
         loop {
-            match self.current.kind {
-                TokenKind::Use => items.push(Item::Use(self.parse_use()?)),
-                TokenKind::Const => items.push(Item::Const(self.parse_const()?)),
-                TokenKind::Static => items.push(Item::Static(self.parse_static()?)),
-                TokenKind::Struct => items.push(Item::Struct(self.parse_struct()?)),
-                TokenKind::Fn => items.push(Item::Function(self.parse_function()?)),
-                TokenKind::Extern => items.push(self.parse_item_extern()?),
+            let span = self.current.span;
+
+            let vis = if self.eat(TokenKind::Pub)? {
+                Visibility::Public
+            } else {
+                Visibility::Private
+            };
+
+            let kind = match self.current.kind {
+                TokenKind::Use => ItemKind::Use(self.parse_use()?),
+                TokenKind::Const => ItemKind::Const(self.parse_const()?),
+                TokenKind::Static => ItemKind::Static(self.parse_static()?),
+                TokenKind::Struct => ItemKind::Struct(self.parse_struct()?),
+                TokenKind::Fn => ItemKind::Function(self.parse_function()?),
+                TokenKind::Extern => ItemKind::Extern(self.parse_extern_item()?),
                 TokenKind::Eof => break,
                 _ => {
                     return Err(ParseError::new(
@@ -189,7 +197,9 @@ impl<'a> Parser<'a> {
                         self.current.span,
                     ));
                 }
-            }
+            };
+
+            items.push(Item { vis, kind, span })
         }
 
         Ok(Program { items })
@@ -215,16 +225,12 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_item_extern(&mut self) -> Result<Item, ParseError> {
+    fn parse_extern_item(&mut self) -> Result<ExternItem, ParseError> {
         self.expect(TokenKind::Extern)?;
 
         match self.current.kind {
-            TokenKind::Fn => Ok(Item::Extern(ExternItem::Function(
-                self.parse_extern_function()?,
-            ))),
-            TokenKind::Static => Ok(Item::Extern(ExternItem::Static(
-                self.parse_extern_static()?,
-            ))),
+            TokenKind::Fn => Ok(ExternItem::Function(self.parse_extern_function()?)),
+            TokenKind::Static => Ok(ExternItem::Static(self.parse_extern_static()?)),
             _ => Err(ParseError::new(
                 "expected 'fn' or 'static' after 'extern'".to_string(),
                 self.current.span,

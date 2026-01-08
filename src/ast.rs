@@ -25,7 +25,20 @@ pub struct Program {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Item {
+pub struct Item {
+    pub vis: Visibility,
+    pub kind: ItemKind,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Visibility {
+    Public,
+    Private,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ItemKind {
     Use(UseTree),
     Const(ConstDef),
     Static(StaticDef),
