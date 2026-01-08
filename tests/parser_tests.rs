@@ -480,3 +480,28 @@ fn test_extern_declarations() {
         _ => panic!("Expected extern function"),
     }
 }
+
+#[test]
+fn test_use() {
+    let program = parse!(
+        r#"
+        use foo;
+        use foo::bar;
+        "#
+    )
+    .unwrap();
+
+    match &program.items[0] {
+        Item::Use(UseTree { path, .. }) => {
+            assert_eq!(path, &[String::from("foo")])
+        }
+        _ => panic!("Expected use tree"),
+    }
+
+    match &program.items[1] {
+        Item::Use(UseTree { path, .. }) => {
+            assert_eq!(path, &[String::from("foo"), String::from("bar")]);
+        }
+        _ => panic!("Expected use tree"),
+    }
+}
