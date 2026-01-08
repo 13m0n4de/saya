@@ -184,6 +184,7 @@ impl<'a> Parser<'a> {
             };
 
             let kind = match self.current.kind {
+                TokenKind::Mod => ItemKind::Mod(self.parse_mod()?),
                 TokenKind::Use => ItemKind::Use(self.parse_use()?),
                 TokenKind::Const => ItemKind::Const(self.parse_const()?),
                 TokenKind::Static => ItemKind::Static(self.parse_static()?),
@@ -203,6 +204,21 @@ impl<'a> Parser<'a> {
         }
 
         Ok(Program { items })
+    }
+
+    fn parse_mod(&mut self) -> Result<ModDecl, ParseError> {
+        let start_span = self.current.span;
+
+        self.expect(TokenKind::Mod)?;
+
+        let name = self.expect_identifier()?;
+
+        self.expect(TokenKind::Semi)?;
+
+        Ok(ModDecl {
+            name,
+            span: start_span,
+        })
     }
 
     fn parse_use(&mut self) -> Result<UseTree, ParseError> {
