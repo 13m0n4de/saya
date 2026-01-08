@@ -4,6 +4,8 @@ use crate::span::Span;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
+    Use,      // use
+    Pub,      // pub
     Fn,       // fn
     Extern,   // extern
     Return,   // return
@@ -54,8 +56,9 @@ pub enum TokenKind {
     CloseBracket, // ]
     Dot,          // .
     Comma,        // ,
-    Colon,        // :
     Semi,         // ;
+    Colon,        // :
+    PathSep,      // ::
     Arrow,        // ->
 
     Eof,
@@ -164,7 +167,12 @@ impl<'a> Lexer<'a> {
             }
             Some(':') => {
                 self.advance();
-                TokenKind::Colon
+                if self.current == Some(':') {
+                    self.advance();
+                    TokenKind::PathSep
+                } else {
+                    TokenKind::Colon
+                }
             }
             Some(';') => {
                 self.advance();
@@ -307,6 +315,8 @@ impl<'a> Lexer<'a> {
         let ident = self.read_raw_identifier();
 
         match ident.as_str() {
+            "pub" => TokenKind::Pub,
+            "use" => TokenKind::Use,
             "fn" => TokenKind::Fn,
             "extern" => TokenKind::Extern,
             "return" => TokenKind::Return,

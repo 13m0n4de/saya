@@ -26,11 +26,18 @@ pub struct Program {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Item {
+    Use(UseTree),
     Const(ConstDef),
     Static(StaticDef),
     Function(FunctionDef),
     Struct(StructDef),
     Extern(ExternItem),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct UseTree {
+    pub path: Vec<String>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]

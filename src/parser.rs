@@ -176,6 +176,7 @@ impl<'a> Parser<'a> {
 
         loop {
             match self.current.kind {
+                TokenKind::Use => items.push(Item::Use(self.parse_use()?)),
                 TokenKind::Const => items.push(Item::Const(self.parse_const()?)),
                 TokenKind::Static => items.push(Item::Static(self.parse_static()?)),
                 TokenKind::Struct => items.push(Item::Struct(self.parse_struct()?)),
@@ -192,6 +193,26 @@ impl<'a> Parser<'a> {
         }
 
         Ok(Program { items })
+    }
+
+    fn parse_use(&mut self) -> Result<UseTree, ParseError> {
+        let start_span = self.current.span;
+
+        self.expect(TokenKind::Use)?;
+
+        let mut path = vec![];
+        path.push(self.expect_identifier()?);
+
+        while self.eat(TokenKind::PathSep)? {
+            path.push(self.expect_identifier()?);
+        }
+
+        self.expect(TokenKind::Semi)?;
+
+        Ok(UseTree {
+            path,
+            span: start_span,
+        })
     }
 
     fn parse_item_extern(&mut self) -> Result<Item, ParseError> {
