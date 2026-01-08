@@ -505,3 +505,15 @@ fn test_use() {
         _ => panic!("Expected use tree"),
     }
 }
+
+#[test]
+fn test_mod() {
+    let program = parse!("mod foo;").unwrap();
+
+    match &program.items[0].kind {
+        ItemKind::Mod(ModDecl { name, .. }) => {
+            assert_eq!(name, "foo")
+        }
+        _ => panic!("Expected mod"),
+    }
+}
