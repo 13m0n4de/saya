@@ -1,6 +1,6 @@
 program = *item
 
-item = use-item / extern-item / const-def / static-def / struct-def / function-def
+item = ["pub"] (use-item / extern-item / const-def / static-def / struct-def / function-def)
 
 use-item = "use" path ";"
 path = identifier *( "::" identifier)
