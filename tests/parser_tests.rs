@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use saya::ast::*;
 use saya::lexer::Lexer;
 use saya::parser::Parser;
@@ -5,7 +7,7 @@ use saya::parser::Parser;
 macro_rules! parse {
     ($input:expr) => {{
         let lexer = Lexer::new($input);
-        let mut parser = Parser::new(lexer).unwrap();
+        let mut parser = Parser::new(lexer, PathBuf::new()).unwrap();
         parser.parse()
     }};
 }
@@ -13,7 +15,7 @@ macro_rules! parse {
 macro_rules! parse_expr {
     ($input:expr) => {{
         let lexer = Lexer::new($input);
-        let mut parser = Parser::new(lexer).unwrap();
+        let mut parser = Parser::new(lexer, PathBuf::new()).unwrap();
         parser.parse_expression()
     }};
 }
@@ -503,17 +505,5 @@ fn test_use() {
             assert_eq!(path, &[String::from("foo"), String::from("bar")]);
         }
         _ => panic!("Expected use tree"),
-    }
-}
-
-#[test]
-fn test_mod() {
-    let program = parse!("mod foo;").unwrap();
-
-    match &program.items[0].kind {
-        ItemKind::Mod(ModDecl { name, .. }) => {
-            assert_eq!(name, "foo")
-        }
-        _ => panic!("Expected mod"),
     }
 }

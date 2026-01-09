@@ -40,7 +40,7 @@ pub enum Visibility {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ItemKind {
     Use(UseTree),
-    Mod(ModDecl),
+    Mod(Mod),
     Const(ConstDef),
     Static(StaticDef),
     Function(FunctionDef),
@@ -55,8 +55,9 @@ pub struct UseTree {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ModDecl {
+pub struct Mod {
     pub name: String,
+    pub items: Vec<Item>,
     pub span: Span,
 }
 

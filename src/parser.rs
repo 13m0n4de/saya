@@ -1,4 +1,4 @@
-use std::{error::Error, fmt};
+use std::{error::Error, fmt, path::PathBuf};
 
 use crate::{
     ast::*,
@@ -41,22 +41,25 @@ impl Error for ParseError {}
 
 pub struct Parser<'a> {
     lexer: Lexer<'a>,
+    file: PathBuf,
     current: Token,
     no_struct_literal: bool,
 }
 
 impl<'a> Parser<'a> {
-    pub fn new(mut lexer: Lexer<'a>) -> Result<Self, ParseError> {
+    pub fn new(mut lexer: Lexer<'a>, file: PathBuf) -> Result<Self, ParseError> {
         let current = lexer.next_token()?;
         Ok(Self {
             lexer,
+            file,
             current,
             no_struct_literal: false,
         })
     }
 
     pub fn parse(&mut self) -> Result<Program, ParseError> {
-        self.parse_program()
+        let items = self.parse_items()?;
+        Ok(Program { items })
     }
 
     fn advance(&mut self) -> Result<(), ParseError> {
@@ -171,7 +174,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_program(&mut self) -> Result<Program, ParseError> {
+    fn parse_items(&mut self) -> Result<Vec<Item>, ParseError> {
         let mut items = Vec::new();
 
         loop {
@@ -203,22 +206,23 @@ impl<'a> Parser<'a> {
             items.push(Item { vis, kind, span })
         }
 
-        Ok(Program { items })
+        Ok(items)
     }
 
-    fn parse_mod(&mut self) -> Result<ModDecl, ParseError> {
-        let start_span = self.current.span;
+    fn parse_mod(&mut self) -> Result<Mod, ParseError> {
+        let span = self.current.span;
 
         self.expect(TokenKind::Mod)?;
-
         let name = self.expect_identifier()?;
-
         self.expect(TokenKind::Semi)?;
 
-        Ok(ModDecl {
-            name,
-            span: start_span,
-        })
+        let mod_path = self.file.with_file_name(format!("{name}.saya"));
+        let mod_source = std::fs::read_to_string(&mod_path).unwrap();
+        let mod_lexer = Lexer::new(&mod_source);
+        let mut mod_parser = Parser::new(mod_lexer, mod_path)?;
+        let items = mod_parser.parse_items()?;
+
+        Ok(Mod { name, items, span })
     }
 
     fn parse_use(&mut self) -> Result<UseTree, ParseError> {

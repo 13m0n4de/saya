@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::{env, error::Error, fs::read_to_string, process};
 
 use saya::codegen::CodeGen;
@@ -18,7 +19,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let code = read_to_string(input_file)?;
 
     let lexer = Lexer::new(&code);
-    let mut parser = Parser::new(lexer)?;
+    let mut parser = Parser::new(lexer, PathBuf::from(input_file))?;
     let program = parser.parse()?;
 
     let mut type_context = TypeContext::new();
