@@ -1,11 +1,8 @@
 program = *item
 
-item = ["pub"] (mod-item / use-item / extern-item / const-def / static-def / struct-def / function-def)
+item = import-item / ["pub"] (extern-item / const-def / static-def / struct-def / function-def)
 
-mod-item = "mod" identifier ";"
-
-use-item = "use" path ";"
-path = identifier *( "::" identifier)
+import-item = "import" identifier *("/" identifier) "as" identifier ";"
 
 extern-item = "extern" (extern-static / extern-fn)
 extern-static = "static" identifier ":" type-name ";"
