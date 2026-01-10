@@ -1,4 +1,4 @@
-use std::{error::Error, fmt, path::PathBuf};
+use std::{error::Error, fmt};
 
 use crate::{
     ast::*,
@@ -41,17 +41,15 @@ impl Error for ParseError {}
 
 pub struct Parser<'a> {
     lexer: Lexer<'a>,
-    file: PathBuf,
     current: Token,
     no_struct_literal: bool,
 }
 
 impl<'a> Parser<'a> {
-    pub fn new(mut lexer: Lexer<'a>, file: PathBuf) -> Result<Self, ParseError> {
+    pub fn new(mut lexer: Lexer<'a>) -> Result<Self, ParseError> {
         let current = lexer.next_token()?;
         Ok(Self {
             lexer,
-            file,
             current,
             no_struct_literal: false,
         })
@@ -187,8 +185,7 @@ impl<'a> Parser<'a> {
             };
 
             let kind = match self.current.kind {
-                TokenKind::Mod => ItemKind::Mod(self.parse_mod()?),
-                TokenKind::Use => ItemKind::Use(self.parse_use()?),
+                TokenKind::Import => ItemKind::Import(self.parse_import()?),
                 TokenKind::Const => ItemKind::Const(self.parse_const()?),
                 TokenKind::Static => ItemKind::Static(self.parse_static()?),
                 TokenKind::Struct => ItemKind::Struct(self.parse_struct()?),
@@ -203,44 +200,35 @@ impl<'a> Parser<'a> {
                 }
             };
 
-            items.push(Item { vis, kind, span })
+            items.push(Item { vis, kind, span });
         }
 
         Ok(items)
     }
 
-    fn parse_mod(&mut self) -> Result<Mod, ParseError> {
-        let span = self.current.span;
-
-        self.expect(TokenKind::Mod)?;
-        let name = self.expect_identifier()?;
-        self.expect(TokenKind::Semi)?;
-
-        let mod_path = self.file.with_file_name(format!("{name}.saya"));
-        let mod_source = std::fs::read_to_string(&mod_path).unwrap();
-        let mod_lexer = Lexer::new(&mod_source);
-        let mut mod_parser = Parser::new(mod_lexer, mod_path)?;
-        let items = mod_parser.parse_items()?;
-
-        Ok(Mod { name, items, span })
-    }
-
-    fn parse_use(&mut self) -> Result<UseTree, ParseError> {
+    fn parse_import(&mut self) -> Result<Import, ParseError> {
         let start_span = self.current.span;
 
-        self.expect(TokenKind::Use)?;
+        self.expect(TokenKind::Import)?;
 
         let mut path = vec![];
         path.push(self.expect_identifier()?);
 
-        while self.eat(TokenKind::PathSep)? {
+        while self.eat(TokenKind::Slash)? {
             path.push(self.expect_identifier()?);
         }
 
+        let name = if self.eat(TokenKind::As)? {
+            self.expect_identifier()?
+        } else {
+            path.last().expect("import path is non-empty").clone()
+        };
+
         self.expect(TokenKind::Semi)?;
 
-        Ok(UseTree {
+        Ok(Import {
             path,
+            name,
             span: start_span,
         })
     }

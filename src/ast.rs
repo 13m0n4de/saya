@@ -38,27 +38,20 @@ pub enum Visibility {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct Import {
+    pub path: Vec<String>,
+    pub name: String,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum ItemKind {
-    Use(UseTree),
-    Mod(Mod),
+    Import(Import),
     Const(ConstDef),
     Static(StaticDef),
     Function(FunctionDef),
     Struct(StructDef),
     Extern(ExternItem),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct UseTree {
-    pub path: Vec<String>,
-    pub span: Span,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct Mod {
-    pub name: String,
-    pub items: Vec<Item>,
-    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]

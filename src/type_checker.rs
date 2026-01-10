@@ -159,8 +159,7 @@ impl<'a> TypeChecker<'a> {
     fn scan_declarations(&mut self, prog: &ast::Program) -> Result<(), TypeError> {
         for item in &prog.items {
             let (name, obj, span) = match &item.kind {
-                ast::ItemKind::Mod(_) => todo!(),
-                ast::ItemKind::Use(_) => todo!(),
+                ast::ItemKind::Import(_) => todo!(),
                 ast::ItemKind::Const(def) => (
                     &def.name,
                     ScopeObject::Const(Const::Unresolved(Rc::new(def.clone()))),
@@ -434,8 +433,7 @@ impl<'a> TypeChecker<'a> {
         let mut typed_items = Vec::new();
         for item in &prog.items {
             let typed_item = match &item.kind {
-                ast::ItemKind::Mod(_) => todo!(),
-                ast::ItemKind::Use(_) => todo!(),
+                ast::ItemKind::Import(_) => todo!(),
                 ast::ItemKind::Const(def) => {
                     let (type_id, value) = match self.lookup(&def.name) {
                         Some(ScopeObject::Const(Const::Resolved(type_id, value))) => {
