@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use saya::ast::*;
 use saya::lexer::Lexer;
 use saya::parser::Parser;
@@ -7,7 +5,7 @@ use saya::parser::Parser;
 macro_rules! parse {
     ($input:expr) => {{
         let lexer = Lexer::new($input);
-        let mut parser = Parser::new(lexer, PathBuf::new()).unwrap();
+        let mut parser = Parser::new(lexer).unwrap();
         parser.parse()
     }};
 }
@@ -15,7 +13,7 @@ macro_rules! parse {
 macro_rules! parse_expr {
     ($input:expr) => {{
         let lexer = Lexer::new($input);
-        let mut parser = Parser::new(lexer, PathBuf::new()).unwrap();
+        let mut parser = Parser::new(lexer).unwrap();
         parser.parse_expression()
     }};
 }
@@ -484,25 +482,25 @@ fn test_extern_declarations() {
 }
 
 #[test]
-fn test_use() {
+fn test_import() {
     let program = parse!(
         r#"
-        use foo;
-        use foo::bar;
+        import foo;
+        import bar/baz;
         "#
     )
     .unwrap();
 
     match &program.items[0].kind {
-        ItemKind::Use(UseTree { path, .. }) => {
+        ItemKind::Import(Import { path, .. }) => {
             assert_eq!(path, &[String::from("foo")])
         }
-        _ => panic!("Expected use tree"),
+        _ => panic!("Expected import"),
     }
 
     match &program.items[1].kind {
-        ItemKind::Use(UseTree { path, .. }) => {
-            assert_eq!(path, &[String::from("foo"), String::from("bar")]);
+        ItemKind::Import(Import { path, .. }) => {
+            assert_eq!(path, &[String::from("bar"), String::from("baz")]);
         }
         _ => panic!("Expected use tree"),
     }

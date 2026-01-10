@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use saya::hir::*;
 use saya::lexer::Lexer;
 use saya::parser::Parser;
@@ -9,7 +7,7 @@ use saya::types::{TypeContext, TypeId, TypeKind};
 macro_rules! typecheck {
     ($input:expr) => {{
         let lexer = Lexer::new($input);
-        let mut parser = Parser::new(lexer, PathBuf::new()).unwrap();
+        let mut parser = Parser::new(lexer).unwrap();
         let program = parser.parse().unwrap();
         let mut type_context = TypeContext::new();
         let mut type_checker = TypeChecker::new(&mut type_context);
@@ -34,7 +32,7 @@ fn test_integer_literal() {
 fn test_string_literal() {
     let code = r#"fn main() -> [u8] { "hello" }"#;
     let lexer = Lexer::new(&code);
-    let mut parser = Parser::new(lexer, PathBuf::new()).unwrap();
+    let mut parser = Parser::new(lexer).unwrap();
     let program = parser.parse().unwrap();
     let mut type_context = TypeContext::new();
     let mut type_checker = TypeChecker::new(&mut type_context);
@@ -54,7 +52,7 @@ fn test_string_literal() {
 fn test_cstring_literal() {
     let code = r#"fn main() -> *u8 { c"hello C FFI" }"#;
     let lexer = Lexer::new(&code);
-    let mut parser = Parser::new(lexer, PathBuf::new()).unwrap();
+    let mut parser = Parser::new(lexer).unwrap();
     let program = parser.parse().unwrap();
     let mut type_context = TypeContext::new();
     let mut type_checker = TypeChecker::new(&mut type_context);

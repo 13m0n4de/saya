@@ -18,15 +18,14 @@ fn tokenize(input: &str) -> Result<Vec<TokenKind>, LexError> {
 
 #[test]
 fn test_keywords() {
-    let input = "pub mod use fn extern return struct let if else while break continue const static true false";
+    let input = "pub import fn extern return struct let if else while break continue const static true false";
     let tokens = tokenize(input).unwrap();
 
     assert_eq!(
         tokens,
         vec![
             TokenKind::Pub,
-            TokenKind::Mod,
-            TokenKind::Use,
+            TokenKind::Import,
             TokenKind::Fn,
             TokenKind::Extern,
             TokenKind::Return,
