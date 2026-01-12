@@ -21,12 +21,12 @@ fn run() -> Result<(), Box<dyn Error>> {
     let mut parser = Parser::new(lexer)?;
     let program = parser.parse()?;
 
-    let mut type_context = TypeContext::new();
+    let mut types = TypeContext::new();
 
-    let mut type_checker = TypeChecker::new(&mut type_context);
+    let mut type_checker = TypeChecker::new(&mut types);
     let typed_program = type_checker.check_program(&program)?;
 
-    let mut code_gen = CodeGen::new(&mut type_context);
+    let mut code_gen = CodeGen::new(&mut types);
     let qbe_il = code_gen.generate(&typed_program)?;
 
     std::fs::write("out.ssa", qbe_il)?;

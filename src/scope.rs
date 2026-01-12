@@ -2,13 +2,42 @@ use std::{collections::HashMap, rc::Rc};
 
 use crate::{ast, hir, types::TypeId};
 
+pub type Scope = HashMap<String, ScopeObject>;
+
 #[derive(Debug, Clone)]
-pub enum ScopeObject {
+pub struct ScopeObject {
+    pub vis: ast::Visibility,
+    pub kind: ScopeKind,
+}
+
+impl ScopeObject {
+    pub fn new(vis: ast::Visibility, kind: ScopeKind) -> Self {
+        Self { vis, kind }
+    }
+
+    pub fn private(kind: ScopeKind) -> Self {
+        Self {
+            vis: ast::Visibility::Private,
+            kind,
+        }
+    }
+
+    pub fn public(kind: ScopeKind) -> Self {
+        Self {
+            vis: ast::Visibility::Public,
+            kind,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum ScopeKind {
     Var(TypeId),
     Const(Const),
     Static(Static),
     Function(Function),
     Struct(Struct),
+    Module(Scope),
 }
 
 #[derive(Debug, Clone)]
@@ -37,33 +66,4 @@ pub enum Struct {
     Unresolved(Rc<ast::StructDef>),
     Resolving(Rc<ast::StructDef>),
     Resolved(TypeId),
-}
-
-#[derive(Default)]
-pub struct Scope {
-    objects: HashMap<String, ScopeObject>,
-}
-
-impl Scope {
-    pub fn new() -> Self {
-        Self {
-            objects: HashMap::new(),
-        }
-    }
-
-    pub fn insert(&mut self, name: String, obj: ScopeObject) -> Option<ScopeObject> {
-        self.objects.insert(name, obj)
-    }
-
-    pub fn get(&self, name: &str) -> Option<&ScopeObject> {
-        self.objects.get(name)
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = (&String, &ScopeObject)> {
-        self.objects.iter()
-    }
-
-    pub fn contains(&self, name: &str) -> bool {
-        self.objects.contains_key(name)
-    }
 }
