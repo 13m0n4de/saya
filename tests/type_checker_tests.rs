@@ -21,7 +21,7 @@ fn test_integer_literal() {
 
     match &program.items[0].kind {
         ItemKind::Function(func) => {
-            let body = &func.body;
+            let body = func.body.as_ref().expect("Expected function body");
             assert_eq!(body.type_id, TypeId::I64);
         }
         _ => panic!("Expected function"),
@@ -40,7 +40,7 @@ fn test_string_literal() {
 
     match &program.items[0].kind {
         ItemKind::Function(func) => {
-            let body = &func.body;
+            let body = func.body.as_ref().expect("Expected function body");
             let ty = type_context.get(body.type_id);
             assert!(matches!(ty.kind, TypeKind::Slice(TypeId::U8)));
         }
@@ -60,7 +60,7 @@ fn test_cstring_literal() {
 
     match &program.items[0].kind {
         ItemKind::Function(func) => {
-            let body = &func.body;
+            let body = func.body.as_ref().expect("Expected function body");
             let ty = type_context.get(body.type_id);
             assert!(matches!(ty.kind, TypeKind::Pointer(TypeId::U8)));
         }
@@ -74,7 +74,7 @@ fn test_bool_literal() {
 
     match &program.items[0].kind {
         ItemKind::Function(func) => {
-            let body = &func.body;
+            let body = func.body.as_ref().expect("Expected function body");
             assert_eq!(body.type_id, TypeId::BOOL);
         }
         _ => panic!("Expected function"),

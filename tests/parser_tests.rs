@@ -242,13 +242,16 @@ fn test_let_binding() {
     let program = parse!("fn test() -> i64 { let x: i64 = 42; x }").unwrap();
 
     match &program.items[0].kind {
-        ItemKind::Function(func) => match &func.body.stmts[0].kind {
-            StmtKind::Let(let_stmt) => {
-                assert_eq!(let_stmt.name, "x");
-                assert_eq!(let_stmt.type_ann.kind, TypeAnnKind::I64);
+        ItemKind::Function(func) => {
+            let body = func.body.as_ref().expect("Expected function body");
+            match &body.stmts[0].kind {
+                StmtKind::Let(let_stmt) => {
+                    assert_eq!(let_stmt.name, "x");
+                    assert_eq!(let_stmt.type_ann.kind, TypeAnnKind::I64);
+                }
+                _ => panic!("Expected let statement"),
             }
-            _ => panic!("Expected let statement"),
-        },
+        }
         _ => panic!("Expected function"),
     }
 }
@@ -416,12 +419,15 @@ fn test_array_type() {
     let program = parse!("fn test() -> i64 { let arr: [i64; 3] = [1, 2, 3]; 0 }").unwrap();
 
     match &program.items[0].kind {
-        ItemKind::Function(func) => match &func.body.stmts[0].kind {
-            StmtKind::Let(let_stmt) => {
-                assert!(matches!(let_stmt.type_ann.kind, TypeAnnKind::Array(..)));
+        ItemKind::Function(func) => {
+            let body = func.body.as_ref().expect("Expected function body");
+            match &body.stmts[0].kind {
+                StmtKind::Let(let_stmt) => {
+                    assert!(matches!(let_stmt.type_ann.kind, TypeAnnKind::Array(..)));
+                }
+                _ => panic!("Expected let statement"),
             }
-            _ => panic!("Expected let statement"),
-        },
+        }
         _ => panic!("Expected function"),
     }
 }
@@ -509,5 +515,19 @@ fn test_use() {
             assert_eq!(path.segments, &["foo", "bar", "baz"]);
         }
         _ => panic!("Expected use tree"),
+    }
+}
+
+#[test]
+fn test_function_declaration() {
+    let program = parse!("pub fn add(a: i64, b: i64) -> i64;").unwrap();
+
+    match &program.items[0].kind {
+        ItemKind::Function(func) => {
+            assert_eq!(func.name, "add");
+            assert_eq!(func.params.len(), 2);
+            assert!(func.body.is_none());
+        }
+        _ => panic!("Expected function declaration"),
     }
 }
