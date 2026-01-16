@@ -76,13 +76,13 @@ fn test_struct_literal() {
 
     match expr.kind {
         ExprKind::Struct(struct_expr) => {
-            assert_eq!(struct_expr.name, "Line");
+            assert_eq!(struct_expr.path.segments, &["Line"]);
             assert_eq!(struct_expr.fields.len(), 2);
 
             assert_eq!(struct_expr.fields[0].name, "start");
             match &struct_expr.fields[0].value.kind {
                 ExprKind::Struct(start_point) => {
-                    assert_eq!(start_point.name, "Point");
+                    assert_eq!(start_point.path.segments, &["Point"]);
                     assert_eq!(start_point.fields.len(), 2);
 
                     // start.x = 0
@@ -105,7 +105,7 @@ fn test_struct_literal() {
             assert_eq!(struct_expr.fields[1].name, "end");
             match &struct_expr.fields[1].value.kind {
                 ExprKind::Struct(end_point) => {
-                    assert_eq!(end_point.name, "Point");
+                    assert_eq!(end_point.path.segments, &["Point"]);
                     assert_eq!(end_point.fields.len(), 2);
 
                     // end.x = 10
@@ -211,7 +211,10 @@ fn test_function_call() {
 
     match expr.kind {
         ExprKind::Call(call) => {
-            assert!(matches!(&call.callee.kind, ExprKind::Ident(name) if name == "foo"));
+            match &call.callee.kind {
+                ExprKind::Path(path) => assert_eq!(path.segments, &["foo"]),
+                _ => panic!("Expected path"),
+            }
             assert_eq!(call.args.len(), 2);
         }
         _ => panic!("Expected function call"),
@@ -224,7 +227,10 @@ fn test_function_call_no_args() {
 
     match expr.kind {
         ExprKind::Call(call) => {
-            assert!(matches!(&call.callee.kind, ExprKind::Ident(name) if name == "foo"));
+            match &call.callee.kind {
+                ExprKind::Path(path) => assert_eq!(path.segments, &["foo"]),
+                _ => panic!("Expected path"),
+            }
             assert_eq!(call.args.len(), 0);
         }
         _ => panic!("Expected function call"),
@@ -482,25 +488,25 @@ fn test_extern_declarations() {
 }
 
 #[test]
-fn test_import() {
+fn test_use() {
     let program = parse!(
         r#"
-        import foo;
-        import bar/baz;
+        use foo;
+        use foo::bar::baz;
         "#
     )
     .unwrap();
 
     match &program.items[0].kind {
-        ItemKind::Import(Import { path, .. }) => {
-            assert_eq!(path, &[String::from("foo")])
+        ItemKind::Use(Use { path, .. }) => {
+            assert_eq!(path.segments, &["foo"])
         }
         _ => panic!("Expected import"),
     }
 
     match &program.items[1].kind {
-        ItemKind::Import(Import { path, .. }) => {
-            assert_eq!(path, &[String::from("bar"), String::from("baz")]);
+        ItemKind::Use(Use { path, .. }) => {
+            assert_eq!(path.segments, &["foo", "bar", "baz"]);
         }
         _ => panic!("Expected use tree"),
     }
