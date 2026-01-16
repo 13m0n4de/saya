@@ -37,7 +37,6 @@ pub enum ScopeKind {
     Static(Static),
     Function(Function),
     Struct(Struct),
-    Module(Scope),
 }
 
 #[derive(Debug, Clone)]

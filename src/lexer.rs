@@ -5,7 +5,7 @@ use crate::span::Span;
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
     Pub,      // pub
-    Import,   // import
+    Use,      // use
     As,       // as
     Fn,       // fn
     Extern,   // extern
@@ -317,7 +317,7 @@ impl<'a> Lexer<'a> {
 
         match ident.as_str() {
             "pub" => TokenKind::Pub,
-            "import" => TokenKind::Import,
+            "use" => TokenKind::Use,
             "as" => TokenKind::As,
             "fn" => TokenKind::Fn,
             "extern" => TokenKind::Extern,

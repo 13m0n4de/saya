@@ -102,14 +102,25 @@ impl<'a> Parser<'a> {
         let start_span = self.current.span;
 
         let kind = match self.current.kind.clone() {
-            // Base types: i64, u8, bool
+            // Base types: i64, u8, bool, or Path (module::Type or Type)
             TokenKind::Ident(name) => {
+                let name = name.clone();
                 self.advance()?;
                 match name.as_str() {
                     "i64" => TypeAnnKind::I64,
                     "u8" => TypeAnnKind::U8,
                     "bool" => TypeAnnKind::Bool,
-                    name => TypeAnnKind::Named(name.to_string()),
+                    _ => {
+                        let path_span = self.current.span;
+                        let mut segments = vec![name];
+                        while self.eat(TokenKind::PathSep)? {
+                            segments.push(self.expect_identifier()?);
+                        }
+                        TypeAnnKind::Path(Path {
+                            segments,
+                            span: path_span,
+                        })
+                    }
                 }
             }
             // Slice: [T] or Array: [T; N]
@@ -185,7 +196,7 @@ impl<'a> Parser<'a> {
             };
 
             let kind = match self.current.kind {
-                TokenKind::Import => ItemKind::Import(self.parse_import()?),
+                TokenKind::Use => ItemKind::Use(self.parse_use()?),
                 TokenKind::Const => ItemKind::Const(self.parse_const()?),
                 TokenKind::Static => ItemKind::Static(self.parse_static()?),
                 TokenKind::Struct => ItemKind::Struct(self.parse_struct()?),
@@ -206,28 +217,30 @@ impl<'a> Parser<'a> {
         Ok(items)
     }
 
-    fn parse_import(&mut self) -> Result<Import, ParseError> {
+    fn parse_use(&mut self) -> Result<Use, ParseError> {
         let start_span = self.current.span;
 
-        self.expect(TokenKind::Import)?;
+        self.expect(TokenKind::Use)?;
 
-        let mut path = vec![];
-        path.push(self.expect_identifier()?);
-
-        while self.eat(TokenKind::Slash)? {
-            path.push(self.expect_identifier()?);
+        let path_span = self.current.span;
+        let mut segments = vec![self.expect_identifier()?];
+        while self.eat(TokenKind::PathSep)? {
+            segments.push(self.expect_identifier()?);
         }
 
         let name = if self.eat(TokenKind::As)? {
             self.expect_identifier()?
         } else {
-            path.last().expect("import path is non-empty").clone()
+            segments.last().expect("use path is non-empty").clone()
         };
 
         self.expect(TokenKind::Semi)?;
 
-        Ok(Import {
-            path,
+        Ok(Use {
+            path: Path {
+                segments,
+                span: path_span,
+            },
             name,
             span: start_span,
         })
@@ -779,9 +792,17 @@ impl<'a> Parser<'a> {
                 let name = name.clone();
                 self.advance()?;
 
-                if self.current.kind != TokenKind::OpenBrace || self.no_struct_literal {
-                    ExprKind::Ident(name)
-                } else {
+                let path_span = self.current.span;
+                let mut segments = vec![name];
+                while self.eat(TokenKind::PathSep)? {
+                    segments.push(self.expect_identifier()?);
+                }
+                let path = Path {
+                    segments,
+                    span: path_span,
+                };
+
+                if !self.no_struct_literal && self.current.kind == TokenKind::OpenBrace {
                     self.advance()?;
                     let fields = if self.current.kind == TokenKind::CloseBrace {
                         Vec::new()
@@ -791,10 +812,12 @@ impl<'a> Parser<'a> {
                     self.expect(TokenKind::CloseBrace)?;
 
                     ExprKind::Struct(StructExpr {
-                        name,
+                        path,
                         fields,
                         span: start_span,
                     })
+                } else {
+                    ExprKind::Path(path)
                 }
             }
 
