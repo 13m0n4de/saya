@@ -96,8 +96,9 @@ impl<'a> CodeGen<'a> {
                     self.generate_static(static_def, &item.vis);
                 }
                 // Functions
-                ItemKind::Function(func) => {
-                    module.add_function(self.generate_function(func, &item.vis)?);
+                ItemKind::Function(func) if func.body.is_some() => {
+                    let qbe_func = self.generate_function(func, &item.vis)?;
+                    module.add_function(qbe_func);
                 }
                 _ => {}
             }
@@ -605,6 +606,10 @@ impl<'a> CodeGen<'a> {
         func: &FunctionDef,
         vis: &Visibility,
     ) -> Result<qbe::Function<'static>, CodeGenError> {
+        let Some(block) = &func.body else {
+            unreachable!()
+        };
+
         let params: Vec<(qbe::Type<'static>, qbe::Value)> = func
             .params
             .iter()
@@ -651,17 +656,17 @@ impl<'a> CodeGen<'a> {
 
         qfunc.add_block("body");
 
-        let block_value = self.generate_block(&mut qfunc, &func.body)?;
+        let block_value = self.generate_block(&mut qfunc, block)?;
 
         if func.return_type_id == TypeId::NEVER {
             qfunc.add_instr(qbe::Instr::Hlt);
-        } else if func.body.type_id == TypeId::NEVER {
+        } else if block.type_id == TypeId::NEVER {
             if let Some(last_block) = qfunc.blocks.last()
                 && !last_block.jumps()
             {
                 qfunc.add_instr(qbe::Instr::Hlt);
             }
-        } else if func.body.type_id == TypeId::UNIT {
+        } else if block.type_id == TypeId::UNIT {
             qfunc.add_instr(qbe::Instr::Ret(None));
         } else {
             qfunc.add_instr(qbe::Instr::Ret(Some(block_value.into())));

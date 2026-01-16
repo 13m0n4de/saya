@@ -122,7 +122,7 @@ pub struct FunctionDef {
     pub name: String,
     pub params: Vec<Param>,
     pub return_type_ann: TypeAnn,
-    pub body: Block,
+    pub body: Option<Block>,
     pub span: Span,
 }
 

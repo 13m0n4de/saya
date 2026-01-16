@@ -473,7 +473,11 @@ impl<'a> Parser<'a> {
             }
         };
 
-        let body = self.parse_block()?;
+        let body = if self.eat(TokenKind::Semi)? {
+            None
+        } else {
+            Some(self.parse_block()?)
+        };
 
         Ok(FunctionDef {
             name,

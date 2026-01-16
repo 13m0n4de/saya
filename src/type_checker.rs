@@ -825,18 +825,23 @@ impl<'a> TypeChecker<'a> {
             });
         }
 
-        let typed_body = self.check_block(&func.body)?;
-
-        // The `Never` type is compatible with any return type
-        if typed_body.type_id != return_type_id && typed_body.type_id != TypeId::NEVER {
-            return Err(TypeError::new(
-                format!(
-                    "mismatched return type in function `{}`: expected `{:?}`, found `{:?}`",
-                    func.name, return_type_id, typed_body.type_id
-                ),
-                func.body.span,
-            ));
-        }
+        let typed_body = match &func.body {
+            Some(block) => {
+                let block = self.check_block(block)?;
+                // The `Never` type is compatible with any return type
+                if block.type_id != return_type_id && block.type_id != TypeId::NEVER {
+                    return Err(TypeError::new(
+                        format!(
+                            "mismatched return type in function `{}`: expected `{:?}`, found `{:?}`",
+                            func.name, return_type_id, block.type_id
+                        ),
+                        block.span,
+                    ));
+                }
+                Some(block)
+            }
+            None => None,
+        };
 
         self.pop_scope();
         self.current_fn_return_type_id = None;
