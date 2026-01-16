@@ -89,17 +89,17 @@ impl<'a> CodeGen<'a> {
     pub fn generate(&mut self, prog: &Program) -> Result<String, CodeGenError> {
         let mut module = qbe::Module::new();
 
-        // Globals
         for item in &prog.items {
-            if let ItemKind::Static(static_def) = &item.kind {
-                self.generate_static(static_def, &item.vis);
-            }
-        }
-
-        // Functions
-        for item in &prog.items {
-            if let ItemKind::Function(func) = &item.kind {
-                module.add_function(self.generate_function(func, &item.vis)?);
+            match &item.kind {
+                // Globals
+                ItemKind::Static(static_def) => {
+                    self.generate_static(static_def, &item.vis);
+                }
+                // Functions
+                ItemKind::Function(func) => {
+                    module.add_function(self.generate_function(func, &item.vis)?);
+                }
+                _ => {}
             }
         }
 
