@@ -1,4 +1,4 @@
-fn main() -> u8 {
+pub fn main() -> u8 {
     let s: [u8] = "Hello, world!";
     let ptr: *[u8] = &s;
     (*ptr)[-10]

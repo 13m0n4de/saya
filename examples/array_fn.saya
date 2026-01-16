@@ -11,7 +11,7 @@ fn modify_array(arr: [i64; 3]) -> [i64; 3] {
     arr
 }
 
-fn main() -> i64 {
+pub fn main() -> i64 {
     let arr1: [i64; 3] = create_array();
     let total: i64 = sum_array(arr1);
 
