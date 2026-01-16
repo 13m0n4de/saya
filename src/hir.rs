@@ -58,7 +58,7 @@ pub struct ExternFunctionDecl {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConstDef {
-    pub name: String,
+    pub ident: String,
     pub type_id: TypeId,
     pub init: Literal,
     pub span: Span,
@@ -66,7 +66,7 @@ pub struct ConstDef {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StaticDef {
-    pub name: String,
+    pub ident: String,
     pub type_id: TypeId,
     pub init: Literal,
     pub span: Span,
@@ -74,7 +74,7 @@ pub struct StaticDef {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionDef {
-    pub name: String,
+    pub ident: String,
     pub params: Vec<Param>,
     pub return_type_id: TypeId,
     pub body: Option<Block>,
@@ -160,7 +160,7 @@ pub enum Literal {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StructExpr {
-    pub symbol: String,
+    pub ident: String,
     pub fields: Vec<FieldInit>,
     pub span: Span,
 }

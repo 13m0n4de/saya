@@ -117,6 +117,10 @@ impl<'a> CodeGen<'a> {
         Ok(module.to_string())
     }
 
+    fn ident_to_symbol(ident: &str) -> String {
+        ident.replace("::", ".")
+    }
+
     fn qbe_type(&mut self, type_id: TypeId) -> qbe::Type<'static> {
         let ty = self.types.get(type_id);
         match &ty.kind {
@@ -448,10 +452,17 @@ impl<'a> CodeGen<'a> {
         expr: &Expr,
     ) -> Result<qbe::Value, CodeGenError> {
         match &expr.kind {
-            // x -> %x
             ExprKind::Place(place) => match place {
-                Place::Local(symbol) => Ok(qbe::Value::Temporary(symbol.clone())),
-                Place::Global(symbol) => Ok(qbe::Value::Global(symbol.clone())),
+                // x -> %x
+                Place::Local(ident) => {
+                    let symbol = Self::ident_to_symbol(ident);
+                    Ok(qbe::Value::Temporary(symbol))
+                }
+                // x -> $x
+                Place::Global(ident) => {
+                    let symbol = Self::ident_to_symbol(ident);
+                    Ok(qbe::Value::Global(symbol))
+                }
             },
             // *ptr -> value_of(ptr)
             ExprKind::Unary(UnaryOp::Deref, ptr_expr) => {
@@ -587,18 +598,15 @@ impl<'a> CodeGen<'a> {
     }
 
     fn generate_static(&mut self, static_def: &StaticDef, vis: &Visibility) {
+        let symbol = Self::ident_to_symbol(&static_def.ident);
         let data_items = self.literal_to_data_items(&static_def.init);
         let linkage = match vis {
             Visibility::Public => qbe::Linkage::public(),
             Visibility::Private => qbe::Linkage::private(),
         };
 
-        self.data_defs.push(qbe::DataDef::new(
-            linkage,
-            static_def.name.clone(),
-            None,
-            data_items,
-        ));
+        self.data_defs
+            .push(qbe::DataDef::new(linkage, symbol, None, data_items));
     }
 
     fn generate_function(
@@ -626,12 +634,13 @@ impl<'a> CodeGen<'a> {
             Some(self.qbe_type(func.return_type_id))
         };
 
+        let symbol = Self::ident_to_symbol(&func.ident);
         let linkage = match vis {
             Visibility::Public => qbe::Linkage::public(),
             Visibility::Private => qbe::Linkage::private(),
         };
 
-        let mut qfunc = qbe::Function::new(linkage, func.name.clone(), params, qbe_return_type);
+        let mut qfunc = qbe::Function::new(linkage, symbol, params, qbe_return_type);
 
         qfunc.add_block("start");
 
@@ -793,14 +802,14 @@ impl<'a> CodeGen<'a> {
         };
 
         match place {
-            Place::Local(symbol) => {
-                let name = symbol.replace("::", ".");
-                let addr = qbe::Value::Temporary(name);
+            Place::Local(ident) => {
+                let symbol = Self::ident_to_symbol(ident);
+                let addr = qbe::Value::Temporary(symbol);
                 self.load_value(qfunc, addr, expr.type_id)
             }
-            Place::Global(symbol) => {
-                let name = symbol.replace("::", ".");
-                let addr = qbe::Value::Global(name);
+            Place::Global(ident) => {
+                let symbol = Self::ident_to_symbol(ident);
+                let addr = qbe::Value::Global(symbol);
                 self.load_value(qfunc, addr, expr.type_id)
             }
         }
@@ -1165,13 +1174,13 @@ impl<'a> CodeGen<'a> {
             unreachable!()
         };
 
-        let func_name = match &call.callee.kind {
-            ExprKind::Place(Place::Local(symbol) | Place::Global(symbol)) => {
-                symbol.replace("::", ".")
+        let symbol = match &call.callee.kind {
+            ExprKind::Place(Place::Local(ident) | Place::Global(ident)) => {
+                Self::ident_to_symbol(ident)
             }
             _ => {
                 return Err(CodeGenError::new(
-                    "Complex callee expressions not yet supported".to_string(),
+                    "callee must be an identifier".to_string(),
                     call.callee.span,
                 ));
             }
@@ -1185,13 +1194,13 @@ impl<'a> CodeGen<'a> {
         }
 
         if expr.type_id == TypeId::UNIT {
-            qfunc.add_instr(qbe::Instr::Call(func_name, qbe_args, None));
+            qfunc.add_instr(qbe::Instr::Call(symbol, qbe_args, None));
             Ok(GenValue::Const(0, expr.type_id))
         } else {
             Ok(self.assign_to_temp(
                 qfunc,
                 expr.type_id,
-                qbe::Instr::Call(func_name, qbe_args, None),
+                qbe::Instr::Call(symbol, qbe_args, None),
             ))
         }
     }

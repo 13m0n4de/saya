@@ -23,7 +23,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     let mut types = TypeContext::new();
 
-    let mut type_checker = TypeChecker::new(&mut types);
+    let mut type_checker = TypeChecker::new(None, &mut types);
     let typed_program = type_checker.check_program(&program)?;
 
     let mut code_gen = CodeGen::new(&mut types);
