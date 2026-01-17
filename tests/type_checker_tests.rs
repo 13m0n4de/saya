@@ -10,7 +10,7 @@ macro_rules! typecheck {
         let mut parser = Parser::new(lexer).unwrap();
         let program = parser.parse().unwrap();
         let mut type_context = TypeContext::new();
-        let mut type_checker = TypeChecker::new(&mut type_context);
+        let mut type_checker = TypeChecker::new(None, &mut type_context);
         type_checker.check_program(&program)
     }};
 }
@@ -19,9 +19,9 @@ macro_rules! typecheck {
 fn test_integer_literal() {
     let program = typecheck!("fn main() -> i64 { 42 }").unwrap();
 
-    match &program.items[0] {
-        Item::Function(func) => {
-            let body = &func.body;
+    match &program.items[0].kind {
+        ItemKind::Function(func) => {
+            let body = func.body.as_ref().expect("Expected function body");
             assert_eq!(body.type_id, TypeId::I64);
         }
         _ => panic!("Expected function"),
@@ -35,12 +35,12 @@ fn test_string_literal() {
     let mut parser = Parser::new(lexer).unwrap();
     let program = parser.parse().unwrap();
     let mut type_context = TypeContext::new();
-    let mut type_checker = TypeChecker::new(&mut type_context);
+    let mut type_checker = TypeChecker::new(None, &mut type_context);
     let program = type_checker.check_program(&program).unwrap();
 
-    match &program.items[0] {
-        Item::Function(func) => {
-            let body = &func.body;
+    match &program.items[0].kind {
+        ItemKind::Function(func) => {
+            let body = func.body.as_ref().expect("Expected function body");
             let ty = type_context.get(body.type_id);
             assert!(matches!(ty.kind, TypeKind::Slice(TypeId::U8)));
         }
@@ -55,12 +55,12 @@ fn test_cstring_literal() {
     let mut parser = Parser::new(lexer).unwrap();
     let program = parser.parse().unwrap();
     let mut type_context = TypeContext::new();
-    let mut type_checker = TypeChecker::new(&mut type_context);
+    let mut type_checker = TypeChecker::new(None, &mut type_context);
     let program = type_checker.check_program(&program).unwrap();
 
-    match &program.items[0] {
-        Item::Function(func) => {
-            let body = &func.body;
+    match &program.items[0].kind {
+        ItemKind::Function(func) => {
+            let body = func.body.as_ref().expect("Expected function body");
             let ty = type_context.get(body.type_id);
             assert!(matches!(ty.kind, TypeKind::Pointer(TypeId::U8)));
         }
@@ -72,9 +72,9 @@ fn test_cstring_literal() {
 fn test_bool_literal() {
     let program = typecheck!("fn main() -> bool { true }").unwrap();
 
-    match &program.items[0] {
-        Item::Function(func) => {
-            let body = &func.body;
+    match &program.items[0].kind {
+        ItemKind::Function(func) => {
+            let body = func.body.as_ref().expect("Expected function body");
             assert_eq!(body.type_id, TypeId::BOOL);
         }
         _ => panic!("Expected function"),

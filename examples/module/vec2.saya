@@ -1,0 +1,16 @@
+pub struct Vec2 {
+    x: i64,
+    y: i64,
+}
+
+pub fn new(x: i64, y: i64) -> Vec2 {
+    Vec2 { x: x, y: y }
+}
+
+pub fn add(a: *Vec2, b: *Vec2) -> Vec2 {
+    new(a.x + b.x, a.y + b.y)
+}
+
+pub fn dot(a: *Vec2, b: *Vec2) -> i64 {
+    a.x * b.x + a.y * b.y
+}

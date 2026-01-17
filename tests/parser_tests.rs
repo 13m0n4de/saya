@@ -76,13 +76,13 @@ fn test_struct_literal() {
 
     match expr.kind {
         ExprKind::Struct(struct_expr) => {
-            assert_eq!(struct_expr.name, "Line");
+            assert_eq!(struct_expr.path.segments, &["Line"]);
             assert_eq!(struct_expr.fields.len(), 2);
 
             assert_eq!(struct_expr.fields[0].name, "start");
             match &struct_expr.fields[0].value.kind {
                 ExprKind::Struct(start_point) => {
-                    assert_eq!(start_point.name, "Point");
+                    assert_eq!(start_point.path.segments, &["Point"]);
                     assert_eq!(start_point.fields.len(), 2);
 
                     // start.x = 0
@@ -105,7 +105,7 @@ fn test_struct_literal() {
             assert_eq!(struct_expr.fields[1].name, "end");
             match &struct_expr.fields[1].value.kind {
                 ExprKind::Struct(end_point) => {
-                    assert_eq!(end_point.name, "Point");
+                    assert_eq!(end_point.path.segments, &["Point"]);
                     assert_eq!(end_point.fields.len(), 2);
 
                     // end.x = 10
@@ -211,7 +211,10 @@ fn test_function_call() {
 
     match expr.kind {
         ExprKind::Call(call) => {
-            assert!(matches!(&call.callee.kind, ExprKind::Ident(name) if name == "foo"));
+            match &call.callee.kind {
+                ExprKind::Path(path) => assert_eq!(path.segments, &["foo"]),
+                _ => panic!("Expected path"),
+            }
             assert_eq!(call.args.len(), 2);
         }
         _ => panic!("Expected function call"),
@@ -224,7 +227,10 @@ fn test_function_call_no_args() {
 
     match expr.kind {
         ExprKind::Call(call) => {
-            assert!(matches!(&call.callee.kind, ExprKind::Ident(name) if name == "foo"));
+            match &call.callee.kind {
+                ExprKind::Path(path) => assert_eq!(path.segments, &["foo"]),
+                _ => panic!("Expected path"),
+            }
             assert_eq!(call.args.len(), 0);
         }
         _ => panic!("Expected function call"),
@@ -235,14 +241,17 @@ fn test_function_call_no_args() {
 fn test_let_binding() {
     let program = parse!("fn test() -> i64 { let x: i64 = 42; x }").unwrap();
 
-    match &program.items[0] {
-        Item::Function(func) => match &func.body.stmts[0].kind {
-            StmtKind::Let(let_stmt) => {
-                assert_eq!(let_stmt.name, "x");
-                assert_eq!(let_stmt.type_ann.kind, TypeAnnKind::I64);
+    match &program.items[0].kind {
+        ItemKind::Function(func) => {
+            let body = func.body.as_ref().expect("Expected function body");
+            match &body.stmts[0].kind {
+                StmtKind::Let(let_stmt) => {
+                    assert_eq!(let_stmt.name, "x");
+                    assert_eq!(let_stmt.type_ann.kind, TypeAnnKind::I64);
+                }
+                _ => panic!("Expected let statement"),
             }
-            _ => panic!("Expected let statement"),
-        },
+        }
         _ => panic!("Expected function"),
     }
 }
@@ -334,8 +343,8 @@ fn test_block_all_semicolons() {
 fn test_function_definition() {
     let program = parse!("fn add(a: i64, b: i64) -> i64 { a + b }").unwrap();
 
-    match &program.items[0] {
-        Item::Function(func) => {
+    match &program.items[0].kind {
+        ItemKind::Function(func) => {
             assert_eq!(func.name, "add");
             assert_eq!(func.params.len(), 2);
             assert_eq!(func.params[0].name, "a");
@@ -350,8 +359,8 @@ fn test_function_definition() {
 fn test_const_definition() {
     let program = parse!("const PI: i64 = 3;").unwrap();
 
-    match &program.items[0] {
-        Item::Const(const_def) => {
+    match &program.items[0].kind {
+        ItemKind::Const(const_def) => {
             assert_eq!(const_def.name, "PI");
             assert_eq!(const_def.type_ann.kind, TypeAnnKind::I64);
         }
@@ -363,8 +372,8 @@ fn test_const_definition() {
 fn test_static_definition() {
     let program = parse!("static GLOBAL: i64 = 42;").unwrap();
 
-    match &program.items[0] {
-        Item::Static(static_def) => {
+    match &program.items[0].kind {
+        ItemKind::Static(static_def) => {
             assert_eq!(static_def.name, "GLOBAL");
             assert_eq!(static_def.type_ann.kind, TypeAnnKind::I64);
         }
@@ -376,8 +385,8 @@ fn test_static_definition() {
 fn test_struct_definition() {
     let program = parse!("struct Position { x: i64, y: i64 }").unwrap();
 
-    match &program.items[0] {
-        Item::Struct(struct_def) => {
+    match &program.items[0].kind {
+        ItemKind::Struct(struct_def) => {
             assert_eq!(struct_def.name, "Position");
             assert_eq!(struct_def.fields[0].name, "x");
             assert_eq!(struct_def.fields[0].type_ann.kind, TypeAnnKind::I64);
@@ -400,22 +409,25 @@ fn test_multiple_items() {
     .unwrap();
 
     assert_eq!(program.items.len(), 3);
-    assert!(matches!(program.items[0], Item::Const(_)));
-    assert!(matches!(program.items[1], Item::Function(_)));
-    assert!(matches!(program.items[2], Item::Static(_)));
+    assert!(matches!(program.items[0].kind, ItemKind::Const(_)));
+    assert!(matches!(program.items[1].kind, ItemKind::Function(_)));
+    assert!(matches!(program.items[2].kind, ItemKind::Static(_)));
 }
 
 #[test]
 fn test_array_type() {
     let program = parse!("fn test() -> i64 { let arr: [i64; 3] = [1, 2, 3]; 0 }").unwrap();
 
-    match &program.items[0] {
-        Item::Function(func) => match &func.body.stmts[0].kind {
-            StmtKind::Let(let_stmt) => {
-                assert!(matches!(let_stmt.type_ann.kind, TypeAnnKind::Array(..)));
+    match &program.items[0].kind {
+        ItemKind::Function(func) => {
+            let body = func.body.as_ref().expect("Expected function body");
+            match &body.stmts[0].kind {
+                StmtKind::Let(let_stmt) => {
+                    assert!(matches!(let_stmt.type_ann.kind, TypeAnnKind::Array(..)));
+                }
+                _ => panic!("Expected let statement"),
             }
-            _ => panic!("Expected let statement"),
-        },
+        }
         _ => panic!("Expected function"),
     }
 }
@@ -462,21 +474,60 @@ fn test_extern_declarations() {
 
     assert_eq!(program.items.len(), 2);
 
-    match &program.items[0] {
-        Item::Extern(ExternItem::Static(static_decl)) => {
+    match &program.items[0].kind {
+        ItemKind::Extern(ExternItem::Static(static_decl)) => {
             assert_eq!(static_decl.name, "stderr");
             assert_eq!(static_decl.type_ann.kind, TypeAnnKind::I64);
         }
         _ => panic!("Expected extern static"),
     }
 
-    match &program.items[1] {
-        Item::Extern(ExternItem::Function(func)) => {
+    match &program.items[1].kind {
+        ItemKind::Extern(ExternItem::Function(func)) => {
             assert_eq!(func.name, "puts");
             assert_eq!(func.params.len(), 1);
             assert_eq!(func.params[0].name, "s");
             assert_eq!(func.return_type_ann.kind, TypeAnnKind::I64);
         }
         _ => panic!("Expected extern function"),
+    }
+}
+
+#[test]
+fn test_use() {
+    let program = parse!(
+        r#"
+        use foo;
+        use foo::bar::baz;
+        "#
+    )
+    .unwrap();
+
+    match &program.items[0].kind {
+        ItemKind::Use(Use { path, .. }) => {
+            assert_eq!(path.segments, &["foo"])
+        }
+        _ => panic!("Expected import"),
+    }
+
+    match &program.items[1].kind {
+        ItemKind::Use(Use { path, .. }) => {
+            assert_eq!(path.segments, &["foo", "bar", "baz"]);
+        }
+        _ => panic!("Expected use tree"),
+    }
+}
+
+#[test]
+fn test_function_declaration() {
+    let program = parse!("pub fn add(a: i64, b: i64) -> i64;").unwrap();
+
+    match &program.items[0].kind {
+        ItemKind::Function(func) => {
+            assert_eq!(func.name, "add");
+            assert_eq!(func.params.len(), 2);
+            assert!(func.body.is_none());
+        }
+        _ => panic!("Expected function declaration"),
     }
 }

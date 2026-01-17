@@ -1,4 +1,4 @@
-use std::{env, error::Error, fs::read_to_string, process};
+use std::{env, error::Error, fs, process};
 
 use saya::codegen::CodeGen;
 use saya::lexer::Lexer;
@@ -6,30 +6,54 @@ use saya::parser::Parser;
 use saya::type_checker::TypeChecker;
 use saya::types::TypeContext;
 
-fn run() -> Result<(), Box<dyn Error>> {
-    let args: Vec<String> = env::args().collect();
+struct Args {
+    input: String,
+    output: String,
+    namespace: Option<String>,
+}
 
-    if args.len() < 2 {
-        return Err("no saya file provided".into());
+fn parse_args() -> Result<Args, String> {
+    let mut args = env::args().skip(1);
+    let mut config = Args {
+        input: String::new(),
+        output: "out.ssa".to_string(),
+        namespace: None,
+    };
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "-o" => config.output = args.next().ok_or("missing argument for '-o'")?,
+            "-N" => config.namespace = Some(args.next().ok_or("missing argument for '-N'")?),
+            s if s.starts_with('-') => return Err(format!("unknown option: '{s}'")),
+            path => config.input = path.to_string(),
+        }
     }
 
-    let input_file = &args[1];
+    if config.input.is_empty() {
+        return Err("no input file".to_string());
+    }
 
-    let code = read_to_string(input_file)?;
+    Ok(config)
+}
+
+fn run() -> Result<(), Box<dyn Error>> {
+    let args = parse_args()?;
+
+    let code = fs::read_to_string(&args.input)?;
 
     let lexer = Lexer::new(&code);
     let mut parser = Parser::new(lexer)?;
     let program = parser.parse()?;
 
-    let mut type_context = TypeContext::new();
+    let mut types = TypeContext::new();
 
-    let mut type_checker = TypeChecker::new(&mut type_context);
+    let mut type_checker = TypeChecker::new(args.namespace, &mut types);
     let typed_program = type_checker.check_program(&program)?;
 
-    let mut code_gen = CodeGen::new(&mut type_context);
+    let mut code_gen = CodeGen::new(&mut types);
     let qbe_il = code_gen.generate(&typed_program)?;
 
-    std::fs::write("out.ssa", qbe_il)?;
+    fs::write(args.output, qbe_il)?;
 
     Ok(())
 }

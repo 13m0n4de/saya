@@ -56,7 +56,8 @@ impl<'a> Parser<'a> {
     }
 
     pub fn parse(&mut self) -> Result<Program, ParseError> {
-        self.parse_program()
+        let items = self.parse_items()?;
+        Ok(Program { items })
     }
 
     fn advance(&mut self) -> Result<(), ParseError> {
@@ -101,14 +102,25 @@ impl<'a> Parser<'a> {
         let start_span = self.current.span;
 
         let kind = match self.current.kind.clone() {
-            // Base types: i64, u8, bool
+            // Base types: i64, u8, bool, or Path (module::Type or Type)
             TokenKind::Ident(name) => {
+                let name = name.clone();
                 self.advance()?;
                 match name.as_str() {
                     "i64" => TypeAnnKind::I64,
                     "u8" => TypeAnnKind::U8,
                     "bool" => TypeAnnKind::Bool,
-                    name => TypeAnnKind::Named(name.to_string()),
+                    _ => {
+                        let path_span = self.current.span;
+                        let mut segments = vec![name];
+                        while self.eat(TokenKind::PathSep)? {
+                            segments.push(self.expect_identifier()?);
+                        }
+                        TypeAnnKind::Path(Path {
+                            segments,
+                            span: path_span,
+                        })
+                    }
                 }
             }
             // Slice: [T] or Array: [T; N]
@@ -171,16 +183,25 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_program(&mut self) -> Result<Program, ParseError> {
+    fn parse_items(&mut self) -> Result<Vec<Item>, ParseError> {
         let mut items = Vec::new();
 
         loop {
-            match self.current.kind {
-                TokenKind::Const => items.push(Item::Const(self.parse_const()?)),
-                TokenKind::Static => items.push(Item::Static(self.parse_static()?)),
-                TokenKind::Struct => items.push(Item::Struct(self.parse_struct()?)),
-                TokenKind::Fn => items.push(Item::Function(self.parse_function()?)),
-                TokenKind::Extern => items.push(self.parse_item_extern()?),
+            let span = self.current.span;
+
+            let vis = if self.eat(TokenKind::Pub)? {
+                Visibility::Public
+            } else {
+                Visibility::Private
+            };
+
+            let kind = match self.current.kind {
+                TokenKind::Use => ItemKind::Use(self.parse_use()?),
+                TokenKind::Const => ItemKind::Const(self.parse_const()?),
+                TokenKind::Static => ItemKind::Static(self.parse_static()?),
+                TokenKind::Struct => ItemKind::Struct(self.parse_struct()?),
+                TokenKind::Fn => ItemKind::Function(self.parse_function()?),
+                TokenKind::Extern => ItemKind::Extern(self.parse_extern_item()?),
                 TokenKind::Eof => break,
                 _ => {
                     return Err(ParseError::new(
@@ -188,22 +209,49 @@ impl<'a> Parser<'a> {
                         self.current.span,
                     ));
                 }
-            }
+            };
+
+            items.push(Item { vis, kind, span });
         }
 
-        Ok(Program { items })
+        Ok(items)
     }
 
-    fn parse_item_extern(&mut self) -> Result<Item, ParseError> {
+    fn parse_use(&mut self) -> Result<Use, ParseError> {
+        let start_span = self.current.span;
+
+        self.expect(TokenKind::Use)?;
+
+        let path_span = self.current.span;
+        let mut segments = vec![self.expect_identifier()?];
+        while self.eat(TokenKind::PathSep)? {
+            segments.push(self.expect_identifier()?);
+        }
+
+        let name = if self.eat(TokenKind::As)? {
+            self.expect_identifier()?
+        } else {
+            segments.last().expect("use path is non-empty").clone()
+        };
+
+        self.expect(TokenKind::Semi)?;
+
+        Ok(Use {
+            path: Path {
+                segments,
+                span: path_span,
+            },
+            name,
+            span: start_span,
+        })
+    }
+
+    fn parse_extern_item(&mut self) -> Result<ExternItem, ParseError> {
         self.expect(TokenKind::Extern)?;
 
         match self.current.kind {
-            TokenKind::Fn => Ok(Item::Extern(ExternItem::Function(
-                self.parse_extern_function()?,
-            ))),
-            TokenKind::Static => Ok(Item::Extern(ExternItem::Static(
-                self.parse_extern_static()?,
-            ))),
+            TokenKind::Fn => Ok(ExternItem::Function(self.parse_extern_function()?)),
+            TokenKind::Static => Ok(ExternItem::Static(self.parse_extern_static()?)),
             _ => Err(ParseError::new(
                 "expected 'fn' or 'static' after 'extern'".to_string(),
                 self.current.span,
@@ -425,7 +473,11 @@ impl<'a> Parser<'a> {
             }
         };
 
-        let body = self.parse_block()?;
+        let body = if self.eat(TokenKind::Semi)? {
+            None
+        } else {
+            Some(self.parse_block()?)
+        };
 
         Ok(FunctionDef {
             name,
@@ -744,9 +796,17 @@ impl<'a> Parser<'a> {
                 let name = name.clone();
                 self.advance()?;
 
-                if self.current.kind != TokenKind::OpenBrace || self.no_struct_literal {
-                    ExprKind::Ident(name)
-                } else {
+                let path_span = self.current.span;
+                let mut segments = vec![name];
+                while self.eat(TokenKind::PathSep)? {
+                    segments.push(self.expect_identifier()?);
+                }
+                let path = Path {
+                    segments,
+                    span: path_span,
+                };
+
+                if !self.no_struct_literal && self.current.kind == TokenKind::OpenBrace {
                     self.advance()?;
                     let fields = if self.current.kind == TokenKind::CloseBrace {
                         Vec::new()
@@ -756,10 +816,12 @@ impl<'a> Parser<'a> {
                     self.expect(TokenKind::CloseBrace)?;
 
                     ExprKind::Struct(StructExpr {
-                        name,
+                        path,
                         fields,
                         span: start_span,
                     })
+                } else {
+                    ExprKind::Path(path)
                 }
             }
 

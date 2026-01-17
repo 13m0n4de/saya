@@ -6,7 +6,29 @@ pub struct Program {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Item {
+pub struct Item {
+    pub vis: Visibility,
+    pub kind: ItemKind,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Visibility {
+    Public,
+    Private,
+}
+
+impl From<&ast::Visibility> for Visibility {
+    fn from(value: &ast::Visibility) -> Self {
+        match value {
+            ast::Visibility::Public => Self::Public,
+            ast::Visibility::Private => Self::Private,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ItemKind {
     Const(ConstDef),
     Static(StaticDef),
     Function(FunctionDef),
@@ -36,7 +58,7 @@ pub struct ExternFunctionDecl {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConstDef {
-    pub name: String,
+    pub ident: String,
     pub type_id: TypeId,
     pub init: Literal,
     pub span: Span,
@@ -44,7 +66,7 @@ pub struct ConstDef {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StaticDef {
-    pub name: String,
+    pub ident: String,
     pub type_id: TypeId,
     pub init: Literal,
     pub span: Span,
@@ -52,10 +74,10 @@ pub struct StaticDef {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionDef {
-    pub name: String,
+    pub ident: String,
     pub params: Vec<Param>,
     pub return_type_id: TypeId,
-    pub body: Block,
+    pub body: Option<Block>,
     pub span: Span,
 }
 
@@ -95,6 +117,12 @@ pub struct Let {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum Place {
+    Local(String),
+    Global(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Expr {
     pub kind: ExprKind,
     pub type_id: TypeId,
@@ -105,7 +133,7 @@ pub struct Expr {
 pub enum ExprKind {
     Literal(Literal),
     Struct(StructExpr),
-    Ident(String),
+    Place(Place),
     Array(Vec<Expr>),
     Repeat(Box<Expr>, Literal),
     Field(Box<Expr>, String),
@@ -132,7 +160,7 @@ pub enum Literal {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StructExpr {
-    pub name: String,
+    pub ident: String,
     pub fields: Vec<FieldInit>,
     pub span: Span,
 }

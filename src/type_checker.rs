@@ -2,12 +2,15 @@ use std::{
     collections::{HashMap, HashSet},
     error::Error,
     fmt,
+    path::PathBuf,
     rc::Rc,
 };
 
 use crate::{
     ast, hir,
-    scope::{Const, Function, Scope, ScopeObject, Static, Struct},
+    lexer::Lexer,
+    parser::Parser,
+    scope::{Const, Function, Scope, ScopeKind, ScopeObject, Static, Struct},
     span::Span,
     types::{Field, TypeContext, TypeId, TypeKind},
 };
@@ -39,18 +42,27 @@ impl Error for TypeError {}
 type StructLayout = (Vec<(String, usize)>, usize, u64);
 
 pub struct TypeChecker<'a> {
-    ctx: &'a mut TypeContext,
+    namespace: Option<String>,
+    types: &'a mut TypeContext,
     scopes: Vec<Scope>,
     current_fn_return_type_id: Option<TypeId>,
 }
 
 impl<'a> TypeChecker<'a> {
-    pub fn new(ctx: &'a mut TypeContext) -> Self {
+    pub fn new(namespace: Option<String>, types: &'a mut TypeContext) -> Self {
         Self {
-            ctx,
+            namespace,
+            types,
             scopes: vec![Scope::new()],
             current_fn_return_type_id: None,
         }
+    }
+
+    pub fn check_program(&mut self, prog: &ast::Program) -> Result<hir::Program, TypeError> {
+        self.load_uses(prog)?;
+        self.scan_declarations(prog)?;
+        self.resolve_declarations(prog)?;
+        self.check_items(prog)
     }
 
     fn push_scope(&mut self) {
@@ -79,16 +91,41 @@ impl<'a> TypeChecker<'a> {
         self.scopes.iter().rev().find_map(|s| s.get(name))
     }
 
+    fn make_ident(&self, name: &str) -> String {
+        if let Some(ns) = &self.namespace {
+            format!("{ns}::{name}")
+        } else {
+            name.to_string()
+        }
+    }
+
+    fn resolve_if_unresolved(&mut self, ident: &str) -> Result<(), TypeError> {
+        match self.lookup(ident).map(|o| &o.kind) {
+            Some(
+                ScopeKind::Const(Const::Unresolved(_))
+                | ScopeKind::Static(Static::Unresolved(_))
+                | ScopeKind::Function(Function::Unresolved(_))
+                | ScopeKind::Struct(Struct::Unresolved(_)),
+            ) => self.resolve_declaration(ident),
+            _ => Ok(()),
+        }
+    }
+
     fn eval_const_expr(&mut self, expr: &hir::Expr) -> Result<hir::Literal, TypeError> {
         match &expr.kind {
             hir::ExprKind::Literal(lit) => Ok(lit.clone()),
-            hir::ExprKind::Ident(name) => match self.lookup(name) {
-                Some(ScopeObject::Const(Const::Resolved(_, value))) => Ok(value.clone()),
-                _ => Err(TypeError::new(
-                    format!("Constant `{name}` not found"),
-                    expr.span,
-                )),
-            },
+            hir::ExprKind::Place(hir::Place::Local(symbol) | hir::Place::Global(symbol)) => {
+                match self.lookup(symbol) {
+                    Some(ScopeObject {
+                        kind: ScopeKind::Const(Const::Resolved(_, value)),
+                        ..
+                    }) => Ok(value.clone()),
+                    _ => Err(TypeError::new(
+                        format!("Constant `{symbol}` not found"),
+                        expr.span,
+                    )),
+                }
+            }
             hir::ExprKind::Unary(hir::UnaryOp::Neg, operand) => {
                 match self.eval_const_expr(operand)? {
                     hir::Literal::Integer(n) => Ok(hir::Literal::Integer(-n)),
@@ -150,38 +187,88 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    pub fn check_program(&mut self, prog: &ast::Program) -> Result<hir::Program, TypeError> {
-        self.scan_declarations(prog)?;
-        self.resolve_declarations(prog)?;
-        self.check_items(prog)
+    fn load_uses(&mut self, prog: &ast::Program) -> Result<(), TypeError> {
+        for item in &prog.items {
+            let ast::ItemKind::Use(use_item) = &item.kind else {
+                continue;
+            };
+
+            let file_path = use_item
+                .path
+                .segments
+                .iter()
+                .collect::<PathBuf>()
+                .with_extension("td");
+
+            let code = std::fs::read_to_string(&file_path).map_err(|e| {
+                TypeError::new(
+                    format!("failed to read module file `{}`: {e}", file_path.display()),
+                    use_item.span,
+                )
+            })?;
+
+            let lexer = Lexer::new(&code);
+            let mut parser = Parser::new(lexer).map_err(|e| {
+                TypeError::new(
+                    format!("failed to parse module `{}`: {}", use_item.name, e),
+                    use_item.span,
+                )
+            })?;
+
+            let program = parser.parse().map_err(|e| {
+                TypeError::new(
+                    format!("failed to parse module `{}`: {}", use_item.name, e),
+                    use_item.span,
+                )
+            })?;
+
+            let module_ns = use_item.path.to_string();
+            let mut checker = TypeChecker::new(Some(module_ns.clone()), self.types);
+            checker.check_program(&program).map_err(|e| {
+                TypeError::new(
+                    format!("failed to type check module `{}`: {}", use_item.name, e),
+                    use_item.span,
+                )
+            })?;
+
+            for (name, obj) in checker.global_scope().clone() {
+                if obj.vis != ast::Visibility::Public {
+                    continue;
+                }
+                let full_path = format!("{module_ns}::{name}");
+                self.global_scope().insert(full_path, obj);
+            }
+        }
+        Ok(())
     }
 
     fn scan_declarations(&mut self, prog: &ast::Program) -> Result<(), TypeError> {
         for item in &prog.items {
-            let (name, obj, span) = match item {
-                ast::Item::Const(def) => (
+            let (name, kind, span) = match &item.kind {
+                ast::ItemKind::Const(def) => (
                     &def.name,
-                    ScopeObject::Const(Const::Unresolved(Rc::new(def.clone()))),
+                    ScopeKind::Const(Const::Unresolved(Rc::new(def.clone()))),
                     def.span,
                 ),
-                ast::Item::Static(def) => (
+                ast::ItemKind::Static(def) => (
                     &def.name,
-                    ScopeObject::Static(Static::Unresolved(Rc::new(def.clone()))),
+                    ScopeKind::Static(Static::Unresolved(Rc::new(def.clone()))),
                     def.span,
                 ),
-                ast::Item::Function(def) => (
+                ast::ItemKind::Function(def) => (
                     &def.name,
-                    ScopeObject::Function(Function::Unresolved(Rc::new(def.clone()))),
+                    ScopeKind::Function(Function::Unresolved(Rc::new(def.clone()))),
                     def.span,
                 ),
-                ast::Item::Struct(def) => (
+                ast::ItemKind::Struct(def) => (
                     &def.name,
-                    ScopeObject::Struct(Struct::Unresolved(Rc::new(def.clone()))),
+                    ScopeKind::Struct(Struct::Unresolved(Rc::new(def.clone()))),
                     def.span,
                 ),
-                ast::Item::Extern(_) => continue,
+                ast::ItemKind::Use(_) | ast::ItemKind::Extern(_) => continue,
             };
 
+            let obj = ScopeObject::new(item.vis.clone(), kind);
             if self.global_scope().insert(name.clone(), obj).is_some() {
                 return Err(TypeError::new(
                     format!("name `{name}` already defined"),
@@ -195,41 +282,32 @@ impl<'a> TypeChecker<'a> {
 
     fn resolve_declarations(&mut self, prog: &ast::Program) -> Result<(), TypeError> {
         for item in &prog.items {
-            match item {
-                ast::Item::Extern(ast::ExternItem::Static(decl)) => {
+            match &item.kind {
+                ast::ItemKind::Extern(ast::ExternItem::Static(decl)) => {
                     let type_id = self.lower_type(&decl.type_ann)?;
-                    if self
-                        .global_scope()
-                        .insert(
-                            decl.name.clone(),
-                            ScopeObject::Static(Static::Resolved(
-                                type_id,
-                                hir::Literal::Integer(0),
-                            )),
-                        )
-                        .is_some()
-                    {
+                    let obj = ScopeObject::new(
+                        item.vis.clone(),
+                        ScopeKind::Static(Static::Resolved(type_id, hir::Literal::Integer(0))),
+                    );
+                    if self.global_scope().insert(decl.name.clone(), obj).is_some() {
                         return Err(TypeError::new(
                             format!("name `{}` already defined", decl.name),
                             decl.span,
                         ));
                     }
                 }
-                ast::Item::Extern(ast::ExternItem::Function(decl)) => {
+                ast::ItemKind::Extern(ast::ExternItem::Function(decl)) => {
                     let params = decl
                         .params
                         .iter()
                         .map(|p| self.lower_type(&p.type_ann))
                         .collect::<Result<Vec<_>, _>>()?;
                     let return_ty = self.lower_type(&decl.return_type_ann)?;
-                    if self
-                        .global_scope()
-                        .insert(
-                            decl.name.clone(),
-                            ScopeObject::Function(Function::Resolved(params, return_ty)),
-                        )
-                        .is_some()
-                    {
+                    let obj = ScopeObject::new(
+                        item.vis.clone(),
+                        ScopeKind::Function(Function::Resolved(params, return_ty)),
+                    );
+                    if self.global_scope().insert(decl.name.clone(), obj).is_some() {
                         return Err(TypeError::new(
                             format!("name `{}` already defined", decl.name),
                             decl.span,
@@ -243,11 +321,11 @@ impl<'a> TypeChecker<'a> {
         let names_to_resolve: Vec<String> = self
             .global_scope()
             .iter()
-            .filter_map(|(name, obj)| match obj {
-                ScopeObject::Const(Const::Unresolved(_))
-                | ScopeObject::Static(Static::Unresolved(_))
-                | ScopeObject::Function(Function::Unresolved(_))
-                | ScopeObject::Struct(Struct::Unresolved(_)) => Some(name.clone()),
+            .filter_map(|(name, obj)| match &obj.kind {
+                ScopeKind::Const(Const::Unresolved(_))
+                | ScopeKind::Static(Static::Unresolved(_))
+                | ScopeKind::Function(Function::Unresolved(_))
+                | ScopeKind::Struct(Struct::Unresolved(_)) => Some(name.clone()),
                 _ => None,
             })
             .collect();
@@ -260,21 +338,29 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn resolve_declaration(&mut self, name: &str) -> Result<(), TypeError> {
-        match self.lookup(name).cloned() {
-            Some(ScopeObject::Const(decl)) => self.resolve_const_decl(name, decl),
-            Some(ScopeObject::Static(decl)) => self.resolve_static_decl(name, decl),
-            Some(ScopeObject::Function(decl)) => self.resolve_function_decl(name, decl),
-            Some(ScopeObject::Struct(decl)) => self.resolve_struct_decl(name, decl),
-            _ => Ok(()),
+        let Some(obj) = self.lookup(name).cloned() else {
+            return Ok(());
+        };
+        match &obj.kind {
+            ScopeKind::Const(_) => self.resolve_const_decl(name, obj),
+            ScopeKind::Static(_) => self.resolve_static_decl(name, obj),
+            ScopeKind::Function(_) => self.resolve_function_decl(name, obj),
+            ScopeKind::Struct(_) => self.resolve_struct_decl(name, obj),
+            ScopeKind::Var(_) => Ok(()),
         }
     }
 
-    fn resolve_const_decl(&mut self, name: &str, decl: Const) -> Result<(), TypeError> {
+    fn resolve_const_decl(&mut self, name: &str, obj: ScopeObject) -> Result<(), TypeError> {
+        let ScopeKind::Const(decl) = obj.kind else {
+            unreachable!()
+        };
+        let vis = obj.vis;
+
         match decl {
             Const::Unresolved(def) => {
                 self.global_scope().insert(
                     name.to_string(),
-                    ScopeObject::Const(Const::Resolving(def.clone())),
+                    ScopeObject::new(vis.clone(), ScopeKind::Const(Const::Resolving(def.clone()))),
                 );
 
                 let type_id = self.lower_type(&def.type_ann)?;
@@ -283,8 +369,8 @@ impl<'a> TypeChecker<'a> {
                 if typed_init.type_id != type_id {
                     return Err(TypeError::new(
                         format!(
-                            "type mismatch in const `{}`: expected `{:?}`, found `{:?}`",
-                            def.name, type_id, typed_init.type_id
+                            "type mismatch in const `{name}`: expected `{type_id:?}`, found `{:?}`",
+                            typed_init.type_id
                         ),
                         def.init.span,
                     ));
@@ -293,26 +379,34 @@ impl<'a> TypeChecker<'a> {
                 let value = self.eval_const_expr(&typed_init)?;
 
                 self.global_scope().insert(
-                    def.name.clone(),
-                    ScopeObject::Const(Const::Resolved(type_id, value)),
+                    name.to_string(),
+                    ScopeObject::new(vis, ScopeKind::Const(Const::Resolved(type_id, value))),
                 );
 
                 Ok(())
             }
             Const::Resolving(def) => Err(TypeError::new(
-                format!("Circular dependency for const `{name}`"),
+                format!("circular dependency for const `{name}`"),
                 def.span,
             )),
             Const::Resolved(_, _) => Ok(()),
         }
     }
 
-    fn resolve_static_decl(&mut self, name: &str, decl: Static) -> Result<(), TypeError> {
+    fn resolve_static_decl(&mut self, name: &str, obj: ScopeObject) -> Result<(), TypeError> {
+        let ScopeKind::Static(decl) = obj.kind else {
+            unreachable!()
+        };
+        let vis = obj.vis;
+
         match decl {
             Static::Unresolved(def) => {
                 self.global_scope().insert(
                     name.to_string(),
-                    ScopeObject::Static(Static::Resolving(def.clone())),
+                    ScopeObject::new(
+                        vis.clone(),
+                        ScopeKind::Static(Static::Resolving(def.clone())),
+                    ),
                 );
 
                 let type_id = self.lower_type(&def.type_ann)?;
@@ -321,8 +415,8 @@ impl<'a> TypeChecker<'a> {
                 if typed_init.type_id != type_id {
                     return Err(TypeError::new(
                         format!(
-                            "type mismatch in static `{}`: expected `{:?}`, found `{:?}`",
-                            def.name, type_id, typed_init.type_id
+                            "type mismatch in static `{name}`: expected `{type_id:?}`, found `{:?}`",
+                            typed_init.type_id
                         ),
                         def.init.span,
                     ));
@@ -331,26 +425,34 @@ impl<'a> TypeChecker<'a> {
                 let value = self.eval_const_expr(&typed_init)?;
 
                 self.global_scope().insert(
-                    def.name.clone(),
-                    ScopeObject::Static(Static::Resolved(type_id, value)),
+                    name.to_string(),
+                    ScopeObject::new(vis, ScopeKind::Static(Static::Resolved(type_id, value))),
                 );
 
                 Ok(())
             }
             Static::Resolving(def) => Err(TypeError::new(
-                format!("Circular dependency for static `{name}`"),
+                format!("circular dependency for static `{name}`"),
                 def.span,
             )),
             Static::Resolved(_, _) => Ok(()),
         }
     }
 
-    fn resolve_function_decl(&mut self, name: &str, decl: Function) -> Result<(), TypeError> {
+    fn resolve_function_decl(&mut self, name: &str, obj: ScopeObject) -> Result<(), TypeError> {
+        let ScopeKind::Function(decl) = obj.kind else {
+            unreachable!()
+        };
+        let vis = obj.vis;
+
         match decl {
             Function::Unresolved(def) => {
                 self.global_scope().insert(
                     name.to_string(),
-                    ScopeObject::Function(Function::Resolving(def.clone())),
+                    ScopeObject::new(
+                        vis.clone(),
+                        ScopeKind::Function(Function::Resolving(def.clone())),
+                    ),
                 );
 
                 let params = def
@@ -361,33 +463,44 @@ impl<'a> TypeChecker<'a> {
                 let return_ty = self.lower_type(&def.return_type_ann)?;
 
                 self.global_scope().insert(
-                    def.name.clone(),
-                    ScopeObject::Function(Function::Resolved(params, return_ty)),
+                    name.to_string(),
+                    ScopeObject::new(
+                        vis,
+                        ScopeKind::Function(Function::Resolved(params, return_ty)),
+                    ),
                 );
 
                 Ok(())
             }
             Function::Resolving(def) => Err(TypeError::new(
-                format!("Circular dependency for function `{name}`"),
+                format!("circular dependency for function `{name}`"),
                 def.span,
             )),
             Function::Resolved(_, _) => Ok(()),
         }
     }
 
-    fn resolve_struct_decl(&mut self, name: &str, decl: Struct) -> Result<(), TypeError> {
+    fn resolve_struct_decl(&mut self, name: &str, obj: ScopeObject) -> Result<(), TypeError> {
+        let ScopeKind::Struct(decl) = obj.kind else {
+            unreachable!()
+        };
+        let vis = obj.vis;
+
         match decl {
             Struct::Unresolved(def) => {
                 self.global_scope().insert(
                     name.to_string(),
-                    ScopeObject::Struct(Struct::Resolving(def.clone())),
+                    ScopeObject::new(
+                        vis.clone(),
+                        ScopeKind::Struct(Struct::Resolving(def.clone())),
+                    ),
                 );
 
                 let mut field_names = HashSet::new();
                 for field in &def.fields {
                     if !field_names.insert(&field.name) {
                         return Err(TypeError::new(
-                            format!("duplicate field `{}` in struct `{}`", field.name, def.name),
+                            format!("duplicate field `{}` in struct `{name}`", field.name),
                             field.span,
                         ));
                     }
@@ -395,33 +508,33 @@ impl<'a> TypeChecker<'a> {
 
                 let (field_layouts, size, align) = self.struct_layout(&def)?;
 
-                let struct_type_id = self.ctx.mk_empty_struct();
+                let struct_type_id = self.types.mk_empty_struct();
 
                 self.global_scope().insert(
-                    def.name.clone(),
-                    ScopeObject::Struct(Struct::Resolved(struct_type_id)),
+                    name.to_string(),
+                    ScopeObject::new(vis, ScopeKind::Struct(Struct::Resolved(struct_type_id))),
                 );
 
                 let fields = def
                     .fields
                     .iter()
                     .zip(field_layouts.iter())
-                    .map(|(field, (name, offset))| {
+                    .map(|(field, (field_name, offset))| {
                         let type_id = self.lower_type(&field.type_ann)?;
                         Ok(Field {
-                            name: name.clone(),
+                            name: field_name.clone(),
                             type_id,
                             offset: *offset,
                         })
                     })
                     .collect::<Result<Vec<_>, TypeError>>()?;
 
-                self.ctx.set_struct(struct_type_id, fields, size, align);
+                self.types.set_struct(struct_type_id, fields, size, align);
 
                 Ok(())
             }
             Struct::Resolving(def) => Err(TypeError::new(
-                format!("Circular dependency for struct `{name}`"),
+                format!("circular dependency for struct `{name}`"),
                 def.span,
             )),
             Struct::Resolved(_) => Ok(()),
@@ -431,12 +544,13 @@ impl<'a> TypeChecker<'a> {
     fn check_items(&mut self, prog: &ast::Program) -> Result<hir::Program, TypeError> {
         let mut typed_items = Vec::new();
         for item in &prog.items {
-            let typed_item = match item {
-                ast::Item::Const(def) => {
+            let typed_item_kind = match &item.kind {
+                ast::ItemKind::Const(def) => {
                     let (type_id, value) = match self.lookup(&def.name) {
-                        Some(ScopeObject::Const(Const::Resolved(type_id, value))) => {
-                            (*type_id, value.clone())
-                        }
+                        Some(ScopeObject {
+                            kind: ScopeKind::Const(Const::Resolved(type_id, value)),
+                            ..
+                        }) => (*type_id, value.clone()),
                         _ => {
                             return Err(TypeError::new(
                                 format!("const `{}` not resolved", def.name),
@@ -445,18 +559,19 @@ impl<'a> TypeChecker<'a> {
                         }
                     };
 
-                    hir::Item::Const(hir::ConstDef {
-                        name: def.name.clone(),
+                    hir::ItemKind::Const(hir::ConstDef {
+                        ident: self.make_ident(&def.name),
                         type_id,
                         init: value,
                         span: def.span,
                     })
                 }
-                ast::Item::Static(def) => {
+                ast::ItemKind::Static(def) => {
                     let (type_id, value) = match self.lookup(&def.name) {
-                        Some(ScopeObject::Static(Static::Resolved(type_id, value))) => {
-                            (*type_id, value.clone())
-                        }
+                        Some(ScopeObject {
+                            kind: ScopeKind::Static(Static::Resolved(type_id, value)),
+                            ..
+                        }) => (*type_id, value.clone()),
                         _ => {
                             return Err(TypeError::new(
                                 format!("static `{}` not resolved", def.name),
@@ -465,18 +580,18 @@ impl<'a> TypeChecker<'a> {
                         }
                     };
 
-                    hir::Item::Static(hir::StaticDef {
-                        name: def.name.clone(),
+                    hir::ItemKind::Static(hir::StaticDef {
+                        ident: self.make_ident(&def.name),
                         type_id,
                         init: value,
                         span: def.span,
                     })
                 }
-                ast::Item::Function(def) => {
+                ast::ItemKind::Function(def) => {
                     let typed_func = self.check_function(def)?;
-                    hir::Item::Function(typed_func)
+                    hir::ItemKind::Function(typed_func)
                 }
-                ast::Item::Extern(extern_item) => {
+                ast::ItemKind::Extern(extern_item) => {
                     let hir_extern = match extern_item {
                         ast::ExternItem::Static(decl) => {
                             let type_id = self.lower_type(&decl.type_ann)?;
@@ -508,14 +623,18 @@ impl<'a> TypeChecker<'a> {
                             })
                         }
                     };
-                    hir::Item::Extern(hir_extern)
+                    hir::ItemKind::Extern(hir_extern)
                 }
-                ast::Item::Struct(_) => {
+                ast::ItemKind::Use(_) | ast::ItemKind::Struct(_) => {
                     continue;
                 }
             };
 
-            typed_items.push(typed_item);
+            typed_items.push(hir::Item {
+                vis: hir::Visibility::from(&item.vis),
+                kind: typed_item_kind,
+                span: item.span,
+            });
         }
 
         Ok(hir::Program { items: typed_items })
@@ -564,26 +683,20 @@ impl<'a> TypeChecker<'a> {
                 Ok((elem_size * len, elem_align))
             }
 
-            ast::TypeAnnKind::Named(name) => {
-                if matches!(
-                    self.lookup(name),
-                    Some(
-                        ScopeObject::Const(Const::Unresolved(_))
-                            | ScopeObject::Static(Static::Unresolved(_))
-                            | ScopeObject::Function(Function::Unresolved(_))
-                            | ScopeObject::Struct(Struct::Unresolved(_))
-                    )
-                ) {
-                    self.resolve_declaration(name)?;
-                }
+            ast::TypeAnnKind::Path(path) => {
+                let ident = path.to_string();
+                self.resolve_if_unresolved(&ident)?;
 
-                match self.lookup(name) {
-                    Some(ScopeObject::Struct(Struct::Resolved(type_id))) => {
-                        let t = self.ctx.get(*type_id);
+                match self.lookup(&ident) {
+                    Some(ScopeObject {
+                        kind: ScopeKind::Struct(Struct::Resolved(type_id)),
+                        ..
+                    }) => {
+                        let t = self.types.get(*type_id);
                         Ok((t.size, t.align))
                     }
                     _ => Err(TypeError::new(
-                        format!("undefined type `{name}`"),
+                        format!("undefined type `{ident}`"),
                         type_ann.span,
                     )),
                 }
@@ -601,7 +714,7 @@ impl<'a> TypeChecker<'a> {
 
             ast::TypeAnnKind::Pointer(inner) => {
                 let inner_type_id = self.lower_type(inner)?;
-                Ok(self.ctx.mk_pointer(inner_type_id))
+                Ok(self.types.mk_pointer(inner_type_id))
             }
 
             ast::TypeAnnKind::Array(elem, len_expr) => {
@@ -636,31 +749,25 @@ impl<'a> TypeChecker<'a> {
                 }
 
                 let len = len_val as usize;
-                Ok(self.ctx.mk_array(elem_type_id, len))
+                Ok(self.types.mk_array(elem_type_id, len))
             }
 
             ast::TypeAnnKind::Slice(elem) => {
                 let elem_type_id = self.lower_type(elem)?;
-                Ok(self.ctx.mk_slice(elem_type_id))
+                Ok(self.types.mk_slice(elem_type_id))
             }
 
-            ast::TypeAnnKind::Named(name) => {
-                if matches!(
-                    self.lookup(name),
-                    Some(
-                        ScopeObject::Const(Const::Unresolved(_))
-                            | ScopeObject::Static(Static::Unresolved(_))
-                            | ScopeObject::Function(Function::Unresolved(_))
-                            | ScopeObject::Struct(Struct::Unresolved(_))
-                    )
-                ) {
-                    self.resolve_declaration(name)?;
-                }
+            ast::TypeAnnKind::Path(path) => {
+                let ident = path.to_string();
+                self.resolve_if_unresolved(&ident)?;
 
-                match self.lookup(name) {
-                    Some(ScopeObject::Struct(Struct::Resolved(type_id))) => Ok(*type_id),
+                match self.lookup(&ident) {
+                    Some(ScopeObject {
+                        kind: ScopeKind::Struct(Struct::Resolved(type_id)),
+                        ..
+                    }) => Ok(*type_id),
                     _ => Err(TypeError::new(
-                        format!("undefined type `{name}`"),
+                        format!("undefined type `{ident}`"),
                         type_ann.span,
                     )),
                 }
@@ -696,6 +803,7 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn check_function(&mut self, func: &ast::FunctionDef) -> Result<hir::FunctionDef, TypeError> {
+        let ident = self.make_ident(&func.name);
         let return_type_id = self.lower_type(&func.return_type_ann)?;
         self.current_fn_return_type_id = Some(return_type_id);
         self.push_scope();
@@ -703,9 +811,10 @@ impl<'a> TypeChecker<'a> {
         let mut hir_params = Vec::new();
         for param in &func.params {
             let param_type_id = self.lower_type(&param.type_ann)?;
+            let obj = ScopeObject::private(ScopeKind::Var(param_type_id));
             if self
                 .current_scope()
-                .insert(param.name.clone(), ScopeObject::Var(param_type_id))
+                .insert(param.name.clone(), obj)
                 .is_some()
             {
                 return Err(TypeError::new(
@@ -720,24 +829,28 @@ impl<'a> TypeChecker<'a> {
             });
         }
 
-        let typed_body = self.check_block(&func.body)?;
-
-        // The `Never` type is compatible with any return type
-        if typed_body.type_id != return_type_id && typed_body.type_id != TypeId::NEVER {
-            return Err(TypeError::new(
-                format!(
-                    "mismatched return type in function `{}`: expected `{:?}`, found `{:?}`",
-                    func.name, return_type_id, typed_body.type_id
-                ),
-                func.body.span,
-            ));
-        }
+        let typed_body = match &func.body {
+            Some(block) => {
+                let block = self.check_block(block)?;
+                if block.type_id != return_type_id && block.type_id != TypeId::NEVER {
+                    return Err(TypeError::new(
+                        format!(
+                            "mismatched return type in function `{ident}`: expected `{return_type_id:?}`, found `{:?}`",
+                            block.type_id
+                        ),
+                        block.span,
+                    ));
+                }
+                Some(block)
+            }
+            None => None,
+        };
 
         self.pop_scope();
         self.current_fn_return_type_id = None;
 
         Ok(hir::FunctionDef {
-            name: func.name.clone(),
+            ident,
             params: hir_params,
             return_type_id,
             body: typed_body,
@@ -824,9 +937,10 @@ impl<'a> TypeChecker<'a> {
                     ));
                 }
 
+                let obj = ScopeObject::private(ScopeKind::Var(declared_type_id));
                 if self
                     .current_scope()
-                    .insert(let_stmt.name.clone(), ScopeObject::Var(declared_type_id))
+                    .insert(let_stmt.name.clone(), obj)
                     .is_some()
                 {
                     return Err(TypeError::new(
@@ -862,7 +976,7 @@ impl<'a> TypeChecker<'a> {
         match &expr.kind {
             ast::ExprKind::Literal(..) => self.check_expr_literal(expr),
             ast::ExprKind::Struct(..) => self.check_expr_struct(expr),
-            ast::ExprKind::Ident(..) => self.check_expr_ident(expr),
+            ast::ExprKind::Path(..) => self.check_expr_path(expr),
             ast::ExprKind::Array(..) => self.check_expr_array(expr),
             ast::ExprKind::Repeat(..) => self.check_expr_repeat(expr),
             ast::ExprKind::Field(..) => self.check_expr_field(expr),
@@ -918,11 +1032,11 @@ impl<'a> TypeChecker<'a> {
                 (type_id, hir::ExprKind::Literal(hir::Literal::Integer(*n)))
             }
             ast::Literal::String(s) => (
-                self.ctx.mk_slice(TypeId::U8),
+                self.types.mk_slice(TypeId::U8),
                 hir::ExprKind::Literal(hir::Literal::String(s.clone())),
             ),
             ast::Literal::CString(s) => (
-                self.ctx.mk_pointer(TypeId::U8),
+                self.types.mk_pointer(TypeId::U8),
                 hir::ExprKind::Literal(hir::Literal::CString(s.clone())),
             ),
             ast::Literal::Bool(b) => (TypeId::BOOL, hir::ExprKind::Literal(hir::Literal::Bool(*b))),
@@ -940,21 +1054,25 @@ impl<'a> TypeChecker<'a> {
             unreachable!()
         };
 
-        let struct_type_id = match self.lookup(&struct_expr.name) {
-            Some(ScopeObject::Struct(Struct::Resolved(type_id))) => *type_id,
+        let name = struct_expr.path.to_string();
+        let struct_type_id = match self.lookup(&name) {
+            Some(ScopeObject {
+                kind: ScopeKind::Struct(Struct::Resolved(type_id)),
+                ..
+            }) => *type_id,
             _ => {
                 return Err(TypeError::new(
-                    format!("undefined struct `{}`", struct_expr.name),
+                    format!("undefined struct `{name}`"),
                     expr.span,
                 ));
             }
         };
 
-        let expected_fields = match &self.ctx.get(struct_type_id).kind {
+        let expected_fields = match &self.types.get(struct_type_id).kind {
             TypeKind::Struct(fields) => fields.clone(),
             _ => {
                 return Err(TypeError::new(
-                    format!("`{}` is not a struct", struct_expr.name),
+                    format!("`{name}` is not a struct"),
                     expr.span,
                 ));
             }
@@ -975,8 +1093,8 @@ impl<'a> TypeChecker<'a> {
             let field_init = provided_fields.remove(&field.name).ok_or_else(|| {
                 TypeError::new(
                     format!(
-                        "missing field `{}` in struct literal for `{}`",
-                        field.name, struct_expr.name
+                        "missing field `{}` in struct literal for `{name}`",
+                        field.name
                     ),
                     expr.span,
                 )
@@ -1001,17 +1119,22 @@ impl<'a> TypeChecker<'a> {
             });
         }
 
-        // Any remaining fields in the map are extra/unknown fields
-        if let Some((name, field_init)) = provided_fields.into_iter().next() {
+        if let Some((field_name, field_init)) = provided_fields.into_iter().next() {
             return Err(TypeError::new(
-                format!("struct `{}` has no field `{}`", struct_expr.name, name),
+                format!("struct `{name}` has no field `{field_name}`"),
                 field_init.span,
             ));
         }
 
+        let ident = if struct_expr.path.segments.len() > 1 {
+            name
+        } else {
+            self.make_ident(&name)
+        };
+
         Ok(hir::Expr {
             kind: hir::ExprKind::Struct(hir::StructExpr {
-                name: struct_expr.name.clone(),
+                ident,
                 fields: typed_fields,
                 span: struct_expr.span,
             }),
@@ -1020,40 +1143,42 @@ impl<'a> TypeChecker<'a> {
         })
     }
 
-    fn check_expr_ident(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
-        let ast::ExprKind::Ident(name) = &expr.kind else {
+    fn check_expr_path(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
+        let ast::ExprKind::Path(path) = &expr.kind else {
             unreachable!()
         };
 
-        if matches!(
-            self.lookup(name),
-            Some(
-                ScopeObject::Const(Const::Unresolved(_))
-                    | ScopeObject::Static(Static::Unresolved(_))
-                    | ScopeObject::Function(Function::Unresolved(_))
-                    | ScopeObject::Struct(Struct::Unresolved(_))
-            )
-        ) {
-            self.resolve_declaration(name)?;
-        }
+        let name = path.to_string();
+        self.resolve_if_unresolved(&name)?;
 
-        let type_id = match self.lookup(name) {
-            Some(ScopeObject::Var(type_id)) => *type_id,
-            Some(ScopeObject::Const(Const::Resolved(type_id, _))) => *type_id,
-            Some(ScopeObject::Static(Static::Resolved(type_id, _))) => *type_id,
-            _ => {
-                return Err(TypeError::new(
-                    format!("undefined variable `{name}`"),
-                    expr.span,
-                ));
+        match self.lookup(&name).map(|o| &o.kind) {
+            Some(ScopeKind::Var(type_id)) => Ok(hir::Expr {
+                kind: hir::ExprKind::Place(hir::Place::Local(name)),
+                type_id: *type_id,
+                span: expr.span,
+            }),
+            Some(ScopeKind::Static(Static::Resolved(type_id, _))) => {
+                let ident = if path.segments.len() > 1 {
+                    name
+                } else {
+                    self.make_ident(&name)
+                };
+                Ok(hir::Expr {
+                    kind: hir::ExprKind::Place(hir::Place::Global(ident)),
+                    type_id: *type_id,
+                    span: expr.span,
+                })
             }
-        };
-
-        Ok(hir::Expr {
-            kind: hir::ExprKind::Ident(name.clone()),
-            type_id,
-            span: expr.span,
-        })
+            Some(ScopeKind::Const(Const::Resolved(type_id, literal))) => Ok(hir::Expr {
+                kind: hir::ExprKind::Literal(literal.clone()),
+                type_id: *type_id,
+                span: expr.span,
+            }),
+            _ => Err(TypeError::new(
+                format!("undefined variable `{name}`"),
+                expr.span,
+            )),
+        }
     }
 
     fn check_expr_array(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
@@ -1087,7 +1212,7 @@ impl<'a> TypeChecker<'a> {
             typed_elems.push(typed_elem);
         }
 
-        let type_id = self.ctx.mk_array(elem_type_id, elems.len());
+        let type_id = self.types.mk_array(elem_type_id, elems.len());
         Ok(hir::Expr {
             kind: hir::ExprKind::Array(typed_elems),
             type_id,
@@ -1118,7 +1243,7 @@ impl<'a> TypeChecker<'a> {
         if let hir::Literal::Integer(n) = evaluated_count {
             Ok(hir::Expr {
                 kind: hir::ExprKind::Repeat(Box::new(typed_elem.clone()), evaluated_count),
-                type_id: self.ctx.mk_array(typed_elem.type_id, n as usize),
+                type_id: self.types.mk_array(typed_elem.type_id, n as usize),
                 span: expr.span,
             })
         } else {
@@ -1136,9 +1261,9 @@ impl<'a> TypeChecker<'a> {
 
         let typed_base = self.check_expression(base)?;
 
-        let (final_base, struct_type_id) = match self.ctx.get(typed_base.type_id).kind {
+        let (final_base, struct_type_id) = match self.types.get(typed_base.type_id).kind {
             TypeKind::Pointer(inner_type_id) => {
-                if !matches!(self.ctx.get(inner_type_id).kind, TypeKind::Struct(_)) {
+                if !matches!(self.types.get(inner_type_id).kind, TypeKind::Struct(_)) {
                     return Err(TypeError::new(
                         format!(
                             "cannot access field on pointer to non-struct type `{inner_type_id:?}`",
@@ -1170,7 +1295,7 @@ impl<'a> TypeChecker<'a> {
             }
         };
 
-        let TypeKind::Struct(fields) = &self.ctx.get(struct_type_id).kind else {
+        let TypeKind::Struct(fields) = &self.types.get(struct_type_id).kind else {
             unreachable!()
         };
 
@@ -1206,8 +1331,8 @@ impl<'a> TypeChecker<'a> {
             ));
         }
 
-        let (final_array, elem_type_id) = match self.ctx.get(typed_array.type_id).kind {
-            TypeKind::Pointer(inner_type_id) => match self.ctx.get(inner_type_id).kind {
+        let (final_array, elem_type_id) = match self.types.get(typed_array.type_id).kind {
+            TypeKind::Pointer(inner_type_id) => match self.types.get(inner_type_id).kind {
                 TypeKind::Array(elem, _) | TypeKind::Slice(elem) => {
                     let deref_expr = hir::Expr {
                         kind: hir::ExprKind::Unary(hir::UnaryOp::Deref, Box::new(typed_array)),
@@ -1248,34 +1373,24 @@ impl<'a> TypeChecker<'a> {
             unreachable!()
         };
 
-        let callee_name = if let ast::ExprKind::Ident(name) = &call.callee.kind {
-            name.clone()
-        } else {
+        let ast::ExprKind::Path(callee_path) = &call.callee.kind else {
             return Err(TypeError::new(
                 "function call must use identifier".to_string(),
                 call.callee.span,
             ));
         };
 
-        if matches!(
-            self.lookup(&callee_name),
-            Some(
-                ScopeObject::Const(Const::Unresolved(_))
-                    | ScopeObject::Static(Static::Unresolved(_))
-                    | ScopeObject::Function(Function::Unresolved(_))
-                    | ScopeObject::Struct(Struct::Unresolved(_))
-            )
-        ) {
-            self.resolve_declaration(&callee_name)?;
-        }
+        let name = callee_path.to_string();
+        self.resolve_if_unresolved(&name)?;
 
-        let (params, return_ty) = match self.lookup(&callee_name) {
-            Some(ScopeObject::Function(Function::Resolved(params, return_ty))) => {
-                (params.clone(), *return_ty)
-            }
+        let (params, return_ty) = match self.lookup(&name) {
+            Some(ScopeObject {
+                kind: ScopeKind::Function(Function::Resolved(params, return_ty)),
+                ..
+            }) => (params.clone(), *return_ty),
             _ => {
                 return Err(TypeError::new(
-                    format!("undefined function `{callee_name}`"),
+                    format!("undefined function `{name}`"),
                     call.span,
                 ));
             }
@@ -1284,7 +1399,7 @@ impl<'a> TypeChecker<'a> {
         if call.args.len() != params.len() {
             return Err(TypeError::new(
                 format!(
-                    "function `{callee_name}` expects {} arguments, got {}",
+                    "function `{name}` expects {} arguments, got {}",
                     params.len(),
                     call.args.len()
                 ),
@@ -1298,8 +1413,8 @@ impl<'a> TypeChecker<'a> {
             if typed_arg.type_id != param_type_id {
                 return Err(TypeError::new(
                     format!(
-                        "argument type mismatch: expected `{:?}`, found `{:?}`",
-                        param_type_id, typed_arg.type_id
+                        "argument type mismatch: expected `{param_type_id:?}`, found `{:?}`",
+                        typed_arg.type_id
                     ),
                     arg.span,
                 ));
@@ -1307,8 +1422,14 @@ impl<'a> TypeChecker<'a> {
             typed_args.push(typed_arg);
         }
 
+        let ident = if callee_path.segments.len() > 1 {
+            name
+        } else {
+            self.make_ident(&name)
+        };
+
         let typed_callee = hir::Expr {
-            kind: hir::ExprKind::Ident(callee_name),
+            kind: hir::ExprKind::Place(hir::Place::Global(ident)),
             type_id: return_ty,
             span: call.callee.span,
         };
@@ -1353,17 +1474,16 @@ impl<'a> TypeChecker<'a> {
                 }
             },
             hir::UnaryOp::Ref => {
-                if let hir::ExprKind::Ident(name) = &typed_operand.kind
-                    && matches!(self.lookup(name), Some(ScopeObject::Const(_)))
-                {
+                if let hir::ExprKind::Literal(literal) = &typed_operand.kind {
                     return Err(TypeError::new(
-                        format!("cannot take address of constant `{name}`"),
+                        format!("cannot take address of constant `{literal:?}`"),
                         operand.span,
                     ));
                 }
-                self.ctx.mk_pointer(typed_operand.type_id)
+
+                self.types.mk_pointer(typed_operand.type_id)
             }
-            hir::UnaryOp::Deref => match self.ctx.get(typed_operand.type_id).kind {
+            hir::UnaryOp::Deref => match self.types.get(typed_operand.type_id).kind {
                 TypeKind::Pointer(elem) => elem,
                 _ => {
                     return Err(TypeError::new(

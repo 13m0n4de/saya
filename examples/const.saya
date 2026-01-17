@@ -21,7 +21,7 @@ const LOGIC_OR: bool = CMP_LT || CMP_GT;
 const TRUE_VAL: bool = true;
 const FALSE_VAL: bool = false;
 
-fn main() -> i64 {
+pub fn main() -> i64 {
     if LOGIC_OR {
         return ADD + SUB + MUL + DIV + REM + BIT_AND + BIT_OR;
     } else {

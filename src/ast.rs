@@ -1,6 +1,18 @@
 use crate::span::Span;
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct Path {
+    pub segments: Vec<String>,
+    pub span: Span,
+}
+
+impl std::fmt::Display for Path {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.segments.join("::"))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct TypeAnn {
     pub kind: TypeAnnKind,
     pub span: Span,
@@ -14,7 +26,7 @@ pub enum TypeAnnKind {
     Pointer(Box<TypeAnn>),
     Array(Box<TypeAnn>, Box<Expr>),
     Slice(Box<TypeAnn>),
-    Named(String),
+    Path(Path),
     Unit,
     Never,
 }
@@ -25,7 +37,28 @@ pub struct Program {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Item {
+pub struct Item {
+    pub vis: Visibility,
+    pub kind: ItemKind,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Visibility {
+    Public,
+    Private,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Use {
+    pub path: Path,
+    pub name: String,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ItemKind {
+    Use(Use),
     Const(ConstDef),
     Static(StaticDef),
     Function(FunctionDef),
@@ -89,7 +122,7 @@ pub struct FunctionDef {
     pub name: String,
     pub params: Vec<Param>,
     pub return_type_ann: TypeAnn,
-    pub body: Block,
+    pub body: Option<Block>,
     pub span: Span,
 }
 
@@ -137,7 +170,7 @@ pub struct Expr {
 pub enum ExprKind {
     Literal(Literal),
     Struct(StructExpr),
-    Ident(String),
+    Path(Path),
     Array(Vec<Expr>),
     Repeat(Box<Expr>, Box<Expr>),
     Field(Box<Expr>, String),
@@ -164,7 +197,7 @@ pub enum Literal {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StructExpr {
-    pub name: String,
+    pub path: Path,
     pub fields: Vec<FieldInit>,
     pub span: Span,
 }

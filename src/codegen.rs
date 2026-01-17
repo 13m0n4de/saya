@@ -1,8 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    error::Error,
-    fmt,
-};
+use std::{error::Error, fmt};
 
 use indexmap::IndexMap;
 
@@ -68,29 +64,23 @@ impl fmt::Display for CodeGenError {
 impl Error for CodeGenError {}
 
 pub struct CodeGen<'a> {
-    ctx: &'a mut TypeContext,
+    types: &'a mut TypeContext,
     temp_counter: usize,
     label_counter: usize,
     string_counter: usize,
-    scopes: Vec<HashSet<String>>,
     loops: Vec<LoopContext>,
-    constants: HashMap<String, Literal>,
-    globals: HashSet<String>,
     data_defs: Vec<qbe::DataDef<'static>>,
     type_defs: IndexMap<TypeId, &'static qbe::TypeDef<'static>>,
 }
 
 impl<'a> CodeGen<'a> {
-    pub fn new(ctx: &'a mut TypeContext) -> Self {
+    pub fn new(types: &'a mut TypeContext) -> Self {
         Self {
-            ctx,
+            types,
             temp_counter: 0,
             label_counter: 0,
             string_counter: 0,
-            scopes: Vec::new(),
             loops: Vec::new(),
-            constants: HashMap::new(),
-            globals: HashSet::new(),
             data_defs: Vec::new(),
             type_defs: IndexMap::new(),
         }
@@ -99,32 +89,18 @@ impl<'a> CodeGen<'a> {
     pub fn generate(&mut self, prog: &Program) -> Result<String, CodeGenError> {
         let mut module = qbe::Module::new();
 
-        // Constants
         for item in &prog.items {
-            if let Item::Const(const_def) = item {
-                self.constants
-                    .insert(const_def.name.clone(), const_def.init.clone());
-            }
-        }
-
-        // Globals
-        for item in &prog.items {
-            match item {
-                Item::Static(static_def) => {
-                    self.generate_static(static_def);
-                    self.globals.insert(static_def.name.clone());
+            match &item.kind {
+                // Globals
+                ItemKind::Static(static_def) => {
+                    self.generate_static(static_def, &item.vis);
                 }
-                Item::Extern(ExternItem::Static(static_decl)) => {
-                    self.globals.insert(static_decl.name.clone());
+                // Functions
+                ItemKind::Function(func) if func.body.is_some() => {
+                    let qbe_func = self.generate_function(func, &item.vis)?;
+                    module.add_function(qbe_func);
                 }
                 _ => {}
-            }
-        }
-
-        // Functions
-        for item in &prog.items {
-            if let Item::Function(func) = item {
-                module.add_function(self.generate_function(func)?);
             }
         }
 
@@ -141,8 +117,12 @@ impl<'a> CodeGen<'a> {
         Ok(module.to_string())
     }
 
+    fn ident_to_symbol(ident: &str) -> String {
+        ident.replace("::", ".")
+    }
+
     fn qbe_type(&mut self, type_id: TypeId) -> qbe::Type<'static> {
-        let ty = self.ctx.get(type_id);
+        let ty = self.types.get(type_id);
         match &ty.kind {
             TypeKind::I64 => qbe::Type::Long,
             TypeKind::U8 => qbe::Type::Word,
@@ -158,7 +138,7 @@ impl<'a> CodeGen<'a> {
     }
 
     fn qbe_load_type(&self, type_id: TypeId) -> qbe::Type<'static> {
-        let ty = self.ctx.get(type_id);
+        let ty = self.types.get(type_id);
         match &ty.kind {
             TypeKind::I64 => qbe::Type::Long,
             TypeKind::U8 => qbe::Type::UnsignedByte,
@@ -171,7 +151,7 @@ impl<'a> CodeGen<'a> {
     }
 
     fn qbe_store_type(&self, type_id: TypeId) -> qbe::Type<'static> {
-        let ty = self.ctx.get(type_id);
+        let ty = self.types.get(type_id);
         match &ty.kind {
             TypeKind::I64 => qbe::Type::Long,
             TypeKind::U8 => qbe::Type::Byte,
@@ -188,12 +168,12 @@ impl<'a> CodeGen<'a> {
         type_id: TypeId,
         fields: &[Field],
     ) -> &'static qbe::TypeDef<'static> {
-        let ty = self.ctx.get(type_id);
+        let ty = self.types.get(type_id);
 
         let qbe_fields: Vec<_> = fields
             .iter()
             .map(|field| {
-                let field_ty = self.ctx.get(field.type_id);
+                let field_ty = self.types.get(field.type_id);
                 let qbe_ty = if field_ty.is_aggregate() {
                     let field_def = self
                         .type_defs
@@ -224,8 +204,8 @@ impl<'a> CodeGen<'a> {
         elem_type_id: TypeId,
         len: usize,
     ) -> &'static qbe::TypeDef<'static> {
-        let ty = self.ctx.get(type_id);
-        let elem_ty = self.ctx.get(elem_type_id);
+        let ty = self.types.get(type_id);
+        let elem_ty = self.types.get(elem_type_id);
 
         let qbe_elem_ty = if elem_ty.is_aggregate() {
             let elem_def = self
@@ -251,7 +231,7 @@ impl<'a> CodeGen<'a> {
     }
 
     fn build_slice_def(&mut self, type_id: TypeId) -> &'static qbe::TypeDef<'static> {
-        let ty = self.ctx.get(type_id);
+        let ty = self.types.get(type_id);
 
         let items = vec![(qbe::Type::Long, 1), (qbe::Type::Long, 1)];
 
@@ -328,7 +308,7 @@ impl<'a> CodeGen<'a> {
             temp
         };
 
-        if self.ctx.get(type_id).is_aggregate() {
+        if self.types.get(type_id).is_aggregate() {
             return addr;
         }
 
@@ -359,7 +339,7 @@ impl<'a> CodeGen<'a> {
             temp
         };
 
-        if self.ctx.get(type_id).is_aggregate() {
+        if self.types.get(type_id).is_aggregate() {
             self.copy_aggregate(qfunc, addr, value, type_id);
         } else {
             let store_ty = self.qbe_store_type(type_id);
@@ -374,11 +354,11 @@ impl<'a> CodeGen<'a> {
         src: qbe::Value,
         type_id: TypeId,
     ) {
-        let type_kind = self.ctx.get(type_id).kind.clone();
+        let type_kind = self.types.get(type_id).kind.clone();
         match type_kind {
             TypeKind::Slice(elem) => {
                 // Slice: { ptr: l, len: l }
-                let ptr_type_id = self.ctx.mk_pointer(elem);
+                let ptr_type_id = self.types.mk_pointer(elem);
                 let ptr = self.load_field(qfunc, src.clone(), 0, ptr_type_id);
                 let len = self.load_field(qfunc, src, 8, TypeId::I64);
                 self.store_field(qfunc, dest.clone(), 0, ptr, ptr_type_id);
@@ -386,7 +366,7 @@ impl<'a> CodeGen<'a> {
             }
             TypeKind::Array(elem, len) => {
                 // Array: copy each element
-                let elem_ty = self.ctx.get(elem);
+                let elem_ty = self.types.get(elem);
                 let elem_size = elem_ty.size;
 
                 for i in 0..len {
@@ -423,7 +403,7 @@ impl<'a> CodeGen<'a> {
         src: GenValue,
         type_id: TypeId,
     ) {
-        if self.ctx.get(type_id).is_aggregate() {
+        if self.types.get(type_id).is_aggregate() {
             self.copy_aggregate(qfunc, dest_addr, src.into(), type_id);
         } else {
             let store_type = self.qbe_store_type(type_id);
@@ -437,7 +417,7 @@ impl<'a> CodeGen<'a> {
         addr: qbe::Value,
         type_id: TypeId,
     ) -> GenValue {
-        if self.ctx.get(type_id).is_aggregate() {
+        if self.types.get(type_id).is_aggregate() {
             match addr {
                 qbe::Value::Temporary(name) => GenValue::Temp(name, type_id),
                 qbe::Value::Global(name) => GenValue::Global(name, type_id),
@@ -447,35 +427,6 @@ impl<'a> CodeGen<'a> {
             let load_type = self.qbe_load_type(type_id);
             self.assign_to_temp(qfunc, type_id, qbe::Instr::Load(load_type, addr))
         }
-    }
-
-    fn push_scope(&mut self) {
-        self.scopes.push(HashSet::new());
-    }
-
-    fn pop_scope(&mut self) {
-        self.scopes
-            .pop()
-            .expect("ICE: cannot pop scope, scopes stack is empty");
-    }
-
-    fn is_constant(&self, name: &str) -> bool {
-        self.constants.contains_key(name)
-    }
-
-    fn is_global_var(&self, name: &str) -> bool {
-        self.globals.contains(name)
-    }
-
-    fn is_local_var(&self, name: &str) -> bool {
-        self.scopes.iter().rev().any(|scope| scope.contains(name))
-    }
-
-    fn insert_local_var(&mut self, name: String) {
-        self.scopes
-            .last_mut()
-            .expect("ICE: scopes stack should not be empty")
-            .insert(name);
     }
 
     fn push_loop(&mut self, continue_label: String, break_label: String) {
@@ -501,31 +452,18 @@ impl<'a> CodeGen<'a> {
         expr: &Expr,
     ) -> Result<qbe::Value, CodeGenError> {
         match &expr.kind {
-            // x -> %x
-            ExprKind::Ident(name) => {
-                // Constants
-                if self.is_constant(name) {
-                    return Err(CodeGenError::new(
-                        format!("Cannot take address of constant `{name}`"),
-                        expr.span,
-                    ));
+            ExprKind::Place(place) => match place {
+                // x -> %x
+                Place::Local(ident) => {
+                    let symbol = Self::ident_to_symbol(ident);
+                    Ok(qbe::Value::Temporary(symbol))
                 }
-
-                // Global variables
-                if self.is_global_var(name) {
-                    return Ok(qbe::Value::Global(name.clone()));
+                // x -> $x
+                Place::Global(ident) => {
+                    let symbol = Self::ident_to_symbol(ident);
+                    Ok(qbe::Value::Global(symbol))
                 }
-
-                // Local variables
-                if self.is_local_var(name) {
-                    return Ok(qbe::Value::Temporary(name.clone()));
-                }
-
-                Err(CodeGenError::new(
-                    format!("Cannot find value `{name}` in this scope"),
-                    expr.span,
-                ))
-            }
+            },
             // *ptr -> value_of(ptr)
             ExprKind::Unary(UnaryOp::Deref, ptr_expr) => {
                 Ok(self.generate_expression(qfunc, ptr_expr)?.into())
@@ -533,20 +471,20 @@ impl<'a> CodeGen<'a> {
             // arr[i] or slice[i] -> calculate element address
             ExprKind::Index(base, index) => {
                 let index_val = self.generate_expression(qfunc, index)?.into();
-                let base_type_kind = self.ctx.get(base.type_id).kind.clone();
+                let base_type_kind = self.types.get(base.type_id).kind.clone();
 
                 let (base_ptr, elem_size) = match base_type_kind {
                     TypeKind::Array(elem, _) => {
                         // Array: base is already the array address
                         let arr_ptr = self.generate_expression(qfunc, base)?.into();
-                        (arr_ptr, self.ctx.get(elem).size)
+                        (arr_ptr, self.types.get(elem).size)
                     }
                     TypeKind::Slice(elem) => {
                         // Slice: need to load ptr field from slice struct
                         let slice_addr = self.generate_expression(qfunc, base)?.into();
-                        let ptr_type_id = self.ctx.mk_pointer(elem);
+                        let ptr_type_id = self.types.mk_pointer(elem);
                         let ptr = self.load_field(qfunc, slice_addr, 0, ptr_type_id);
-                        (ptr, self.ctx.get(elem).size)
+                        (ptr, self.types.get(elem).size)
                     }
                     _ => {
                         return Err(CodeGenError::new(
@@ -578,7 +516,7 @@ impl<'a> CodeGen<'a> {
             ExprKind::Field(base, field_name) => {
                 let base_addr = self.address_of(qfunc, base)?;
 
-                let TypeKind::Struct(fields) = &self.ctx.get(base.type_id).kind else {
+                let TypeKind::Struct(fields) = &self.types.get(base.type_id).kind else {
                     unreachable!()
                 };
 
@@ -632,11 +570,11 @@ impl<'a> CodeGen<'a> {
             return def;
         }
 
-        let type_kind = self.ctx.get(type_id).kind.clone();
+        let type_kind = self.types.get(type_id).kind.clone();
         let def = match type_kind {
             TypeKind::Struct(fields) => {
                 for field in &fields {
-                    if self.ctx.get(field.type_id).is_aggregate() {
+                    if self.types.get(field.type_id).is_aggregate() {
                         self.generate_type_def(field.type_id);
                     }
                 }
@@ -644,7 +582,7 @@ impl<'a> CodeGen<'a> {
                 self.build_struct_def(type_id, &fields)
             }
             TypeKind::Array(elem_type_id, len) => {
-                if self.ctx.get(elem_type_id).is_aggregate() {
+                if self.types.get(elem_type_id).is_aggregate() {
                     self.generate_type_def(elem_type_id);
                 }
 
@@ -659,22 +597,26 @@ impl<'a> CodeGen<'a> {
         def
     }
 
-    fn generate_static(&mut self, static_def: &StaticDef) {
+    fn generate_static(&mut self, static_def: &StaticDef, vis: &Visibility) {
+        let symbol = Self::ident_to_symbol(&static_def.ident);
         let data_items = self.literal_to_data_items(&static_def.init);
+        let linkage = match vis {
+            Visibility::Public => qbe::Linkage::public(),
+            Visibility::Private => qbe::Linkage::private(),
+        };
 
-        self.data_defs.push(qbe::DataDef::new(
-            qbe::Linkage::private(),
-            static_def.name.clone(),
-            None,
-            data_items,
-        ));
+        self.data_defs
+            .push(qbe::DataDef::new(linkage, symbol, None, data_items));
     }
 
     fn generate_function(
         &mut self,
         func: &FunctionDef,
+        vis: &Visibility,
     ) -> Result<qbe::Function<'static>, CodeGenError> {
-        self.push_scope();
+        let Some(block) = &func.body else {
+            unreachable!()
+        };
 
         let params: Vec<(qbe::Type<'static>, qbe::Value)> = func
             .params
@@ -692,19 +634,20 @@ impl<'a> CodeGen<'a> {
             Some(self.qbe_type(func.return_type_id))
         };
 
-        let mut qfunc = qbe::Function::new(
-            qbe::Linkage::public(),
-            func.name.clone(),
-            params,
-            qbe_return_type,
-        );
+        let symbol = Self::ident_to_symbol(&func.ident);
+        let linkage = match vis {
+            Visibility::Public => qbe::Linkage::public(),
+            Visibility::Private => qbe::Linkage::private(),
+        };
+
+        let mut qfunc = qbe::Function::new(linkage, symbol, params, qbe_return_type);
 
         qfunc.add_block("start");
 
         for param in &func.params {
             let addr = qbe::Value::Temporary(param.name.clone());
 
-            let param_type = self.ctx.get(param.type_id);
+            let param_type = self.types.get(param.type_id);
             let param_size = param_type.size;
             let param_align = param_type.align;
             let alloc_instr = if param_align >= 16 {
@@ -718,29 +661,25 @@ impl<'a> CodeGen<'a> {
 
             let param_gen_val = GenValue::Temp(format!("{}.param", param.name), param.type_id);
             self.store_value(&mut qfunc, addr, param_gen_val, param.type_id);
-
-            self.insert_local_var(param.name.clone());
         }
 
         qfunc.add_block("body");
 
-        let block_value = self.generate_block(&mut qfunc, &func.body)?;
+        let block_value = self.generate_block(&mut qfunc, block)?;
 
         if func.return_type_id == TypeId::NEVER {
             qfunc.add_instr(qbe::Instr::Hlt);
-        } else if func.body.type_id == TypeId::NEVER {
+        } else if block.type_id == TypeId::NEVER {
             if let Some(last_block) = qfunc.blocks.last()
                 && !last_block.jumps()
             {
                 qfunc.add_instr(qbe::Instr::Hlt);
             }
-        } else if func.body.type_id == TypeId::UNIT {
+        } else if block.type_id == TypeId::UNIT {
             qfunc.add_instr(qbe::Instr::Ret(None));
         } else {
             qfunc.add_instr(qbe::Instr::Ret(Some(block_value.into())));
         }
-
-        self.pop_scope();
 
         Ok(qfunc)
     }
@@ -750,7 +689,6 @@ impl<'a> CodeGen<'a> {
         qfunc: &mut qbe::Function<'static>,
         block: &Block,
     ) -> Result<GenValue, CodeGenError> {
-        self.push_scope();
         let mut result = GenValue::Const(0, TypeId::UNIT);
         for stmt in &block.stmts {
             match &stmt.kind {
@@ -765,7 +703,6 @@ impl<'a> CodeGen<'a> {
                 }
             }
         }
-        self.pop_scope();
         Ok(result)
     }
 
@@ -775,7 +712,7 @@ impl<'a> CodeGen<'a> {
         let_stmt: &Let,
     ) -> Result<(), CodeGenError> {
         // Allocate space on stack with proper alignment
-        let let_stmt_type = self.ctx.get(let_stmt.type_id);
+        let let_stmt_type = self.types.get(let_stmt.type_id);
         let size = let_stmt_type.size;
         let align = let_stmt_type.align;
         let addr = qbe::Value::Temporary(let_stmt.name.clone());
@@ -789,9 +726,6 @@ impl<'a> CodeGen<'a> {
         };
 
         qfunc.assign_instr(addr.clone(), qbe::Type::Long, alloc_instr);
-
-        // Register variable in scope
-        self.insert_local_var(let_stmt.name.clone());
 
         // Generate initial value
         let init_val = self.generate_expression(qfunc, &let_stmt.init)?;
@@ -831,12 +765,12 @@ impl<'a> CodeGen<'a> {
             unreachable!()
         };
 
-        let type_kind = self.ctx.get(expr.type_id).kind.clone();
+        let type_kind = self.types.get(expr.type_id).kind.clone();
         let TypeKind::Struct(fields) = type_kind else {
             unreachable!()
         };
 
-        let ty = self.ctx.get(expr.type_id).clone();
+        let ty = self.types.get(expr.type_id).clone();
         let struct_addr = self.alloc_local(qfunc, &ty);
 
         for field_init in &struct_expr.fields {
@@ -862,44 +796,23 @@ impl<'a> CodeGen<'a> {
         })
     }
 
-    fn generate_expr_ident(
-        &mut self,
-        qfunc: &mut qbe::Function<'static>,
-        expr: &Expr,
-    ) -> Result<GenValue, CodeGenError> {
-        let ExprKind::Ident(name) = &expr.kind else {
+    fn generate_expr_place(&mut self, qfunc: &mut qbe::Function<'static>, expr: &Expr) -> GenValue {
+        let ExprKind::Place(place) = &expr.kind else {
             unreachable!()
         };
 
-        // Constants
-        if let Some(literal) = self.constants.get(name).cloned() {
-            return match literal {
-                Literal::Integer(n) => Ok(GenValue::Const(n.cast_unsigned(), expr.type_id)),
-                Literal::Bool(b) => Ok(GenValue::Const(u64::from(b), TypeId::BOOL)),
-                Literal::String(_) => Ok(self.generate_string_slice(qfunc, expr)),
-                Literal::CString(s) => {
-                    let label = self.emit_cstring_data(&s);
-                    Ok(GenValue::Global(label, expr.type_id))
-                }
-            };
+        match place {
+            Place::Local(ident) => {
+                let symbol = Self::ident_to_symbol(ident);
+                let addr = qbe::Value::Temporary(symbol);
+                self.load_value(qfunc, addr, expr.type_id)
+            }
+            Place::Global(ident) => {
+                let symbol = Self::ident_to_symbol(ident);
+                let addr = qbe::Value::Global(symbol);
+                self.load_value(qfunc, addr, expr.type_id)
+            }
         }
-
-        // Local variables
-        if self.is_local_var(name) {
-            let addr = qbe::Value::Temporary(name.clone());
-            return Ok(self.load_value(qfunc, addr, expr.type_id));
-        }
-
-        // Global variables
-        if self.is_global_var(name) {
-            let addr = qbe::Value::Global(name.clone());
-            return Ok(self.load_value(qfunc, addr, expr.type_id));
-        }
-
-        Err(CodeGenError::new(
-            format!("Cannot find value `{name}` in this scope"),
-            expr.span,
-        ))
     }
 
     fn generate_expr_unary(
@@ -918,7 +831,7 @@ impl<'a> CodeGen<'a> {
             }
             UnaryOp::Not => {
                 let operand = self.generate_expression(qfunc, operand_expr)?.into();
-                let operand_expr_type = self.ctx.get(operand_expr.type_id).clone();
+                let operand_expr_type = self.types.get(operand_expr.type_id).clone();
                 let result_ty = self.qbe_type(expr.type_id);
                 match operand_expr_type.kind {
                     TypeKind::Bool => qbe::Instr::Cmp(
@@ -1068,14 +981,14 @@ impl<'a> CodeGen<'a> {
             unreachable!()
         };
 
-        let TypeKind::Array(elem_ty, _) = self.ctx.get(expr.type_id).kind else {
+        let TypeKind::Array(elem_ty, _) = self.types.get(expr.type_id).kind else {
             return Err(CodeGenError::new(
                 format!("Expected array type, found {:?}", expr.type_id),
                 expr.span,
             ));
         };
 
-        let elem_type = self.ctx.get(elem_ty);
+        let elem_type = self.types.get(elem_ty);
         let elem_size = elem_type.size as u64;
         let array_size = elements.len() as u64 * elem_size;
         let array_name = self.new_temp();
@@ -1104,14 +1017,14 @@ impl<'a> CodeGen<'a> {
             unreachable!()
         };
 
-        let TypeKind::Array(elem_ty, _) = self.ctx.get(expr.type_id).kind else {
+        let TypeKind::Array(elem_ty, _) = self.types.get(expr.type_id).kind else {
             return Err(CodeGenError::new(
                 format!("Expected array type, found {:?}", expr.type_id),
                 expr.span,
             ));
         };
 
-        let elem_type = self.ctx.get(elem_ty);
+        let elem_type = self.types.get(elem_ty);
         let elem_size = elem_type.size as u64;
         let array_size = *count as u64 * elem_size;
         let array_name = self.new_temp();
@@ -1165,8 +1078,8 @@ impl<'a> CodeGen<'a> {
     ) -> Result<GenValue, CodeGenError> {
         let result = match &expr.kind {
             ExprKind::Literal(..) => Ok(self.generate_expr_literal(qfunc, expr)),
+            ExprKind::Place(..) => Ok(self.generate_expr_place(qfunc, expr)),
             ExprKind::Struct(..) => self.generate_expr_struct(qfunc, expr),
-            ExprKind::Ident(..) => self.generate_expr_ident(qfunc, expr),
             ExprKind::Call(..) => self.generate_expr_call(qfunc, expr),
             ExprKind::Unary(..) => self.generate_expr_unary(qfunc, expr),
             ExprKind::Binary(..) => self.generate_expr_binary(qfunc, expr),
@@ -1238,7 +1151,7 @@ impl<'a> CodeGen<'a> {
 
         // Store ptr field
         let ptr = qbe::Value::Global(data_label);
-        let ptr_type_id = self.ctx.mk_pointer(TypeId::U8);
+        let ptr_type_id = self.types.mk_pointer(TypeId::U8);
         self.store_field(qfunc, slice_addr.clone(), 0, ptr, ptr_type_id);
 
         // Store len field
@@ -1261,11 +1174,13 @@ impl<'a> CodeGen<'a> {
             unreachable!()
         };
 
-        let func_name = match &call.callee.kind {
-            ExprKind::Ident(name) => name.clone(),
+        let symbol = match &call.callee.kind {
+            ExprKind::Place(Place::Local(ident) | Place::Global(ident)) => {
+                Self::ident_to_symbol(ident)
+            }
             _ => {
                 return Err(CodeGenError::new(
-                    "Complex callee expressions not yet supported".to_string(),
+                    "callee must be an identifier".to_string(),
                     call.callee.span,
                 ));
             }
@@ -1279,13 +1194,13 @@ impl<'a> CodeGen<'a> {
         }
 
         if expr.type_id == TypeId::UNIT {
-            qfunc.add_instr(qbe::Instr::Call(func_name, qbe_args, None));
+            qfunc.add_instr(qbe::Instr::Call(symbol, qbe_args, None));
             Ok(GenValue::Const(0, expr.type_id))
         } else {
             Ok(self.assign_to_temp(
                 qfunc,
                 expr.type_id,
-                qbe::Instr::Call(func_name, qbe_args, None),
+                qbe::Instr::Call(symbol, qbe_args, None),
             ))
         }
     }
