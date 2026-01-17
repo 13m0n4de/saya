@@ -1,0 +1,22 @@
+default: run
+
+build:
+    cargo run -- vec2.saya -o vec2.ssa -N vec2
+    cargo run -- random.saya -o random.ssa -N random
+    cargo run -- main.saya -o main.ssa
+
+    qbe vec2.ssa -o vec2.s
+    qbe random.ssa -o random.s
+    qbe main.ssa -o main.s
+
+    as vec2.s -o vec2.o
+    as random.s -o random.o
+    as main.s -o main.o
+
+    cc vec2.o random.o main.o -lc -o main
+
+run: build
+    ./main
+
+clean:
+    rm -f *.ssa *.s *.o main

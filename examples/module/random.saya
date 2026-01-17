@@ -1,0 +1,11 @@
+// state = (A * state + C) % M
+pub const A: i64 = 1935767905; // 0x73617961, b"saya"
+pub const C: i64 = 1337;
+pub const M: i64 = 2147483648; // 2^31
+
+pub static STATE: i64 = 0;
+
+pub fn next() -> i64 {
+    STATE = (A * STATE + C) % M;
+    STATE
+}

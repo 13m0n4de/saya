@@ -1,0 +1,40 @@
+use vec2;
+use random;
+
+extern fn printf(fmt: *u8, val: i64) -> i64;
+
+pub fn main() -> i64 {
+    random::STATE = 42;
+
+    let ax: i64 = random::next() % 100;
+    let ay: i64 = random::next() % 100;
+
+    let bx: i64 = random::next() % 100;
+    let by: i64 = random::next() % 100;
+
+    let a: vec2::Vec2 = vec2::new(ax, ay);
+    let b: vec2::Vec2 = vec2::new(bx, by);
+
+    let sum: vec2::Vec2 = vec2::add(&a, &b);
+    let dot: i64 = vec2::dot(&a, &b);
+
+    // seed(42): STATE = 42
+
+    // next():   STATE = (1935767905 * 1845358371 + 1337) % 2147483648 = 1845358371
+    //              ax = 1845358371 % 100                              = 71
+    // next():   STATE = (1935767905 * 142748796  + 1337) % 2147483648 = 142748796
+    //              ay = 142748796  % 100                              = 96
+
+    // next():   STATE = (1935767905 * 1331002421 + 1337) % 2147483648 = 1331002421
+    //              bx = 1331002421 % 100                              = 21
+    // next():   STATE = (1935767905 * 1445864014 + 1337) % 2147483648 = 1445864014
+    //              by = 1445864014 % 100                              = 14
+
+    // sum = (92, 110)
+    // dot = 71*21 + 96*14 = 1491 + 1344 = 2835
+    printf(c"sum = (%ld, ", sum.x);
+    printf(c"%ld)\n", sum.y);
+    printf(c"dot = %ld\n", dot);
+
+    0
+}
