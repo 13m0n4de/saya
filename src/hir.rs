@@ -2,6 +2,7 @@ use crate::{ast, span::Span, types::TypeId};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
+    pub uses: Vec<String>,
     pub items: Vec<Item>,
 }
 
@@ -32,7 +33,15 @@ pub enum ItemKind {
     Const(ConstDef),
     Static(StaticDef),
     Function(FunctionDef),
+    TypeDef(TypeDef),
     Extern(ExternItem),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypeDef {
+    pub ident: String,
+    pub type_id: TypeId,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
