@@ -4,11 +4,13 @@ use saya::codegen::CodeGen;
 use saya::lexer::Lexer;
 use saya::parser::Parser;
 use saya::type_checker::TypeChecker;
+use saya::typedef::emit_typedefs;
 use saya::types::TypeContext;
 
 struct Args {
     input: String,
     output: String,
+    typedef: Option<String>,
     namespace: Option<String>,
 }
 
@@ -17,12 +19,14 @@ fn parse_args() -> Result<Args, String> {
     let mut config = Args {
         input: String::new(),
         output: "out.ssa".to_string(),
+        typedef: None,
         namespace: None,
     };
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "-o" => config.output = args.next().ok_or("missing argument for '-o'")?,
+            "-t" => config.typedef = Some(args.next().ok_or("missing argument for '-t'")?),
             "-N" => config.namespace = Some(args.next().ok_or("missing argument for '-N'")?),
             s if s.starts_with('-') => return Err(format!("unknown option: '{s}'")),
             path => config.input = path.to_string(),
@@ -49,6 +53,11 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     let mut type_checker = TypeChecker::new(args.namespace, &mut types);
     let typed_program = type_checker.check_program(&program)?;
+
+    if let Some(td_path) = &args.typedef {
+        let mut file = fs::File::create(td_path)?;
+        emit_typedefs(&typed_program, &types, &mut file)?;
+    }
 
     let mut code_gen = CodeGen::new(&mut types);
     let qbe_il = code_gen.generate(&typed_program)?;

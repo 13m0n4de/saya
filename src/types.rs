@@ -93,7 +93,7 @@ pub enum TypeKind {
     Pointer(TypeId),
     Array(TypeId, usize),
     Slice(TypeId),
-    Struct(Vec<Field>),
+    Struct(String, Vec<Field>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -170,7 +170,7 @@ impl TypeContext {
 
     pub fn mk_empty_struct(&mut self) -> TypeId {
         let data = Type {
-            kind: TypeKind::Struct(vec![]),
+            kind: TypeKind::Struct(String::new(), vec![]),
             size: 0,
             align: 1,
         };
@@ -179,9 +179,16 @@ impl TypeContext {
         id
     }
 
-    pub fn set_struct(&mut self, id: TypeId, fields: Vec<Field>, size: usize, align: u64) {
+    pub fn set_struct(
+        &mut self,
+        id: TypeId,
+        name: String,
+        fields: Vec<Field>,
+        size: usize,
+        align: u64,
+    ) {
         self.types[id.0 as usize] = Type {
-            kind: TypeKind::Struct(fields),
+            kind: TypeKind::Struct(name, fields),
             size,
             align,
         };

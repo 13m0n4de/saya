@@ -89,7 +89,7 @@ pub struct ExternFunctionDecl {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConstDef {
-    pub name: String,
+    pub path: Path,
     pub type_ann: TypeAnn,
     pub init: Box<Expr>,
     pub span: Span,
@@ -97,7 +97,7 @@ pub struct ConstDef {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StaticDef {
-    pub name: String,
+    pub path: Path,
     pub type_ann: TypeAnn,
     pub init: Box<Expr>,
     pub span: Span,
@@ -105,7 +105,7 @@ pub struct StaticDef {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StructDef {
-    pub name: String,
+    pub path: Path,
     pub fields: Vec<Field>,
     pub span: Span,
 }
@@ -119,7 +119,7 @@ pub struct Field {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionDef {
-    pub name: String,
+    pub path: Path,
     pub params: Vec<Param>,
     pub return_type_ann: TypeAnn,
     pub body: Option<Block>,

@@ -130,7 +130,7 @@ impl<'a> CodeGen<'a> {
             TypeKind::Pointer(_) => qbe::Type::Long,
             TypeKind::Unit => qbe::Type::Long,
             TypeKind::Never => qbe::Type::Long,
-            TypeKind::Struct(_) | TypeKind::Array(..) | TypeKind::Slice(_) => {
+            TypeKind::Struct(..) | TypeKind::Array(..) | TypeKind::Slice(_) => {
                 let def = self.generate_type_def(type_id);
                 qbe::Type::Aggregate(def)
             }
@@ -146,7 +146,7 @@ impl<'a> CodeGen<'a> {
             TypeKind::Pointer(_) => qbe::Type::Long,
             TypeKind::Unit => qbe::Type::Long,
             TypeKind::Never => qbe::Type::Long,
-            TypeKind::Struct(_) | TypeKind::Array(..) | TypeKind::Slice(_) => qbe::Type::Long,
+            TypeKind::Struct(..) | TypeKind::Array(..) | TypeKind::Slice(_) => qbe::Type::Long,
         }
     }
 
@@ -159,7 +159,7 @@ impl<'a> CodeGen<'a> {
             TypeKind::Pointer(_) => qbe::Type::Long,
             TypeKind::Unit => qbe::Type::Long,
             TypeKind::Never => qbe::Type::Long,
-            TypeKind::Struct(_) | TypeKind::Array(..) | TypeKind::Slice(_) => qbe::Type::Long,
+            TypeKind::Struct(..) | TypeKind::Array(..) | TypeKind::Slice(_) => qbe::Type::Long,
         }
     }
 
@@ -375,7 +375,7 @@ impl<'a> CodeGen<'a> {
                     self.store_field(qfunc, dest.clone(), offset, elem_val, elem);
                 }
             }
-            TypeKind::Struct(fields) => {
+            TypeKind::Struct(_, fields) => {
                 // Struct: copy each field
                 for field in fields {
                     let field_val =
@@ -516,7 +516,7 @@ impl<'a> CodeGen<'a> {
             ExprKind::Field(base, field_name) => {
                 let base_addr = self.address_of(qfunc, base)?;
 
-                let TypeKind::Struct(fields) = &self.types.get(base.type_id).kind else {
+                let TypeKind::Struct(_, fields) = &self.types.get(base.type_id).kind else {
                     unreachable!()
                 };
 
@@ -572,7 +572,7 @@ impl<'a> CodeGen<'a> {
 
         let type_kind = self.types.get(type_id).kind.clone();
         let def = match type_kind {
-            TypeKind::Struct(fields) => {
+            TypeKind::Struct(_, fields) => {
                 for field in &fields {
                     if self.types.get(field.type_id).is_aggregate() {
                         self.generate_type_def(field.type_id);
@@ -766,7 +766,7 @@ impl<'a> CodeGen<'a> {
         };
 
         let type_kind = self.types.get(expr.type_id).kind.clone();
-        let TypeKind::Struct(fields) = type_kind else {
+        let TypeKind::Struct(_, fields) = type_kind else {
             unreachable!()
         };
 

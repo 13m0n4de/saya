@@ -183,6 +183,17 @@ impl<'a> Parser<'a> {
         })
     }
 
+    fn parse_path(&mut self) -> Result<Path, ParseError> {
+        let span = self.current.span;
+
+        let mut segments = vec![self.expect_identifier()?];
+        while self.eat(TokenKind::PathSep)? {
+            segments.push(self.expect_identifier()?);
+        }
+
+        Ok(Path { segments, span })
+    }
+
     fn parse_items(&mut self) -> Result<Vec<Item>, ParseError> {
         let mut items = Vec::new();
 
@@ -320,7 +331,7 @@ impl<'a> Parser<'a> {
 
         self.expect(TokenKind::Const)?;
 
-        let name = self.expect_identifier()?;
+        let path = self.parse_path()?;
 
         self.expect(TokenKind::Colon)?;
 
@@ -333,7 +344,7 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::Semi)?;
 
         Ok(ConstDef {
-            name,
+            path,
             type_ann,
             init,
             span: start_span,
@@ -345,7 +356,7 @@ impl<'a> Parser<'a> {
 
         self.expect(TokenKind::Static)?;
 
-        let name = self.expect_identifier()?;
+        let path = self.parse_path()?;
 
         self.expect(TokenKind::Colon)?;
 
@@ -358,7 +369,7 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::Semi)?;
 
         Ok(StaticDef {
-            name,
+            path,
             type_ann,
             init,
             span: start_span,
@@ -370,7 +381,7 @@ impl<'a> Parser<'a> {
 
         self.expect(TokenKind::Struct)?;
 
-        let name = self.expect_identifier()?;
+        let path = self.parse_path()?;
 
         self.expect(TokenKind::OpenBrace)?;
 
@@ -383,7 +394,7 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::CloseBrace)?;
 
         Ok(StructDef {
-            name,
+            path,
             fields,
             span: start_span,
         })
@@ -452,7 +463,7 @@ impl<'a> Parser<'a> {
 
         self.expect(TokenKind::Fn)?;
 
-        let name = self.expect_identifier()?;
+        let path = self.parse_path()?;
 
         self.expect(TokenKind::OpenParen)?;
 
@@ -480,7 +491,7 @@ impl<'a> Parser<'a> {
         };
 
         Ok(FunctionDef {
-            name,
+            path,
             params,
             return_type_ann,
             body,
