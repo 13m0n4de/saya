@@ -61,7 +61,6 @@ impl<'a> TypeChecker<'a> {
     pub fn check_program(&mut self, prog: &ast::Program) -> Result<hir::Program, TypeError> {
         self.load_uses(prog)?;
         self.scan_declarations(prog)?;
-        self.resolve_declarations(prog)?;
         self.check_items(prog)
     }
 
@@ -177,6 +176,166 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    fn type_dimensions(&mut self, type_ann: &ast::TypeAnn) -> Result<(usize, u64), TypeError> {
+        match &type_ann.kind {
+            ast::TypeAnnKind::I64 | ast::TypeAnnKind::Pointer(_) => Ok((8, 8)),
+            ast::TypeAnnKind::U8 | ast::TypeAnnKind::Bool => Ok((1, 1)),
+            ast::TypeAnnKind::Unit | ast::TypeAnnKind::Never => Ok((0, 1)),
+
+            ast::TypeAnnKind::Slice(_) => Ok((16, 8)),
+
+            ast::TypeAnnKind::Array(elem, len_expr) => {
+                let (elem_size, elem_align) = self.type_dimensions(elem)?;
+
+                let typed_len = self.check_expression(len_expr)?;
+
+                if typed_len.type_id != TypeId::I64 {
+                    return Err(TypeError::new(
+                        format!(
+                            "Array length must be `i64`, found `{:?}`",
+                            typed_len.type_id
+                        ),
+                        len_expr.span,
+                    ));
+                }
+
+                let evaluated_len = self.eval_const_expr(&typed_len)?;
+
+                let hir::Literal::Integer(len_val) = evaluated_len else {
+                    return Err(TypeError::new(
+                        "Array length must be an integer".to_string(),
+                        len_expr.span,
+                    ));
+                };
+
+                if len_val <= 0 {
+                    return Err(TypeError::new(
+                        format!("Array length must be positive, found {len_val}"),
+                        len_expr.span,
+                    ));
+                }
+
+                let len = len_val as usize;
+                Ok((elem_size * len, elem_align))
+            }
+
+            ast::TypeAnnKind::Path(path) => {
+                self.resolve_declaration(&path.to_string())?;
+
+                match self.lookup(&path.to_string()) {
+                    Some(ScopeObject {
+                        kind: ScopeKind::Struct(Struct::Resolved(type_id)),
+                        ..
+                    }) => {
+                        let t = self.types.get(*type_id);
+                        Ok((t.size, t.align))
+                    }
+                    _ => Err(TypeError::new(
+                        format!("undefined type `{path}`"),
+                        type_ann.span,
+                    )),
+                }
+            }
+        }
+    }
+
+    fn lower_type(&mut self, type_ann: &ast::TypeAnn) -> Result<TypeId, TypeError> {
+        match &type_ann.kind {
+            ast::TypeAnnKind::I64 => Ok(TypeId::I64),
+            ast::TypeAnnKind::U8 => Ok(TypeId::U8),
+            ast::TypeAnnKind::Bool => Ok(TypeId::BOOL),
+            ast::TypeAnnKind::Unit => Ok(TypeId::UNIT),
+            ast::TypeAnnKind::Never => Ok(TypeId::NEVER),
+
+            ast::TypeAnnKind::Pointer(inner) => {
+                let inner_type_id = self.lower_type(inner)?;
+                Ok(self.types.mk_pointer(inner_type_id))
+            }
+
+            ast::TypeAnnKind::Array(elem, len_expr) => {
+                let elem_type_id = self.lower_type(elem)?;
+
+                let typed_len = self.check_expression(len_expr)?;
+
+                if typed_len.type_id != TypeId::I64 {
+                    return Err(TypeError::new(
+                        format!(
+                            "Array length must be `i64`, found `{:?}`",
+                            typed_len.type_id
+                        ),
+                        len_expr.span,
+                    ));
+                }
+
+                let evaluated_len = self.eval_const_expr(&typed_len)?;
+
+                let hir::Literal::Integer(len_val) = evaluated_len else {
+                    return Err(TypeError::new(
+                        "Array length must be an integer".to_string(),
+                        len_expr.span,
+                    ));
+                };
+
+                if len_val <= 0 {
+                    return Err(TypeError::new(
+                        format!("Array length must be positive, found {len_val}"),
+                        len_expr.span,
+                    ));
+                }
+
+                let len = len_val as usize;
+                Ok(self.types.mk_array(elem_type_id, len))
+            }
+
+            ast::TypeAnnKind::Slice(elem) => {
+                let elem_type_id = self.lower_type(elem)?;
+                Ok(self.types.mk_slice(elem_type_id))
+            }
+
+            ast::TypeAnnKind::Path(path) => {
+                self.resolve_declaration(&path.to_string())?;
+
+                match self.lookup(&path.to_string()) {
+                    Some(ScopeObject {
+                        kind: ScopeKind::Struct(Struct::Resolved(type_id)),
+                        ..
+                    }) => Ok(*type_id),
+                    _ => Err(TypeError::new(
+                        format!("undefined type `{path}`"),
+                        type_ann.span,
+                    )),
+                }
+            }
+        }
+    }
+
+    fn struct_layout(&mut self, def: &ast::StructDef) -> Result<StructLayout, TypeError> {
+        let mut field_layouts = Vec::new();
+        let mut offset = 0;
+        let mut max_align = 1u64;
+
+        for field in &def.fields {
+            let (field_size, field_align) = self.type_dimensions(&field.type_ann)?;
+            max_align = max_align.max(field_align);
+
+            let align = field_align as usize;
+            if offset % align != 0 {
+                offset += align - (offset % align);
+            }
+
+            field_layouts.push((field.name.clone(), offset));
+            offset += field_size;
+        }
+
+        let size = if offset % max_align as usize != 0 {
+            offset + max_align as usize - (offset % max_align as usize)
+        } else {
+            offset
+        };
+
+        Ok((field_layouts, size, max_align))
+    }
+
     fn load_uses(&mut self, prog: &ast::Program) -> Result<(), TypeError> {
         for item in &prog.items {
             let ast::ItemKind::Use(use_item) = &item.kind else {
@@ -265,22 +424,6 @@ impl<'a> TypeChecker<'a> {
             }
         }
 
-        Ok(())
-    }
-
-    fn resolve_if_unresolved(&mut self, name: &str) -> Result<(), TypeError> {
-        match self.lookup(name).map(|o| &o.kind) {
-            Some(
-                ScopeKind::Const(Const::Unresolved(_))
-                | ScopeKind::Static(Static::Unresolved(_))
-                | ScopeKind::Function(Function::Unresolved(_))
-                | ScopeKind::Struct(Struct::Unresolved(_)),
-            ) => self.resolve_declaration(name),
-            _ => Ok(()),
-        }
-    }
-
-    fn resolve_declarations(&mut self, prog: &ast::Program) -> Result<(), TypeError> {
         for item in &prog.items {
             match &item.kind {
                 ast::ItemKind::Extern(ast::ExternItem::Static(decl)) => {
@@ -295,6 +438,7 @@ impl<'a> TypeChecker<'a> {
                             decl.span,
                         ));
                     }
+                    continue;
                 }
                 ast::ItemKind::Extern(ast::ExternItem::Function(decl)) => {
                     let params = decl
@@ -313,25 +457,10 @@ impl<'a> TypeChecker<'a> {
                             decl.span,
                         ));
                     }
+                    continue;
                 }
-                _ => {}
+                _ => continue,
             }
-        }
-
-        let names_to_resolve: Vec<String> = self
-            .global_scope()
-            .iter()
-            .filter_map(|(name, obj)| match &obj.kind {
-                ScopeKind::Const(Const::Unresolved(_))
-                | ScopeKind::Static(Static::Unresolved(_))
-                | ScopeKind::Function(Function::Unresolved(_))
-                | ScopeKind::Struct(Struct::Unresolved(_)) => Some(name.clone()),
-                _ => None,
-            })
-            .collect();
-
-        for name in names_to_resolve {
-            self.resolve_declaration(&name)?;
         }
 
         Ok(())
@@ -558,17 +687,13 @@ impl<'a> TypeChecker<'a> {
                     continue;
                 }
                 ast::ItemKind::Const(def) => {
+                    self.resolve_declaration(&def.path.to_string())?;
                     let (type_id, value) = match self.lookup(&def.path.to_string()) {
                         Some(ScopeObject {
                             kind: ScopeKind::Const(Const::Resolved(type_id, value)),
                             ..
                         }) => (*type_id, value.clone()),
-                        _ => {
-                            return Err(TypeError::new(
-                                format!("const `{}` not resolved", def.path),
-                                def.span,
-                            ));
-                        }
+                        _ => unreachable!("const should be resolved"),
                     };
 
                     hir::ItemKind::Const(hir::ConstDef {
@@ -579,17 +704,13 @@ impl<'a> TypeChecker<'a> {
                     })
                 }
                 ast::ItemKind::Static(def) => {
+                    self.resolve_declaration(&def.path.to_string())?;
                     let (type_id, value) = match self.lookup(&def.path.to_string()) {
                         Some(ScopeObject {
                             kind: ScopeKind::Static(Static::Resolved(type_id, value)),
                             ..
                         }) => (*type_id, value.clone()),
-                        _ => {
-                            return Err(TypeError::new(
-                                format!("static `{}` not resolved", def.path),
-                                def.span,
-                            ));
-                        }
+                        _ => unreachable!("static should be resolved"),
                     };
 
                     hir::ItemKind::Static(hir::StaticDef {
@@ -600,6 +721,7 @@ impl<'a> TypeChecker<'a> {
                     })
                 }
                 ast::ItemKind::Function(def) => {
+                    self.resolve_declaration(&def.path.to_string())?;
                     let typed_func = self.check_function(def)?;
                     hir::ItemKind::Function(typed_func)
                 }
@@ -638,17 +760,13 @@ impl<'a> TypeChecker<'a> {
                     hir::ItemKind::Extern(hir_extern)
                 }
                 ast::ItemKind::Struct(def) => {
+                    self.resolve_declaration(&def.path.to_string())?;
                     let type_id = match self.lookup(&def.path.to_string()) {
                         Some(ScopeObject {
                             kind: ScopeKind::Struct(Struct::Resolved(type_id)),
                             ..
                         }) => *type_id,
-                        _ => {
-                            return Err(TypeError::new(
-                                format!("struct `{}` not resolved", def.path),
-                                def.span,
-                            ));
-                        }
+                        _ => unreachable!("struct should be resolved"),
                     };
 
                     hir::ItemKind::TypeDef(hir::TypeDef {
@@ -670,166 +788,6 @@ impl<'a> TypeChecker<'a> {
             uses,
             items: typed_items,
         })
-    }
-
-    fn type_dimensions(&mut self, type_ann: &ast::TypeAnn) -> Result<(usize, u64), TypeError> {
-        match &type_ann.kind {
-            ast::TypeAnnKind::I64 | ast::TypeAnnKind::Pointer(_) => Ok((8, 8)),
-            ast::TypeAnnKind::U8 | ast::TypeAnnKind::Bool => Ok((1, 1)),
-            ast::TypeAnnKind::Unit | ast::TypeAnnKind::Never => Ok((0, 1)),
-
-            ast::TypeAnnKind::Slice(_) => Ok((16, 8)),
-
-            ast::TypeAnnKind::Array(elem, len_expr) => {
-                let (elem_size, elem_align) = self.type_dimensions(elem)?;
-
-                let typed_len = self.check_expression(len_expr)?;
-
-                if typed_len.type_id != TypeId::I64 {
-                    return Err(TypeError::new(
-                        format!(
-                            "Array length must be `i64`, found `{:?}`",
-                            typed_len.type_id
-                        ),
-                        len_expr.span,
-                    ));
-                }
-
-                let evaluated_len = self.eval_const_expr(&typed_len)?;
-
-                let hir::Literal::Integer(len_val) = evaluated_len else {
-                    return Err(TypeError::new(
-                        "Array length must be an integer".to_string(),
-                        len_expr.span,
-                    ));
-                };
-
-                if len_val <= 0 {
-                    return Err(TypeError::new(
-                        format!("Array length must be positive, found {len_val}"),
-                        len_expr.span,
-                    ));
-                }
-
-                let len = len_val as usize;
-                Ok((elem_size * len, elem_align))
-            }
-
-            ast::TypeAnnKind::Path(path) => {
-                self.resolve_if_unresolved(&path.to_string())?;
-
-                match self.lookup(&path.to_string()) {
-                    Some(ScopeObject {
-                        kind: ScopeKind::Struct(Struct::Resolved(type_id)),
-                        ..
-                    }) => {
-                        let t = self.types.get(*type_id);
-                        Ok((t.size, t.align))
-                    }
-                    _ => Err(TypeError::new(
-                        format!("undefined type `{path}`"),
-                        type_ann.span,
-                    )),
-                }
-            }
-        }
-    }
-
-    fn lower_type(&mut self, type_ann: &ast::TypeAnn) -> Result<TypeId, TypeError> {
-        match &type_ann.kind {
-            ast::TypeAnnKind::I64 => Ok(TypeId::I64),
-            ast::TypeAnnKind::U8 => Ok(TypeId::U8),
-            ast::TypeAnnKind::Bool => Ok(TypeId::BOOL),
-            ast::TypeAnnKind::Unit => Ok(TypeId::UNIT),
-            ast::TypeAnnKind::Never => Ok(TypeId::NEVER),
-
-            ast::TypeAnnKind::Pointer(inner) => {
-                let inner_type_id = self.lower_type(inner)?;
-                Ok(self.types.mk_pointer(inner_type_id))
-            }
-
-            ast::TypeAnnKind::Array(elem, len_expr) => {
-                let elem_type_id = self.lower_type(elem)?;
-
-                let typed_len = self.check_expression(len_expr)?;
-
-                if typed_len.type_id != TypeId::I64 {
-                    return Err(TypeError::new(
-                        format!(
-                            "Array length must be `i64`, found `{:?}`",
-                            typed_len.type_id
-                        ),
-                        len_expr.span,
-                    ));
-                }
-
-                let evaluated_len = self.eval_const_expr(&typed_len)?;
-
-                let hir::Literal::Integer(len_val) = evaluated_len else {
-                    return Err(TypeError::new(
-                        "Array length must be an integer".to_string(),
-                        len_expr.span,
-                    ));
-                };
-
-                if len_val <= 0 {
-                    return Err(TypeError::new(
-                        format!("Array length must be positive, found {len_val}"),
-                        len_expr.span,
-                    ));
-                }
-
-                let len = len_val as usize;
-                Ok(self.types.mk_array(elem_type_id, len))
-            }
-
-            ast::TypeAnnKind::Slice(elem) => {
-                let elem_type_id = self.lower_type(elem)?;
-                Ok(self.types.mk_slice(elem_type_id))
-            }
-
-            ast::TypeAnnKind::Path(path) => {
-                self.resolve_if_unresolved(&path.to_string())?;
-
-                match self.lookup(&path.to_string()) {
-                    Some(ScopeObject {
-                        kind: ScopeKind::Struct(Struct::Resolved(type_id)),
-                        ..
-                    }) => Ok(*type_id),
-                    _ => Err(TypeError::new(
-                        format!("undefined type `{path}`"),
-                        type_ann.span,
-                    )),
-                }
-            }
-        }
-    }
-
-    fn struct_layout(&mut self, def: &ast::StructDef) -> Result<StructLayout, TypeError> {
-        let mut field_layouts = Vec::new();
-        let mut offset = 0;
-        let mut max_align = 1u64;
-
-        for field in &def.fields {
-            let (field_size, field_align) = self.type_dimensions(&field.type_ann)?;
-            max_align = max_align.max(field_align);
-
-            let align = field_align as usize;
-            if offset % align != 0 {
-                offset += align - (offset % align);
-            }
-
-            field_layouts.push((field.name.clone(), offset));
-            offset += field_size;
-        }
-
-        let size = if offset % max_align as usize != 0 {
-            offset + max_align as usize - (offset % max_align as usize)
-        } else {
-            offset
-        };
-
-        Ok((field_layouts, size, max_align))
     }
 
     fn check_function(&mut self, func: &ast::FunctionDef) -> Result<hir::FunctionDef, TypeError> {
@@ -1175,7 +1133,7 @@ impl<'a> TypeChecker<'a> {
         };
 
         let name = path.to_string();
-        self.resolve_if_unresolved(&name)?;
+        self.resolve_declaration(&name)?;
 
         match self.lookup(&path.to_string()).map(|o| &o.kind) {
             Some(ScopeKind::Var(type_id)) => Ok(hir::Expr {
@@ -1400,7 +1358,7 @@ impl<'a> TypeChecker<'a> {
         };
 
         let name = callee.to_string();
-        self.resolve_if_unresolved(&name)?;
+        self.resolve_declaration(&name)?;
 
         let (params, return_ty) = match self.lookup(&name) {
             Some(ScopeObject {
