@@ -223,9 +223,10 @@ impl<'a> TypeChecker<'a> {
             }
 
             ast::TypeAnnKind::Path(path) => {
-                self.resolve_declaration(&path.to_string())?;
+                let name = path.to_string();
+                self.resolve_declaration(&name)?;
 
-                match self.lookup(&path.to_string()) {
+                match self.lookup(&name) {
                     Some(ScopeObject {
                         kind: ScopeKind::Struct(Struct::Resolved(type_id)),
                         ..
@@ -296,9 +297,10 @@ impl<'a> TypeChecker<'a> {
             }
 
             ast::TypeAnnKind::Path(path) => {
-                self.resolve_declaration(&path.to_string())?;
+                let name = path.to_string();
+                self.resolve_declaration(&name)?;
 
-                match self.lookup(&path.to_string()) {
+                match self.lookup(&name) {
                     Some(ScopeObject {
                         kind: ScopeKind::Struct(Struct::Resolved(type_id)),
                         ..
@@ -720,8 +722,9 @@ impl<'a> TypeChecker<'a> {
                     continue;
                 }
                 ast::ItemKind::Const(def) => {
-                    self.resolve_declaration(&def.path.to_string())?;
-                    let (type_id, value) = match self.lookup(&def.path.to_string()) {
+                    let name = def.path.to_string();
+                    self.resolve_declaration(&name)?;
+                    let (type_id, value) = match self.lookup(&name) {
                         Some(ScopeObject {
                             kind: ScopeKind::Const(Const::Resolved(type_id, value)),
                             ..
@@ -737,8 +740,9 @@ impl<'a> TypeChecker<'a> {
                     })
                 }
                 ast::ItemKind::Static(def) => {
-                    self.resolve_declaration(&def.path.to_string())?;
-                    let (type_id, value) = match self.lookup(&def.path.to_string()) {
+                    let name = def.path.to_string();
+                    self.resolve_declaration(&name)?;
+                    let (type_id, value) = match self.lookup(&name) {
                         Some(ScopeObject {
                             kind: ScopeKind::Static(Static::Resolved(type_id, value)),
                             ..
@@ -806,8 +810,9 @@ impl<'a> TypeChecker<'a> {
                     hir::ItemKind::Extern(hir_extern)
                 }
                 ast::ItemKind::Struct(def) => {
-                    self.resolve_declaration(&def.path.to_string())?;
-                    let type_id = match self.lookup(&def.path.to_string()) {
+                    let name = def.path.to_string();
+                    self.resolve_declaration(&name)?;
+                    let type_id = match self.lookup(&name) {
                         Some(ScopeObject {
                             kind: ScopeKind::Struct(Struct::Resolved(type_id)),
                             ..
