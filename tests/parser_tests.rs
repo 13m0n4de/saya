@@ -345,7 +345,7 @@ fn test_function_definition() {
 
     match &program.items[0].kind {
         ItemKind::Function(func) => {
-            assert_eq!(func.name, "add");
+            assert_eq!(func.path.to_string(), "add");
             assert_eq!(func.params.len(), 2);
             assert_eq!(func.params[0].name, "a");
             assert_eq!(func.params[1].name, "b");
@@ -361,7 +361,7 @@ fn test_const_definition() {
 
     match &program.items[0].kind {
         ItemKind::Const(const_def) => {
-            assert_eq!(const_def.name, "PI");
+            assert_eq!(const_def.path.to_string(), "PI");
             assert_eq!(const_def.type_ann.kind, TypeAnnKind::I64);
         }
         _ => panic!("Expected const"),
@@ -374,7 +374,7 @@ fn test_static_definition() {
 
     match &program.items[0].kind {
         ItemKind::Static(static_def) => {
-            assert_eq!(static_def.name, "GLOBAL");
+            assert_eq!(static_def.path.to_string(), "GLOBAL");
             assert_eq!(static_def.type_ann.kind, TypeAnnKind::I64);
         }
         _ => panic!("Expected static"),
@@ -387,7 +387,7 @@ fn test_struct_definition() {
 
     match &program.items[0].kind {
         ItemKind::Struct(struct_def) => {
-            assert_eq!(struct_def.name, "Position");
+            assert_eq!(struct_def.path.to_string(), "Position");
             assert_eq!(struct_def.fields[0].name, "x");
             assert_eq!(struct_def.fields[0].type_ann.kind, TypeAnnKind::I64);
             assert_eq!(struct_def.fields[1].name, "y");
@@ -524,7 +524,7 @@ fn test_function_declaration() {
 
     match &program.items[0].kind {
         ItemKind::Function(func) => {
-            assert_eq!(func.name, "add");
+            assert_eq!(func.path.to_string(), "add");
             assert_eq!(func.params.len(), 2);
             assert!(func.body.is_none());
         }
