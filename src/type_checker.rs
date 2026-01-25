@@ -10,7 +10,10 @@ use crate::{
     ast, hir,
     lexer::Lexer,
     parser::Parser,
-    scope::{Const, Function, Scope, ScopeKind, ScopeObject, Static, Struct},
+    scope::{
+        Const, ExternFunction, ExternStatic, Function, Scope, ScopeKind, ScopeObject, Static,
+        Struct,
+    },
     span::Span,
     types::{Field, TypeContext, TypeId, TypeKind},
 };
@@ -412,7 +415,17 @@ impl<'a> TypeChecker<'a> {
                     ScopeKind::Struct(Struct::Unresolved(Rc::new(def.clone()))),
                     def.span,
                 ),
-                ast::ItemKind::Use(_) | ast::ItemKind::Extern(_) => continue,
+                ast::ItemKind::Extern(ast::ExternItem::Static(decl)) => (
+                    decl.name.clone(),
+                    ScopeKind::ExternStatic(ExternStatic::Unresolved(Rc::new(decl.clone()))),
+                    decl.span,
+                ),
+                ast::ItemKind::Extern(ast::ExternItem::Function(decl)) => (
+                    decl.name.clone(),
+                    ScopeKind::ExternFunction(ExternFunction::Unresolved(Rc::new(decl.clone()))),
+                    decl.span,
+                ),
+                ast::ItemKind::Use(_) => continue,
             };
 
             let obj = ScopeObject::new(item.vis.clone(), kind);
@@ -421,45 +434,6 @@ impl<'a> TypeChecker<'a> {
                     format!("name `{name}` already defined"),
                     span,
                 ));
-            }
-        }
-
-        for item in &prog.items {
-            match &item.kind {
-                ast::ItemKind::Extern(ast::ExternItem::Static(decl)) => {
-                    let type_id = self.lower_type(&decl.type_ann)?;
-                    let obj = ScopeObject::new(
-                        item.vis.clone(),
-                        ScopeKind::Static(Static::Resolved(type_id, hir::Literal::Integer(0))),
-                    );
-                    if self.global_scope().insert(decl.name.clone(), obj).is_some() {
-                        return Err(TypeError::new(
-                            format!("name `{}` already defined", decl.name),
-                            decl.span,
-                        ));
-                    }
-                    continue;
-                }
-                ast::ItemKind::Extern(ast::ExternItem::Function(decl)) => {
-                    let params = decl
-                        .params
-                        .iter()
-                        .map(|p| self.lower_type(&p.type_ann))
-                        .collect::<Result<Vec<_>, _>>()?;
-                    let return_ty = self.lower_type(&decl.return_type_ann)?;
-                    let obj = ScopeObject::new(
-                        item.vis.clone(),
-                        ScopeKind::Function(Function::Resolved(params, return_ty)),
-                    );
-                    if self.global_scope().insert(decl.name.clone(), obj).is_some() {
-                        return Err(TypeError::new(
-                            format!("name `{}` already defined", decl.name),
-                            decl.span,
-                        ));
-                    }
-                    continue;
-                }
-                _ => continue,
             }
         }
 
@@ -475,6 +449,8 @@ impl<'a> TypeChecker<'a> {
             ScopeKind::Static(_) => self.resolve_static_decl(name, obj),
             ScopeKind::Function(_) => self.resolve_function_decl(name, obj),
             ScopeKind::Struct(_) => self.resolve_struct_decl(name, obj),
+            ScopeKind::ExternStatic(_) => self.resolve_extern_static_decl(name, obj),
+            ScopeKind::ExternFunction(_) => self.resolve_extern_function_decl(name, obj),
             ScopeKind::Var(_) => Ok(()),
         }
     }
@@ -676,6 +652,63 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    fn resolve_extern_static_decl(
+        &mut self,
+        name: &str,
+        obj: ScopeObject,
+    ) -> Result<(), TypeError> {
+        let ScopeKind::ExternStatic(decl) = obj.kind else {
+            unreachable!()
+        };
+        let vis = obj.vis;
+
+        match decl {
+            ExternStatic::Unresolved(def) => {
+                let type_id = self.lower_type(&def.type_ann)?;
+                self.global_scope().insert(
+                    name.to_string(),
+                    ScopeObject::new(
+                        vis,
+                        ScopeKind::ExternStatic(ExternStatic::Resolved(type_id)),
+                    ),
+                );
+                Ok(())
+            }
+            ExternStatic::Resolved(_) => Ok(()),
+        }
+    }
+
+    fn resolve_extern_function_decl(
+        &mut self,
+        name: &str,
+        obj: ScopeObject,
+    ) -> Result<(), TypeError> {
+        let ScopeKind::ExternFunction(decl) = obj.kind else {
+            unreachable!()
+        };
+        let vis = obj.vis;
+
+        match decl {
+            ExternFunction::Unresolved(def) => {
+                let params = def
+                    .params
+                    .iter()
+                    .map(|p| self.lower_type(&p.type_ann))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let return_ty = self.lower_type(&def.return_type_ann)?;
+                self.global_scope().insert(
+                    name.to_string(),
+                    ScopeObject::new(
+                        vis,
+                        ScopeKind::ExternFunction(ExternFunction::Resolved(params, return_ty)),
+                    ),
+                );
+                Ok(())
+            }
+            ExternFunction::Resolved(_, _) => Ok(()),
+        }
+    }
+
     fn check_items(&mut self, prog: &ast::Program) -> Result<hir::Program, TypeError> {
         let mut uses = Vec::new();
         let mut typed_items = Vec::new();
@@ -693,7 +726,7 @@ impl<'a> TypeChecker<'a> {
                             kind: ScopeKind::Const(Const::Resolved(type_id, value)),
                             ..
                         }) => (*type_id, value.clone()),
-                        _ => unreachable!("const should be resolved"),
+                        _ => unreachable!(),
                     };
 
                     hir::ItemKind::Const(hir::ConstDef {
@@ -710,7 +743,7 @@ impl<'a> TypeChecker<'a> {
                             kind: ScopeKind::Static(Static::Resolved(type_id, value)),
                             ..
                         }) => (*type_id, value.clone()),
-                        _ => unreachable!("static should be resolved"),
+                        _ => unreachable!(),
                     };
 
                     hir::ItemKind::Static(hir::StaticDef {
@@ -728,7 +761,14 @@ impl<'a> TypeChecker<'a> {
                 ast::ItemKind::Extern(extern_item) => {
                     let hir_extern = match extern_item {
                         ast::ExternItem::Static(decl) => {
-                            let type_id = self.lower_type(&decl.type_ann)?;
+                            self.resolve_declaration(&decl.name)?;
+                            let type_id = match self.lookup(&decl.name) {
+                                Some(ScopeObject {
+                                    kind: ScopeKind::ExternStatic(ExternStatic::Resolved(type_id)),
+                                    ..
+                                }) => *type_id,
+                                _ => unreachable!(),
+                            };
                             hir::ExternItem::Static(hir::ExternStaticDecl {
                                 name: decl.name.clone(),
                                 type_id,
@@ -736,19 +776,25 @@ impl<'a> TypeChecker<'a> {
                             })
                         }
                         ast::ExternItem::Function(decl) => {
+                            self.resolve_declaration(&decl.name)?;
+                            let (param_types, return_type_id) = match self.lookup(&decl.name) {
+                                Some(ScopeObject {
+                                    kind:
+                                        ScopeKind::ExternFunction(ExternFunction::Resolved(params, ret)),
+                                    ..
+                                }) => (params.clone(), *ret),
+                                _ => unreachable!(),
+                            };
                             let params = decl
                                 .params
                                 .iter()
-                                .map(|p| {
-                                    let type_id = self.lower_type(&p.type_ann)?;
-                                    Ok(hir::Param {
-                                        name: p.name.clone(),
-                                        type_id,
-                                        span: p.span,
-                                    })
+                                .zip(param_types.iter())
+                                .map(|(p, &type_id)| hir::Param {
+                                    name: p.name.clone(),
+                                    type_id,
+                                    span: p.span,
                                 })
-                                .collect::<Result<Vec<_>, _>>()?;
-                            let return_type_id = self.lower_type(&decl.return_type_ann)?;
+                                .collect();
                             hir::ExternItem::Function(hir::ExternFunctionDecl {
                                 name: decl.name.clone(),
                                 params,
@@ -766,7 +812,7 @@ impl<'a> TypeChecker<'a> {
                             kind: ScopeKind::Struct(Struct::Resolved(type_id)),
                             ..
                         }) => *type_id,
-                        _ => unreachable!("struct should be resolved"),
+                        _ => unreachable!(),
                     };
 
                     hir::ItemKind::TypeDef(hir::TypeDef {
@@ -1135,13 +1181,16 @@ impl<'a> TypeChecker<'a> {
         let name = path.to_string();
         self.resolve_declaration(&name)?;
 
-        match self.lookup(&path.to_string()).map(|o| &o.kind) {
+        match self.lookup(&name).map(|o| &o.kind) {
             Some(ScopeKind::Var(type_id)) => Ok(hir::Expr {
                 kind: hir::ExprKind::Place(hir::Place::Local(name)),
                 type_id: *type_id,
                 span: expr.span,
             }),
-            Some(ScopeKind::Static(Static::Resolved(type_id, _))) => Ok(hir::Expr {
+            Some(
+                ScopeKind::Static(Static::Resolved(type_id, _))
+                | ScopeKind::ExternStatic(ExternStatic::Resolved(type_id)),
+            ) => Ok(hir::Expr {
                 kind: hir::ExprKind::Place(hir::Place::Global(self.make_ident(path))),
                 type_id: *type_id,
                 span: expr.span,
@@ -1361,10 +1410,16 @@ impl<'a> TypeChecker<'a> {
         self.resolve_declaration(&name)?;
 
         let (params, return_ty) = match self.lookup(&name) {
-            Some(ScopeObject {
-                kind: ScopeKind::Function(Function::Resolved(params, return_ty)),
-                ..
-            }) => (params.clone(), *return_ty),
+            Some(
+                ScopeObject {
+                    kind: ScopeKind::Function(Function::Resolved(params, return_ty)),
+                    ..
+                }
+                | ScopeObject {
+                    kind: ScopeKind::ExternFunction(ExternFunction::Resolved(params, return_ty)),
+                    ..
+                },
+            ) => (params.clone(), *return_ty),
             _ => {
                 return Err(TypeError::new(
                     format!("undefined function `{callee}`"),

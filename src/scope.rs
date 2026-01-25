@@ -37,6 +37,8 @@ pub enum ScopeKind {
     Static(Static),
     Function(Function),
     Struct(Struct),
+    ExternStatic(ExternStatic),
+    ExternFunction(ExternFunction),
 }
 
 #[derive(Debug, Clone)]
@@ -65,4 +67,16 @@ pub enum Struct {
     Unresolved(Rc<ast::StructDef>),
     Resolving(Rc<ast::StructDef>),
     Resolved(TypeId),
+}
+
+#[derive(Debug, Clone)]
+pub enum ExternStatic {
+    Unresolved(Rc<ast::ExternStaticDecl>),
+    Resolved(TypeId),
+}
+
+#[derive(Debug, Clone)]
+pub enum ExternFunction {
+    Unresolved(Rc<ast::ExternFunctionDecl>),
+    Resolved(Vec<TypeId>, TypeId),
 }
