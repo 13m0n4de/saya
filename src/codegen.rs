@@ -954,16 +954,16 @@ impl<'a> CodeGen<'a> {
     ) -> Result<GenValue, CodeGenError> {
         match expr.kind {
             ExprKind::Break => {
-                let loop_ctx = self.current_loop().ok_or_else(|| {
-                    CodeGenError::new("break outside of loop".to_string(), expr.span)
-                })?;
+                let Some(loop_ctx) = self.current_loop() else {
+                    unreachable!()
+                };
                 qfunc.add_instr(qbe::Instr::Jmp(loop_ctx.break_label.clone()));
                 Ok(GenValue::Const(0, expr.type_id))
             }
             ExprKind::Continue => {
-                let loop_ctx = self.current_loop().ok_or_else(|| {
-                    CodeGenError::new("continue outside of loop".to_string(), expr.span)
-                })?;
+                let Some(loop_ctx) = self.current_loop() else {
+                    unreachable!()
+                };
                 qfunc.add_instr(qbe::Instr::Jmp(loop_ctx.continue_label.clone()));
                 Ok(GenValue::Const(0, expr.type_id))
             }

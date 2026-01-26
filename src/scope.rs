@@ -2,36 +2,52 @@ use std::{collections::HashMap, rc::Rc};
 
 use crate::{ast, hir, types::TypeId};
 
-pub type Scope = HashMap<String, ScopeObject>;
-
-#[derive(Debug, Clone)]
-pub struct ScopeObject {
-    pub vis: ast::Visibility,
-    pub kind: ScopeKind,
+pub enum Scope {
+    Module {
+        objects: HashMap<String, ScopeObject>,
+    },
+    Function {
+        return_type_id: TypeId,
+        objects: HashMap<String, ScopeObject>,
+    },
+    Loop {
+        objects: HashMap<String, ScopeObject>,
+    },
+    Block {
+        objects: HashMap<String, ScopeObject>,
+    },
 }
 
-impl ScopeObject {
-    pub fn new(vis: ast::Visibility, kind: ScopeKind) -> Self {
-        Self { vis, kind }
+impl Scope {
+    pub fn get(&self, name: &str) -> Option<&ScopeObject> {
+        self.objects().get(name)
     }
 
-    pub fn private(kind: ScopeKind) -> Self {
-        Self {
-            vis: ast::Visibility::Private,
-            kind,
+    pub fn insert(&mut self, name: String, object: ScopeObject) -> Option<ScopeObject> {
+        self.objects_mut().insert(name, object)
+    }
+
+    pub fn objects(&self) -> &HashMap<String, ScopeObject> {
+        match self {
+            Self::Module { objects }
+            | Self::Function { objects, .. }
+            | Self::Loop { objects }
+            | Self::Block { objects } => objects,
         }
     }
 
-    pub fn public(kind: ScopeKind) -> Self {
-        Self {
-            vis: ast::Visibility::Public,
-            kind,
+    pub fn objects_mut(&mut self) -> &mut HashMap<String, ScopeObject> {
+        match self {
+            Self::Module { objects }
+            | Self::Function { objects, .. }
+            | Self::Loop { objects }
+            | Self::Block { objects } => objects,
         }
     }
 }
 
 #[derive(Debug, Clone)]
-pub enum ScopeKind {
+pub enum ScopeObject {
     Var(TypeId),
     Const(Const),
     Static(Static),
