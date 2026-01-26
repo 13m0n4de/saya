@@ -8,14 +8,14 @@ extern-item = "extern" (extern-static / extern-fn)
 extern-static = "static" identifier ":" type-name ";"
 extern-fn = "fn" identifier "(" [param-list] ")" ["->" type-name]  ";"
 
-const-def = "const" identifier ":" type-name "=" expression ";"
-static-def = "static" identifier ":" type-name "=" expression ";"
+const-def = "const" path ":" type-name "=" expression ";"
+static-def = "static" path ":" type-name "=" expression ";"
 
-struct-def = "struct" identifier "{" [field-list] "}"
+struct-def = "struct" path "{" [field-list] "}"
 field-list = field *("," field) [","]
 field = identifier ":" type-name
 
-function-def = "fn" identifier "(" [param-list] ")" ["->" type-name] block
+function-def = "fn" path "(" [param-list] ")" ["->" type-name] block
 
 param-list = param *("," param) [","]
 param = identifier ":" type-name
