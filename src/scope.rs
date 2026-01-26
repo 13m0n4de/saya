@@ -78,6 +78,13 @@ impl Scope {
         self.objects_mut().insert(name, object)
     }
 
+    pub fn extend<I>(&mut self, iter: I)
+    where
+        I: IntoIterator<Item = (String, ScopeObject)>,
+    {
+        self.objects_mut().extend(iter);
+    }
+
     pub fn objects(&self) -> &HashMap<String, ScopeObject> {
         match self {
             Self::Module { objects }

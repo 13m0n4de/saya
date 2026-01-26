@@ -352,7 +352,7 @@ impl<'a> TypeChecker<'a> {
             })?;
 
             let objects = mem::take(checker.scopes.first_mut().objects_mut());
-            self.scopes.first_mut().objects_mut().extend(objects);
+            self.scopes.first_mut().extend(objects);
         }
         Ok(())
     }
