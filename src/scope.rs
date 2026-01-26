@@ -2,36 +2,110 @@ use std::{collections::HashMap, rc::Rc};
 
 use crate::{ast, hir, types::TypeId};
 
-pub type Scope = HashMap<String, ScopeObject>;
-
-#[derive(Debug, Clone)]
-pub struct ScopeObject {
-    pub vis: ast::Visibility,
-    pub kind: ScopeKind,
+#[derive(Default)]
+pub struct Scopes {
+    stack: Vec<Scope>,
 }
 
-impl ScopeObject {
-    pub fn new(vis: ast::Visibility, kind: ScopeKind) -> Self {
-        Self { vis, kind }
+impl Scopes {
+    pub fn new() -> Self {
+        Self { stack: vec![] }
     }
 
-    pub fn private(kind: ScopeKind) -> Self {
-        Self {
-            vis: ast::Visibility::Private,
-            kind,
+    pub fn push(&mut self, scope: Scope) {
+        self.stack.push(scope);
+    }
+
+    pub fn pop(&mut self) {
+        self.stack
+            .pop()
+            .expect("ICE: cannot pop scope, scopes stack is empty");
+    }
+
+    pub fn last_mut(&mut self) -> &mut Scope {
+        self.stack
+            .last_mut()
+            .expect("ICE: scope stack should not be empty")
+    }
+
+    pub fn first_mut(&mut self) -> &mut Scope {
+        self.stack
+            .first_mut()
+            .expect("ICE: scope stack should not be empty")
+    }
+
+    pub fn find<P>(&self, predicate: P) -> Option<&Scope>
+    where
+        P: Fn(&Scope) -> bool,
+    {
+        self.stack.iter().rev().find(|s| predicate(s))
+    }
+
+    pub fn find_map<T, F>(&self, f: F) -> Option<&T>
+    where
+        F: Fn(&Scope) -> Option<&T>,
+    {
+        self.stack.iter().rev().find_map(f)
+    }
+
+    pub fn lookup(&self, name: &str) -> Option<&ScopeObject> {
+        self.stack.iter().rev().find_map(|s| s.get(name))
+    }
+}
+
+pub enum Scope {
+    Module {
+        objects: HashMap<String, ScopeObject>,
+    },
+    Function {
+        return_type_id: TypeId,
+        objects: HashMap<String, ScopeObject>,
+    },
+    Loop {
+        objects: HashMap<String, ScopeObject>,
+    },
+    Block {
+        objects: HashMap<String, ScopeObject>,
+    },
+}
+
+impl Scope {
+    pub fn get(&self, name: &str) -> Option<&ScopeObject> {
+        self.objects().get(name)
+    }
+
+    pub fn insert(&mut self, name: String, object: ScopeObject) -> Option<ScopeObject> {
+        self.objects_mut().insert(name, object)
+    }
+
+    pub fn extend<I>(&mut self, iter: I)
+    where
+        I: IntoIterator<Item = (String, ScopeObject)>,
+    {
+        self.objects_mut().extend(iter);
+    }
+
+    pub fn objects(&self) -> &HashMap<String, ScopeObject> {
+        match self {
+            Self::Module { objects }
+            | Self::Function { objects, .. }
+            | Self::Loop { objects }
+            | Self::Block { objects } => objects,
         }
     }
 
-    pub fn public(kind: ScopeKind) -> Self {
-        Self {
-            vis: ast::Visibility::Public,
-            kind,
+    pub fn objects_mut(&mut self) -> &mut HashMap<String, ScopeObject> {
+        match self {
+            Self::Module { objects }
+            | Self::Function { objects, .. }
+            | Self::Loop { objects }
+            | Self::Block { objects } => objects,
         }
     }
 }
 
 #[derive(Debug, Clone)]
-pub enum ScopeKind {
+pub enum ScopeObject {
     Var(TypeId),
     Const(Const),
     Static(Static),
