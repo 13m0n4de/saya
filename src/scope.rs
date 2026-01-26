@@ -25,13 +25,13 @@ impl Scopes {
     pub fn last_mut(&mut self) -> &mut Scope {
         self.stack
             .last_mut()
-            .expect("scope stack should not be empty")
+            .expect("ICE: scope stack should not be empty")
     }
 
     pub fn first_mut(&mut self) -> &mut Scope {
         self.stack
             .first_mut()
-            .expect("scope stack should not be empty")
+            .expect("ICE: scope stack should not be empty")
     }
 
     pub fn find<P>(&self, predicate: P) -> Option<&Scope>
