@@ -10,7 +10,9 @@ use crate::{
     ast, hir,
     lexer::Lexer,
     parser::Parser,
-    scope::{Const, ExternFunction, ExternStatic, Function, Scope, ScopeObject, Static, Struct},
+    scope::{
+        Const, ExternFunction, ExternStatic, Function, Scope, ScopeObject, Scopes, Static, Struct,
+    },
     span::Span,
     types::{Field, TypeContext, TypeId, TypeKind},
 };
@@ -44,17 +46,20 @@ type StructLayout = (Vec<(String, usize)>, usize, u64);
 pub struct TypeChecker<'a> {
     namespace: Option<String>,
     types: &'a mut TypeContext,
-    scopes: Vec<Scope>,
+    pub scopes: Scopes,
 }
 
 impl<'a> TypeChecker<'a> {
     pub fn new(namespace: Option<String>, types: &'a mut TypeContext) -> Self {
+        let mut scopes = Scopes::new();
+        scopes.push(Scope::Module {
+            objects: HashMap::new(),
+        });
+
         Self {
             namespace,
             types,
-            scopes: vec![Scope::Module {
-                objects: HashMap::new(),
-            }],
+            scopes,
         }
     }
 
@@ -62,46 +67,6 @@ impl<'a> TypeChecker<'a> {
         self.load_uses(prog)?;
         self.scan_declarations(prog)?;
         self.check_items(prog)
-    }
-
-    fn push_scope(&mut self, scope: Scope) {
-        self.scopes.push(scope);
-    }
-
-    fn pop_scope(&mut self) {
-        self.scopes
-            .pop()
-            .expect("ICE: cannot pop scope, scopes stack is empty");
-    }
-
-    fn last_mut_scope(&mut self) -> &mut Scope {
-        self.scopes
-            .last_mut()
-            .expect("scope stack should not be empty")
-    }
-
-    fn first_mut_scope(&mut self) -> &mut Scope {
-        self.scopes
-            .first_mut()
-            .expect("scope stack should not be empty")
-    }
-
-    fn find_scope<P>(&self, predicate: P) -> Option<&Scope>
-    where
-        P: Fn(&Scope) -> bool,
-    {
-        self.scopes.iter().rev().find(|s| predicate(s))
-    }
-
-    fn find_map_scope<T, F>(&self, f: F) -> Option<&T>
-    where
-        F: Fn(&Scope) -> Option<&T>,
-    {
-        self.scopes.iter().rev().find_map(f)
-    }
-
-    fn lookup(&self, name: &str) -> Option<&ScopeObject> {
-        self.scopes.iter().rev().find_map(|s| s.get(name))
     }
 
     fn make_ident(&self, path: &ast::Path) -> String {
@@ -118,7 +83,7 @@ impl<'a> TypeChecker<'a> {
         match &expr.kind {
             hir::ExprKind::Literal(lit) => Ok(lit.clone()),
             hir::ExprKind::Place(hir::Place::Local(symbol) | hir::Place::Global(symbol)) => {
-                match self.lookup(symbol) {
+                match self.scopes.lookup(symbol) {
                     Some(ScopeObject::Const(Const::Resolved(_, value))) => Ok(value.clone()),
                     _ => Err(TypeError::new(
                         format!("Constant `{symbol}` not found"),
@@ -234,7 +199,7 @@ impl<'a> TypeChecker<'a> {
                 let name = path.to_string();
                 self.resolve_declaration(&name)?;
 
-                match self.lookup(&name) {
+                match self.scopes.lookup(&name) {
                     Some(ScopeObject::Struct(Struct::Resolved(type_id))) => {
                         let t = self.types.get(*type_id);
                         Ok((t.size, t.align))
@@ -305,7 +270,7 @@ impl<'a> TypeChecker<'a> {
                 let name = path.to_string();
                 self.resolve_declaration(&name)?;
 
-                match self.lookup(&name) {
+                match self.scopes.lookup(&name) {
                     Some(ScopeObject::Struct(Struct::Resolved(type_id))) => Ok(*type_id),
                     _ => Err(TypeError::new(
                         format!("undefined type `{path}`"),
@@ -386,8 +351,8 @@ impl<'a> TypeChecker<'a> {
                 )
             })?;
 
-            let objects = mem::take(checker.first_mut_scope().objects_mut());
-            self.first_mut_scope().objects_mut().extend(objects);
+            let objects = mem::take(checker.scopes.first_mut().objects_mut());
+            self.scopes.first_mut().objects_mut().extend(objects);
         }
         Ok(())
     }
@@ -428,7 +393,7 @@ impl<'a> TypeChecker<'a> {
                 ast::ItemKind::Use(_) => continue,
             };
 
-            if self.first_mut_scope().insert(name.clone(), obj).is_some() {
+            if self.scopes.first_mut().insert(name.clone(), obj).is_some() {
                 return Err(TypeError::new(
                     format!("name `{name}` already defined"),
                     span,
@@ -440,7 +405,7 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn resolve_declaration(&mut self, name: &str) -> Result<(), TypeError> {
-        let Some(obj) = self.lookup(name).cloned() else {
+        let Some(obj) = self.scopes.lookup(name).cloned() else {
             return Ok(());
         };
         match &obj {
@@ -461,7 +426,7 @@ impl<'a> TypeChecker<'a> {
 
         match decl {
             Const::Unresolved(def) => {
-                self.first_mut_scope().insert(
+                self.scopes.first_mut().insert(
                     name.to_string(),
                     ScopeObject::Const(Const::Resolving(def.clone())),
                 );
@@ -481,7 +446,7 @@ impl<'a> TypeChecker<'a> {
 
                 let value = self.eval_const_expr(&typed_init)?;
 
-                self.first_mut_scope().insert(
+                self.scopes.first_mut().insert(
                     name.to_string(),
                     ScopeObject::Const(Const::Resolved(type_id, value)),
                 );
@@ -503,7 +468,7 @@ impl<'a> TypeChecker<'a> {
 
         match decl {
             Static::Unresolved(def) => {
-                self.first_mut_scope().insert(
+                self.scopes.first_mut().insert(
                     name.to_string(),
                     ScopeObject::Static(Static::Resolving(def.clone())),
                 );
@@ -523,7 +488,7 @@ impl<'a> TypeChecker<'a> {
 
                 let value = self.eval_const_expr(&typed_init)?;
 
-                self.first_mut_scope().insert(
+                self.scopes.first_mut().insert(
                     name.to_string(),
                     ScopeObject::Static(Static::Resolved(type_id, value)),
                 );
@@ -545,7 +510,7 @@ impl<'a> TypeChecker<'a> {
 
         match decl {
             Function::Unresolved(def) => {
-                self.first_mut_scope().insert(
+                self.scopes.first_mut().insert(
                     name.to_string(),
                     ScopeObject::Function(Function::Resolving(def.clone())),
                 );
@@ -557,7 +522,7 @@ impl<'a> TypeChecker<'a> {
                     .collect::<Result<Vec<_>, _>>()?;
                 let return_ty = self.lower_type(&def.return_type_ann)?;
 
-                self.first_mut_scope().insert(
+                self.scopes.first_mut().insert(
                     name.to_string(),
                     ScopeObject::Function(Function::Resolved(params, return_ty)),
                 );
@@ -579,7 +544,7 @@ impl<'a> TypeChecker<'a> {
 
         match decl {
             Struct::Unresolved(def) => {
-                self.first_mut_scope().insert(
+                self.scopes.first_mut().insert(
                     name.to_string(),
                     ScopeObject::Struct(Struct::Resolving(def.clone())),
                 );
@@ -598,7 +563,7 @@ impl<'a> TypeChecker<'a> {
 
                 let struct_type_id = self.types.mk_empty_struct();
 
-                self.first_mut_scope().insert(
+                self.scopes.first_mut().insert(
                     name.to_string(),
                     ScopeObject::Struct(Struct::Resolved(struct_type_id)),
                 );
@@ -647,7 +612,7 @@ impl<'a> TypeChecker<'a> {
         match decl {
             ExternStatic::Unresolved(def) => {
                 let type_id = self.lower_type(&def.type_ann)?;
-                self.first_mut_scope().insert(
+                self.scopes.first_mut().insert(
                     name.to_string(),
                     ScopeObject::ExternStatic(ExternStatic::Resolved(type_id)),
                 );
@@ -674,7 +639,7 @@ impl<'a> TypeChecker<'a> {
                     .map(|p| self.lower_type(&p.type_ann))
                     .collect::<Result<Vec<_>, _>>()?;
                 let return_ty = self.lower_type(&def.return_type_ann)?;
-                self.first_mut_scope().insert(
+                self.scopes.first_mut().insert(
                     name.to_string(),
                     ScopeObject::ExternFunction(ExternFunction::Resolved(params, return_ty)),
                 );
@@ -697,7 +662,7 @@ impl<'a> TypeChecker<'a> {
                 ast::ItemKind::Const(def) => {
                     let name = def.path.to_string();
                     self.resolve_declaration(&name)?;
-                    let (type_id, value) = match self.lookup(&name) {
+                    let (type_id, value) = match self.scopes.lookup(&name) {
                         Some(ScopeObject::Const(Const::Resolved(type_id, value))) => {
                             (*type_id, value.clone())
                         }
@@ -714,7 +679,7 @@ impl<'a> TypeChecker<'a> {
                 ast::ItemKind::Static(def) => {
                     let name = def.path.to_string();
                     self.resolve_declaration(&name)?;
-                    let (type_id, value) = match self.lookup(&name) {
+                    let (type_id, value) = match self.scopes.lookup(&name) {
                         Some(ScopeObject::Static(Static::Resolved(type_id, value))) => {
                             (*type_id, value.clone())
                         }
@@ -737,7 +702,7 @@ impl<'a> TypeChecker<'a> {
                     let hir_extern = match extern_item {
                         ast::ExternItem::Static(decl) => {
                             self.resolve_declaration(&decl.name)?;
-                            let type_id = match self.lookup(&decl.name) {
+                            let type_id = match self.scopes.lookup(&decl.name) {
                                 Some(ScopeObject::ExternStatic(ExternStatic::Resolved(
                                     type_id,
                                 ))) => *type_id,
@@ -751,13 +716,13 @@ impl<'a> TypeChecker<'a> {
                         }
                         ast::ExternItem::Function(decl) => {
                             self.resolve_declaration(&decl.name)?;
-                            let (param_types, return_type_id) = match self.lookup(&decl.name) {
-                                Some(ScopeObject::ExternFunction(ExternFunction::Resolved(
-                                    params,
-                                    ret,
-                                ))) => (params.clone(), *ret),
-                                _ => unreachable!(),
-                            };
+                            let (param_types, return_type_id) =
+                                match self.scopes.lookup(&decl.name) {
+                                    Some(ScopeObject::ExternFunction(
+                                        ExternFunction::Resolved(params, ret),
+                                    )) => (params.clone(), *ret),
+                                    _ => unreachable!(),
+                                };
                             let params = decl
                                 .params
                                 .iter()
@@ -781,7 +746,7 @@ impl<'a> TypeChecker<'a> {
                 ast::ItemKind::Struct(def) => {
                     let name = def.path.to_string();
                     self.resolve_declaration(&name)?;
-                    let type_id = match self.lookup(&name) {
+                    let type_id = match self.scopes.lookup(&name) {
                         Some(ScopeObject::Struct(Struct::Resolved(type_id))) => *type_id,
                         _ => unreachable!(),
                     };
@@ -810,7 +775,7 @@ impl<'a> TypeChecker<'a> {
     fn check_function(&mut self, func: &ast::FunctionDef) -> Result<hir::FunctionDef, TypeError> {
         let ident = self.make_ident(&func.path);
         let return_type_id = self.lower_type(&func.return_type_ann)?;
-        self.push_scope(Scope::Function {
+        self.scopes.push(Scope::Function {
             return_type_id,
             objects: HashMap::new(),
         });
@@ -820,7 +785,8 @@ impl<'a> TypeChecker<'a> {
             let param_type_id = self.lower_type(&param.type_ann)?;
             let obj = ScopeObject::Var(param_type_id);
             if self
-                .last_mut_scope()
+                .scopes
+                .last_mut()
                 .insert(param.name.clone(), obj)
                 .is_some()
             {
@@ -853,7 +819,7 @@ impl<'a> TypeChecker<'a> {
             None => None,
         };
 
-        self.pop_scope();
+        self.scopes.pop();
 
         Ok(hir::FunctionDef {
             ident,
@@ -920,7 +886,7 @@ impl<'a> TypeChecker<'a> {
             _ => TypeId::UNIT,
         };
 
-        self.pop_scope();
+        self.scopes.pop();
 
         Ok(hir::Block {
             stmts: typed_stmts,
@@ -947,7 +913,8 @@ impl<'a> TypeChecker<'a> {
 
                 let obj = ScopeObject::Var(declared_type_id);
                 if self
-                    .last_mut_scope()
+                    .scopes
+                    .last_mut()
                     .insert(let_stmt.name.clone(), obj)
                     .is_some()
                 {
@@ -1055,7 +1022,7 @@ impl<'a> TypeChecker<'a> {
         };
 
         let path = &struct_expr.path;
-        let struct_type_id = match self.lookup(&path.to_string()) {
+        let struct_type_id = match self.scopes.lookup(&path.to_string()) {
             Some(ScopeObject::Struct(Struct::Resolved(type_id))) => *type_id,
             _ => {
                 return Err(TypeError::new(
@@ -1144,7 +1111,7 @@ impl<'a> TypeChecker<'a> {
         let name = path.to_string();
         self.resolve_declaration(&name)?;
 
-        match self.lookup(&name) {
+        match self.scopes.lookup(&name) {
             Some(ScopeObject::Var(type_id)) => Ok(hir::Expr {
                 kind: hir::ExprKind::Place(hir::Place::Local(name)),
                 type_id: *type_id,
@@ -1372,7 +1339,7 @@ impl<'a> TypeChecker<'a> {
         let name = callee.to_string();
         self.resolve_declaration(&name)?;
 
-        let (params, return_ty) = match self.lookup(&name) {
+        let (params, return_ty) = match self.scopes.lookup(&name) {
             Some(
                 ScopeObject::Function(Function::Resolved(params, return_ty))
                 | ScopeObject::ExternFunction(ExternFunction::Resolved(params, return_ty)),
@@ -1593,7 +1560,8 @@ impl<'a> TypeChecker<'a> {
         };
 
         let return_type_id = *self
-            .find_map_scope(|s| match s {
+            .scopes
+            .find_map(|s| match s {
                 Scope::Function { return_type_id, .. } => Some(return_type_id),
                 _ => None,
             })
@@ -1705,7 +1673,7 @@ impl<'a> TypeChecker<'a> {
             unreachable!()
         };
 
-        self.push_scope(Scope::Loop {
+        self.scopes.push(Scope::Loop {
             objects: HashMap::new(),
         });
 
@@ -1723,7 +1691,7 @@ impl<'a> TypeChecker<'a> {
 
         let typed_body = self.check_block(&while_expr.body)?;
 
-        self.pop_scope();
+        self.scopes.pop();
 
         Ok(hir::Expr {
             kind: hir::ExprKind::While(hir::While {
@@ -1742,7 +1710,8 @@ impl<'a> TypeChecker<'a> {
         };
 
         if self
-            .find_scope(|s| matches!(s, Scope::Loop { .. }))
+            .scopes
+            .find(|s| matches!(s, Scope::Loop { .. }))
             .is_none()
         {
             return Err(TypeError::new("break outside of loop".into(), expr.span));
@@ -1761,7 +1730,8 @@ impl<'a> TypeChecker<'a> {
         };
 
         if self
-            .find_scope(|s| matches!(s, Scope::Loop { .. }))
+            .scopes
+            .find(|s| matches!(s, Scope::Loop { .. }))
             .is_none()
         {
             return Err(TypeError::new("continue outside of loop".into(), expr.span));

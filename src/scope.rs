@@ -2,6 +2,57 @@ use std::{collections::HashMap, rc::Rc};
 
 use crate::{ast, hir, types::TypeId};
 
+#[derive(Default)]
+pub struct Scopes {
+    stack: Vec<Scope>,
+}
+
+impl Scopes {
+    pub fn new() -> Self {
+        Self { stack: vec![] }
+    }
+
+    pub fn push(&mut self, scope: Scope) {
+        self.stack.push(scope);
+    }
+
+    pub fn pop(&mut self) {
+        self.stack
+            .pop()
+            .expect("ICE: cannot pop scope, scopes stack is empty");
+    }
+
+    pub fn last_mut(&mut self) -> &mut Scope {
+        self.stack
+            .last_mut()
+            .expect("scope stack should not be empty")
+    }
+
+    pub fn first_mut(&mut self) -> &mut Scope {
+        self.stack
+            .first_mut()
+            .expect("scope stack should not be empty")
+    }
+
+    pub fn find<P>(&self, predicate: P) -> Option<&Scope>
+    where
+        P: Fn(&Scope) -> bool,
+    {
+        self.stack.iter().rev().find(|s| predicate(s))
+    }
+
+    pub fn find_map<T, F>(&self, f: F) -> Option<&T>
+    where
+        F: Fn(&Scope) -> Option<&T>,
+    {
+        self.stack.iter().rev().find_map(f)
+    }
+
+    pub fn lookup(&self, name: &str) -> Option<&ScopeObject> {
+        self.stack.iter().rev().find_map(|s| s.get(name))
+    }
+}
+
 pub enum Scope {
     Module {
         objects: HashMap<String, ScopeObject>,
