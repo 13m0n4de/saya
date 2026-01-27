@@ -10,7 +10,8 @@ macro_rules! typecheck {
         let mut parser = Parser::new(lexer).unwrap();
         let program = parser.parse().unwrap();
         let mut type_context = TypeContext::new();
-        let mut type_checker = TypeChecker::new(None, &mut type_context);
+        let mut type_checker =
+            TypeChecker::new(&mut type_context, None, std::collections::HashMap::new());
         type_checker.check_program(&program)
     }};
 }
@@ -35,7 +36,8 @@ fn test_string_literal() {
     let mut parser = Parser::new(lexer).unwrap();
     let program = parser.parse().unwrap();
     let mut type_context = TypeContext::new();
-    let mut type_checker = TypeChecker::new(None, &mut type_context);
+    let mut type_checker =
+        TypeChecker::new(&mut type_context, None, std::collections::HashMap::new());
     let program = type_checker.check_program(&program).unwrap();
 
     match &program.items[0].kind {
@@ -55,7 +57,8 @@ fn test_cstring_literal() {
     let mut parser = Parser::new(lexer).unwrap();
     let program = parser.parse().unwrap();
     let mut type_context = TypeContext::new();
-    let mut type_checker = TypeChecker::new(None, &mut type_context);
+    let mut type_checker =
+        TypeChecker::new(&mut type_context, None, std::collections::HashMap::new());
     let program = type_checker.check_program(&program).unwrap();
 
     match &program.items[0].kind {
