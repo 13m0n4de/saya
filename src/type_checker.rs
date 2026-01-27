@@ -44,22 +44,28 @@ impl Error for TypeError {}
 type StructLayout = (Vec<(String, usize)>, usize, u64);
 
 pub struct TypeChecker<'a> {
-    namespace: Option<String>,
-    types: &'a mut TypeContext,
     pub scopes: Scopes,
+    types: &'a mut TypeContext,
+    namespace: Option<String>,
+    td_paths: HashMap<String, String>,
 }
 
 impl<'a> TypeChecker<'a> {
-    pub fn new(namespace: Option<String>, types: &'a mut TypeContext) -> Self {
+    pub fn new(
+        types: &'a mut TypeContext,
+        namespace: Option<String>,
+        td_paths: HashMap<String, String>,
+    ) -> Self {
         let mut scopes = Scopes::new();
         scopes.push(Scope::Module {
             objects: HashMap::new(),
         });
 
         Self {
-            namespace,
-            types,
             scopes,
+            types,
+            namespace,
+            td_paths,
         }
     }
 
@@ -314,12 +320,17 @@ impl<'a> TypeChecker<'a> {
                 continue;
             };
 
-            let file_path = use_item
-                .path
-                .segments
-                .iter()
-                .collect::<PathBuf>()
-                .with_extension("td");
+            let module_name = use_item.path.to_string();
+            let file_path: PathBuf = self
+                .td_paths
+                .get(&module_name)
+                .map(PathBuf::from)
+                .ok_or_else(|| {
+                    TypeError::new(
+                        format!("module `{module_name}` not found, use '-M {module_name}=<path>' to specify its typedef file"),
+                        use_item.span,
+                    )
+                })?;
 
             let code = std::fs::read_to_string(&file_path).map_err(|e| {
                 TypeError::new(
@@ -343,7 +354,7 @@ impl<'a> TypeChecker<'a> {
                 )
             })?;
 
-            let mut checker = TypeChecker::new(None, self.types);
+            let mut checker = TypeChecker::new(self.types, None, HashMap::new());
             checker.check_program(&program).map_err(|e| {
                 TypeError::new(
                     format!("failed to type check module `{}`: {}", use_item.name, e),
