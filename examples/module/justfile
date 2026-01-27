@@ -1,22 +1,26 @@
 default: run
 
+build_dir := "build"
+
 build:
-    cargo run -- vec2.saya -o vec2.ssa -t vec2.td -N vec2
-    cargo run -- random.saya -o random.ssa -t random.td -N random
-    cargo run -- main.saya -o main.ssa
+    mkdir -p {{build_dir}}
 
-    qbe vec2.ssa -o vec2.s
-    qbe random.ssa -o random.s
-    qbe main.ssa -o main.s
+    cargo run -- vec2.saya -o {{build_dir}}/vec2.ssa -t {{build_dir}}/vec2.td -N vec2
+    cargo run -- random.saya -o {{build_dir}}/random.ssa -t {{build_dir}}/random.td -N random
+    cargo run -- main.saya -o {{build_dir}}/main.ssa -M vec2={{build_dir}}/vec2.td -M random={{build_dir}}/random.td
 
-    as vec2.s -o vec2.o
-    as random.s -o random.o
-    as main.s -o main.o
+    qbe {{build_dir}}/vec2.ssa -o {{build_dir}}/vec2.s
+    qbe {{build_dir}}/random.ssa -o {{build_dir}}/random.s
+    qbe {{build_dir}}/main.ssa -o {{build_dir}}/main.s
 
-    cc vec2.o random.o main.o -lc -o main
+    cc -c {{build_dir}}/vec2.s -o {{build_dir}}/vec2.o
+    cc -c {{build_dir}}/random.s -o {{build_dir}}/random.o
+    cc -c {{build_dir}}/main.s -o {{build_dir}}/main.o
+
+    cc {{build_dir}}/vec2.o {{build_dir}}/random.o {{build_dir}}/main.o -lc -o {{build_dir}}/main
 
 run: build
-    ./main
+    ./{{build_dir}}/main
 
 clean:
-    rm -f *.ssa *.s *.o main
+    rm -rf {{build_dir}}
