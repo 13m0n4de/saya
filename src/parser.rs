@@ -568,9 +568,9 @@ impl<'a> Parser<'a> {
                 })
             } else if matches!(
                 expr.kind,
-                ExprKind::Block(_) | ExprKind::If(_) | ExprKind::While(_)
+                ExprKind::Block(_) | ExprKind::If(_) | ExprKind::While(_) | ExprKind::Loop(_)
             ) {
-                // `Block`, `If`, `While` can omit semicolons after `{ }`
+                // `Block`, `If`, `While`, `Loop` can omit semicolons after `{ }`
                 Ok(Stmt {
                     kind: StmtKind::Expr(expr),
                     span: expr_span,
