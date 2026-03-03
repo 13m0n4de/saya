@@ -975,6 +975,7 @@ impl<'a> TypeChecker<'a> {
             ast::ExprKind::Block(..) => self.check_expr_block(expr),
             ast::ExprKind::If(..) => self.check_expr_if(expr),
             ast::ExprKind::While(..) => self.check_expr_while(expr),
+            ast::ExprKind::Loop(..) => self.check_expr_loop(expr),
             ast::ExprKind::Break => self.check_expr_break(expr),
             ast::ExprKind::Continue => self.check_expr_continue(expr),
         }
@@ -1709,6 +1710,29 @@ impl<'a> TypeChecker<'a> {
                 cond: Box::new(typed_cond),
                 body: Box::new(typed_body),
                 span: while_expr.span,
+            }),
+            type_id: TypeId::UNIT,
+            span: expr.span,
+        })
+    }
+
+    fn check_expr_loop(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
+        let ast::ExprKind::Loop(loop_expr) = &expr.kind else {
+            unreachable!()
+        };
+
+        self.scopes.push(Scope::Loop {
+            objects: HashMap::new(),
+        });
+
+        let typed_body = self.check_block(&loop_expr.body)?;
+
+        self.scopes.pop();
+
+        Ok(hir::Expr {
+            kind: hir::ExprKind::Loop(hir::Loop {
+                body: Box::new(typed_body),
+                span: loop_expr.span,
             }),
             type_id: TypeId::UNIT,
             span: expr.span,

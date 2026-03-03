@@ -163,6 +163,9 @@ fn test_if_without_else() {
 fn test_while_loop() {
     let result = typecheck!("fn test() { while true { break; } }");
     assert!(result.is_ok());
+
+    let result = typecheck!("fn test() { loop { break; } }");
+    assert!(result.is_ok());
 }
 
 #[test]
