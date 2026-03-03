@@ -26,8 +26,8 @@ dependencies = [
 
 [[package]]
 name = "qbe"
-version = "2.5.1"
-source = "git+https://github.com/garritfra/qbe-rs#f93cd3858eeada11fdd2e9f441682981dcb6e586"
+version = "3.0.0"
+source = "git+https://github.com/garritfra/qbe-rs#d6050cd76820f06e6d341e7ef373ba4c1e028e71"
 
 [[package]]
 name = "saya"
