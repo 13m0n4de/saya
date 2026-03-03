@@ -15,6 +15,7 @@ pub enum TokenKind {
     If,       // if
     Else,     // else
     While,    // while
+    Loop,     // loop
     Break,    // break
     Continue, // continue
     Const,    // const
@@ -327,6 +328,7 @@ impl<'a> Lexer<'a> {
             "if" => TokenKind::If,
             "else" => TokenKind::Else,
             "while" => TokenKind::While,
+            "loop" => TokenKind::Loop,
             "break" => TokenKind::Break,
             "continue" => TokenKind::Continue,
             "const" => TokenKind::Const,
