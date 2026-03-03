@@ -1088,6 +1088,7 @@ impl<'a> CodeGen<'a> {
             ExprKind::Block(block) => self.generate_block(qfunc, block),
             ExprKind::If(..) => self.generate_expr_if(qfunc, expr),
             ExprKind::While(..) => self.generate_expr_while(qfunc, expr),
+            ExprKind::Loop(..) => self.generate_expr_loop(qfunc, expr),
             ExprKind::Break | ExprKind::Continue => self.generate_expr_control(qfunc, expr),
             ExprKind::Array(..) => self.generate_expr_array(qfunc, expr),
             ExprKind::Repeat(..) => self.generate_expr_repeat(qfunc, expr),
@@ -1320,6 +1321,8 @@ impl<'a> CodeGen<'a> {
         let body_label = format!("while.{label_id}.body");
         let end_label = format!("while.{label_id}.end");
 
+        qfunc.add_instr(qbe::Instr::Jmp(cond_label.clone()));
+
         qfunc.add_block(cond_label.clone());
         let cond_val = self.generate_expression(qfunc, &while_expr.cond)?.into();
         qfunc.add_instr(qbe::Instr::Jnz(
@@ -1328,19 +1331,42 @@ impl<'a> CodeGen<'a> {
             end_label.clone(),
         ));
 
-        // Body block
-        self.push_loop(cond_label.clone(), end_label.clone());
-
         qfunc.add_block(body_label);
+        self.push_loop(cond_label.clone(), end_label.clone());
         self.generate_block(qfunc, &while_expr.body)?;
-
         if !qfunc.blocks.last().is_some_and(qbe::Block::jumps) {
             qfunc.add_instr(qbe::Instr::Jmp(cond_label));
         }
-
         self.pop_loop();
 
-        // End block
+        qfunc.add_block(end_label);
+
+        Ok(GenValue::Const(0, expr.type_id))
+    }
+
+    fn generate_expr_loop(
+        &mut self,
+        qfunc: &mut qbe::Function<'static>,
+        expr: &Expr,
+    ) -> Result<GenValue, CodeGenError> {
+        let ExprKind::Loop(loop_expr) = &expr.kind else {
+            unreachable!()
+        };
+
+        let label_id = self.new_label();
+        let body_label = format!("loop.{label_id}.body");
+        let end_label = format!("loop.{label_id}.end");
+
+        qfunc.add_instr(qbe::Instr::Jmp(body_label.clone()));
+
+        qfunc.add_block(body_label.clone());
+        self.push_loop(body_label.clone(), end_label.clone());
+        self.generate_block(qfunc, &loop_expr.body)?;
+        if !qfunc.blocks.last().is_some_and(qbe::Block::jumps) {
+            qfunc.add_instr(qbe::Instr::Jmp(body_label));
+        }
+        self.pop_loop();
+
         qfunc.add_block(end_label);
 
         Ok(GenValue::Const(0, expr.type_id))
