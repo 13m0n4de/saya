@@ -187,10 +187,10 @@ impl<'a> CodeGen<'a> {
             })
             .collect();
 
-        let name = format!("type.{}", type_id.0);
+        let ident = format!("type.{}", type_id.0);
 
-        let def = Box::new(qbe::TypeDef {
-            name,
+        let def = Box::new(qbe::TypeDef::Regular {
+            ident,
             align: Some(ty.align),
             items: qbe_fields,
         });
@@ -219,10 +219,10 @@ impl<'a> CodeGen<'a> {
 
         let items = vec![(qbe_elem_ty, len)];
 
-        let name = format!("type.{}", type_id.0);
+        let ident = format!("type.{}", type_id.0);
 
-        let def = Box::new(qbe::TypeDef {
-            name,
+        let def = Box::new(qbe::TypeDef::Regular {
+            ident,
             align: Some(ty.align),
             items,
         });
@@ -235,10 +235,10 @@ impl<'a> CodeGen<'a> {
 
         let items = vec![(qbe::Type::Long, 1), (qbe::Type::Long, 1)];
 
-        let name = format!("type.{}", type_id.0);
+        let ident = format!("type.{}", type_id.0);
 
-        let def = Box::new(qbe::TypeDef {
-            name,
+        let def = Box::new(qbe::TypeDef::Regular {
+            ident,
             align: Some(ty.align),
             items,
         });
@@ -1293,12 +1293,10 @@ impl<'a> CodeGen<'a> {
                             Ok(self.assign_to_temp(
                                 qfunc,
                                 expr.type_id,
-                                qbe::Instr::Phi(
-                                    then_predecessor,
-                                    then_val,
-                                    else_predecessor,
-                                    else_val,
-                                ),
+                                qbe::Instr::Phi(vec![
+                                    (then_predecessor, then_val),
+                                    (else_predecessor, else_val),
+                                ]),
                             ))
                         }
                         (true, true) => unreachable!(),
@@ -1401,7 +1399,10 @@ impl<'a> CodeGen<'a> {
         Ok(self.assign_to_temp(
             qfunc,
             expr.type_id,
-            qbe::Instr::Phi(rhs_predecessor, right_temp, false_label, false_temp),
+            qbe::Instr::Phi(vec![
+                (rhs_predecessor, right_temp),
+                (false_label, false_temp),
+            ]),
         ))
     }
 
@@ -1458,7 +1459,7 @@ impl<'a> CodeGen<'a> {
         Ok(self.assign_to_temp(
             qfunc,
             expr.type_id,
-            qbe::Instr::Phi(rhs_predecessor, right_temp, true_label, true_temp),
+            qbe::Instr::Phi(vec![(rhs_predecessor, right_temp), (true_label, true_temp)]),
         ))
     }
 }
