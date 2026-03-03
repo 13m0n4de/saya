@@ -290,8 +290,10 @@ fn test_if_without_else() {
 #[test]
 fn test_while_loop() {
     let expr = parse_expr!("while true { break; }").unwrap();
-
     assert!(matches!(expr.kind, ExprKind::While(_)));
+
+    let expr = parse_expr!("loop { break; }").unwrap();
+    assert!(matches!(expr.kind, ExprKind::Loop(_)));
 }
 
 #[test]

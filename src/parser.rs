@@ -849,6 +849,7 @@ impl<'a> Parser<'a> {
 
             TokenKind::If => ExprKind::If(self.parse_if()?),
             TokenKind::While => ExprKind::While(self.parse_while()?),
+            TokenKind::Loop => ExprKind::Loop(self.parse_loop()?),
             TokenKind::Break => {
                 self.advance()?;
                 ExprKind::Break
@@ -983,6 +984,15 @@ impl<'a> Parser<'a> {
             body,
             span: while_span,
         })
+    }
+
+    fn parse_loop(&mut self) -> Result<Loop, ParseError> {
+        let span = self.current.span;
+        self.expect(TokenKind::Loop)?;
+
+        let body = Box::new(self.parse_block()?);
+
+        Ok(Loop { body, span })
     }
 
     fn prefix_binding_power(token: &TokenKind) -> Option<u8> {
