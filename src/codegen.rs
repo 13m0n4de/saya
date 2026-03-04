@@ -37,6 +37,7 @@ impl From<GenValue> for qbe::Value {
 struct LoopContext {
     continue_label: String,
     break_label: String,
+    break_values: Vec<(String, qbe::Value)>,
 }
 
 #[derive(Debug)]
@@ -429,17 +430,23 @@ impl<'a> CodeGen<'a> {
         }
     }
 
-    fn push_loop(&mut self, continue_label: String, break_label: String) {
+    fn push_loop(
+        &mut self,
+        continue_label: String,
+        break_label: String,
+        break_values: Vec<(String, qbe::Value)>,
+    ) {
         self.loops.push(LoopContext {
             continue_label,
             break_label,
+            break_values,
         });
     }
 
-    fn pop_loop(&mut self) {
+    fn pop_loop(&mut self) -> LoopContext {
         self.loops
             .pop()
-            .expect("ICE: cannot pop loop, loops stack is empty");
+            .expect("ICE: cannot pop loop, loops stack is empty")
     }
 
     fn current_loop(&self) -> Option<&LoopContext> {
@@ -952,11 +959,26 @@ impl<'a> CodeGen<'a> {
         qfunc: &mut qbe::Function<'static>,
         expr: &Expr,
     ) -> Result<GenValue, CodeGenError> {
-        match expr.kind {
-            ExprKind::Break => {
-                let Some(loop_ctx) = self.current_loop() else {
-                    unreachable!()
-                };
+        match &expr.kind {
+            ExprKind::Break(val_expr) => {
+                if let Some(val_expr) = val_expr {
+                    let val = self.generate_expression(qfunc, val_expr)?;
+
+                    let predecessor = qfunc
+                        .blocks
+                        .last()
+                        .expect("ICE: no current block when generating break value")
+                        .label
+                        .clone();
+
+                    self.loops
+                        .last_mut()
+                        .expect("ICE: break_values push outside of loop")
+                        .break_values
+                        .push((predecessor, val.into()));
+                }
+
+                let loop_ctx = self.loops.last_mut().expect("ICE: break outside of loop");
                 qfunc.add_instr(qbe::Instr::Jmp(loop_ctx.break_label.clone()));
                 Ok(GenValue::Const(0, expr.type_id))
             }
@@ -1088,7 +1110,8 @@ impl<'a> CodeGen<'a> {
             ExprKind::Block(block) => self.generate_block(qfunc, block),
             ExprKind::If(..) => self.generate_expr_if(qfunc, expr),
             ExprKind::While(..) => self.generate_expr_while(qfunc, expr),
-            ExprKind::Break | ExprKind::Continue => self.generate_expr_control(qfunc, expr),
+            ExprKind::Loop(..) => self.generate_expr_loop(qfunc, expr),
+            ExprKind::Break(..) | ExprKind::Continue => self.generate_expr_control(qfunc, expr),
             ExprKind::Array(..) => self.generate_expr_array(qfunc, expr),
             ExprKind::Repeat(..) => self.generate_expr_repeat(qfunc, expr),
             ExprKind::Index(..) => self.generate_expr_index(qfunc, expr),
@@ -1320,6 +1343,8 @@ impl<'a> CodeGen<'a> {
         let body_label = format!("while.{label_id}.body");
         let end_label = format!("while.{label_id}.end");
 
+        qfunc.add_instr(qbe::Instr::Jmp(cond_label.clone()));
+
         qfunc.add_block(cond_label.clone());
         let cond_val = self.generate_expression(qfunc, &while_expr.cond)?.into();
         qfunc.add_instr(qbe::Instr::Jnz(
@@ -1328,22 +1353,53 @@ impl<'a> CodeGen<'a> {
             end_label.clone(),
         ));
 
-        // Body block
-        self.push_loop(cond_label.clone(), end_label.clone());
-
         qfunc.add_block(body_label);
+        self.push_loop(cond_label.clone(), end_label.clone(), vec![]);
         self.generate_block(qfunc, &while_expr.body)?;
-
         if !qfunc.blocks.last().is_some_and(qbe::Block::jumps) {
             qfunc.add_instr(qbe::Instr::Jmp(cond_label));
         }
-
         self.pop_loop();
 
-        // End block
         qfunc.add_block(end_label);
 
         Ok(GenValue::Const(0, expr.type_id))
+    }
+
+    fn generate_expr_loop(
+        &mut self,
+        qfunc: &mut qbe::Function<'static>,
+        expr: &Expr,
+    ) -> Result<GenValue, CodeGenError> {
+        let ExprKind::Loop(loop_expr) = &expr.kind else {
+            unreachable!()
+        };
+
+        let label_id = self.new_label();
+        let body_label = format!("loop.{label_id}.body");
+        let end_label = format!("loop.{label_id}.end");
+
+        qfunc.add_instr(qbe::Instr::Jmp(body_label.clone()));
+
+        qfunc.add_block(body_label.clone());
+        self.push_loop(body_label.clone(), end_label.clone(), vec![]);
+        self.generate_block(qfunc, &loop_expr.body)?;
+        if !qfunc.blocks.last().is_some_and(qbe::Block::jumps) {
+            qfunc.add_instr(qbe::Instr::Jmp(body_label));
+        }
+        let loop_ctx = self.pop_loop();
+
+        qfunc.add_block(end_label);
+
+        if loop_ctx.break_values.is_empty() {
+            Ok(GenValue::Const(0, expr.type_id))
+        } else {
+            Ok(self.assign_to_temp(
+                qfunc,
+                expr.type_id,
+                qbe::Instr::Phi(loop_ctx.break_values.clone()),
+            ))
+        }
     }
 
     fn generate_expr_land(

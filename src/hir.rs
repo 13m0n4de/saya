@@ -155,7 +155,8 @@ pub enum ExprKind {
     Block(Block),
     If(If),
     While(While),
-    Break,
+    Loop(Loop),
+    Break(Option<Box<Expr>>),
     Continue,
 }
 
@@ -199,6 +200,12 @@ pub struct If {
 #[derive(Debug, Clone, PartialEq)]
 pub struct While {
     pub cond: Box<Expr>,
+    pub body: Box<Block>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Loop {
     pub body: Box<Block>,
     pub span: Span,
 }

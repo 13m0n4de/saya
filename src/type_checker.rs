@@ -975,7 +975,8 @@ impl<'a> TypeChecker<'a> {
             ast::ExprKind::Block(..) => self.check_expr_block(expr),
             ast::ExprKind::If(..) => self.check_expr_if(expr),
             ast::ExprKind::While(..) => self.check_expr_while(expr),
-            ast::ExprKind::Break => self.check_expr_break(expr),
+            ast::ExprKind::Loop(..) => self.check_expr_loop(expr),
+            ast::ExprKind::Break(..) => self.check_expr_break(expr),
             ast::ExprKind::Continue => self.check_expr_continue(expr),
         }
     }
@@ -1685,6 +1686,8 @@ impl<'a> TypeChecker<'a> {
         };
 
         self.scopes.push(Scope::Loop {
+            break_type: None,
+            allows_break_value: false,
             objects: HashMap::new(),
         });
 
@@ -1715,21 +1718,83 @@ impl<'a> TypeChecker<'a> {
         })
     }
 
-    fn check_expr_break(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
-        let ast::ExprKind::Break = &expr.kind else {
+    fn check_expr_loop(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
+        let ast::ExprKind::Loop(loop_expr) = &expr.kind else {
             unreachable!()
         };
 
-        if self
-            .scopes
-            .find(|s| matches!(s, Scope::Loop { .. }))
-            .is_none()
-        {
-            return Err(TypeError::new("break outside of loop".into(), expr.span));
+        self.scopes.push(Scope::Loop {
+            break_type: None,
+            allows_break_value: true,
+            objects: HashMap::new(),
+        });
+
+        let typed_body = self.check_block(&loop_expr.body)?;
+
+        let break_type = match self.scopes.last_mut() {
+            Scope::Loop { break_type, .. } => *break_type,
+            _ => unreachable!(),
+        };
+        self.scopes.pop();
+
+        Ok(hir::Expr {
+            kind: hir::ExprKind::Loop(hir::Loop {
+                body: Box::new(typed_body),
+                span: loop_expr.span,
+            }),
+            type_id: break_type.unwrap_or(TypeId::NEVER),
+            span: expr.span,
+        })
+    }
+
+    fn check_expr_break(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
+        let ast::ExprKind::Break(val_expr) = &expr.kind else {
+            unreachable!()
+        };
+
+        let allows_break_value = match self.scopes.find(|s| matches!(s, Scope::Loop { .. })) {
+            Some(Scope::Loop {
+                allows_break_value, ..
+            }) => *allows_break_value,
+            None => return Err(TypeError::new("break outside of loop".into(), expr.span)),
+            _ => unreachable!(),
+        };
+
+        if !allows_break_value && val_expr.is_some() {
+            return Err(TypeError::new(
+                "break with value is not allowed in while loop".into(),
+                expr.span,
+            ));
+        }
+
+        let (kind, val_type) = match val_expr {
+            Some(val_expr) => {
+                let typed = self.check_expression(val_expr)?;
+                let ty = typed.type_id;
+                (hir::ExprKind::Break(Some(Box::new(typed))), ty)
+            }
+            None => (hir::ExprKind::Break(None), TypeId::UNIT),
+        };
+
+        let Some(Scope::Loop { break_type, .. }) =
+            self.scopes.find_mut(|s| matches!(s, Scope::Loop { .. }))
+        else {
+            unreachable!()
+        };
+
+        match *break_type {
+            None => *break_type = Some(val_type),
+            Some(existing) if existing != val_type => {
+                return Err(TypeError::new(
+                    format!("break value type mismatch: expected {existing:?}, found {val_type:?}"),
+                    expr.span,
+                ));
+            }
+            _ => {}
         }
 
         Ok(hir::Expr {
-            kind: hir::ExprKind::Break,
+            kind,
             type_id: TypeId::NEVER,
             span: expr.span,
         })

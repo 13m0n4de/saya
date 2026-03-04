@@ -568,9 +568,9 @@ impl<'a> Parser<'a> {
                 })
             } else if matches!(
                 expr.kind,
-                ExprKind::Block(_) | ExprKind::If(_) | ExprKind::While(_)
+                ExprKind::Block(_) | ExprKind::If(_) | ExprKind::While(_) | ExprKind::Loop(_)
             ) {
-                // `Block`, `If`, `While` can omit semicolons after `{ }`
+                // `Block`, `If`, `While`, `Loop` can omit semicolons after `{ }`
                 Ok(Stmt {
                     kind: StmtKind::Expr(expr),
                     span: expr_span,
@@ -849,9 +849,17 @@ impl<'a> Parser<'a> {
 
             TokenKind::If => ExprKind::If(self.parse_if()?),
             TokenKind::While => ExprKind::While(self.parse_while()?),
+            TokenKind::Loop => ExprKind::Loop(self.parse_loop()?),
             TokenKind::Break => {
                 self.advance()?;
-                ExprKind::Break
+                if self.current.kind == TokenKind::Semi
+                    || self.current.kind == TokenKind::CloseBrace
+                {
+                    ExprKind::Break(None)
+                } else {
+                    let expr = self.parse_expression()?;
+                    ExprKind::Break(Some(Box::new(expr)))
+                }
             }
             TokenKind::Continue => {
                 self.advance()?;
@@ -983,6 +991,15 @@ impl<'a> Parser<'a> {
             body,
             span: while_span,
         })
+    }
+
+    fn parse_loop(&mut self) -> Result<Loop, ParseError> {
+        let span = self.current.span;
+        self.expect(TokenKind::Loop)?;
+
+        let body = Box::new(self.parse_block()?);
+
+        Ok(Loop { body, span })
     }
 
     fn prefix_binding_power(token: &TokenKind) -> Option<u8> {
