@@ -67,6 +67,14 @@ impl Type {
         }
     }
 
+    pub fn array(elem: TypeId, len: usize, elem_size: usize, elem_align: usize) -> Self {
+        Type {
+            kind: TypeKind::Array(elem, len),
+            size: elem_size * len,
+            align: elem_align,
+        }
+    }
+
     pub fn slice(elem: TypeId) -> Self {
         Type {
             kind: TypeKind::Slice(elem),
@@ -141,31 +149,16 @@ impl TypeContext {
     }
 
     pub fn mk_pointer(&mut self, referent: TypeId) -> TypeId {
-        let data = Type {
-            kind: TypeKind::Pointer(referent),
-            size: 8,
-            align: 8,
-        };
-        self.intern(data)
+        self.intern(Type::pointer(referent))
     }
 
     pub fn mk_array(&mut self, elem: TypeId, len: usize) -> TypeId {
         let elem_data = self.get(elem);
-        let data = Type {
-            kind: TypeKind::Array(elem, len),
-            size: elem_data.size * len,
-            align: elem_data.align,
-        };
-        self.intern(data)
+        self.intern(Type::array(elem, len, elem_data.size, elem_data.align))
     }
 
     pub fn mk_slice(&mut self, elem: TypeId) -> TypeId {
-        let data = Type {
-            kind: TypeKind::Slice(elem),
-            size: 16,
-            align: 8,
-        };
-        self.intern(data)
+        self.intern(Type::slice(elem))
     }
 
     pub fn mk_empty_struct(&mut self) -> TypeId {
