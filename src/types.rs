@@ -15,7 +15,7 @@ impl TypeId {
 pub struct Type {
     pub kind: TypeKind,
     pub size: usize,
-    pub align: u64,
+    pub align: usize,
 }
 
 impl Type {
@@ -185,7 +185,7 @@ impl TypeContext {
         name: String,
         fields: Vec<Field>,
         size: usize,
-        align: u64,
+        align: usize,
     ) {
         self.types[id.0 as usize] = Type {
             kind: TypeKind::Struct(name, fields),

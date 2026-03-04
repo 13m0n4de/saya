@@ -206,7 +206,7 @@ impl<'a> CodeGen<'a> {
 
         let def = Box::new(qbe::TypeDef::Regular {
             ident,
-            align: Some(ty.align),
+            align: Some(ty.align as u64),
             items: qbe_fields,
         });
 
@@ -238,7 +238,7 @@ impl<'a> CodeGen<'a> {
 
         let def = Box::new(qbe::TypeDef::Regular {
             ident,
-            align: Some(ty.align),
+            align: Some(ty.align as u64),
             items,
         });
 
@@ -254,7 +254,7 @@ impl<'a> CodeGen<'a> {
 
         let def = Box::new(qbe::TypeDef::Regular {
             ident,
-            align: Some(ty.align),
+            align: Some(ty.align as u64),
             items,
         });
 

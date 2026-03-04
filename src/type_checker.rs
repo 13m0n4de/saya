@@ -42,7 +42,7 @@ impl fmt::Display for TypeError {
 
 impl Error for TypeError {}
 
-type StructLayout = (Vec<(String, usize)>, usize, u64);
+type StructLayout = (Vec<(String, usize)>, usize, usize);
 
 pub struct TypeChecker<'a> {
     pub scopes: Scopes,
@@ -160,7 +160,7 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    fn type_dimensions(&mut self, type_ann: &ast::TypeAnn) -> Result<(usize, u64), TypeError> {
+    fn type_dimensions(&mut self, type_ann: &ast::TypeAnn) -> Result<(usize, usize), TypeError> {
         match &type_ann.kind {
             ast::TypeAnnKind::I64 | ast::TypeAnnKind::Pointer(_) => Ok((8, 8)),
             ast::TypeAnnKind::U8 | ast::TypeAnnKind::Bool => Ok((1, 1)),
@@ -292,23 +292,22 @@ impl<'a> TypeChecker<'a> {
     fn struct_layout(&mut self, def: &ast::StructDef) -> Result<StructLayout, TypeError> {
         let mut field_layouts = Vec::new();
         let mut offset = 0;
-        let mut max_align = 1u64;
+        let mut max_align = 1;
 
         for field in &def.fields {
             let (field_size, field_align) = self.type_dimensions(&field.type_ann)?;
             max_align = max_align.max(field_align);
 
-            let align = field_align as usize;
-            if offset % align != 0 {
-                offset += align - (offset % align);
+            if offset % field_align != 0 {
+                offset += field_align - (offset % field_align);
             }
 
             field_layouts.push((field.name.clone(), offset));
             offset += field_size;
         }
 
-        let size = if offset % max_align as usize != 0 {
-            offset + max_align as usize - (offset % max_align as usize)
+        let size = if offset % max_align != 0 {
+            offset + max_align - (offset % max_align)
         } else {
             offset
         };
