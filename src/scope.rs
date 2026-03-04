@@ -60,56 +60,37 @@ impl Scopes {
     }
 }
 
-pub enum Scope {
-    Module {
-        objects: HashMap<String, ScopeObject>,
-    },
+pub struct Scope {
+    pub kind: ScopeKind,
+    pub objects: HashMap<String, ScopeObject>,
+}
+
+pub enum ScopeKind {
+    Module,
     Function {
         return_type_id: TypeId,
-        objects: HashMap<String, ScopeObject>,
     },
     Loop {
         break_type: Option<TypeId>,
         allows_break_value: bool,
-        objects: HashMap<String, ScopeObject>,
     },
-    Block {
-        objects: HashMap<String, ScopeObject>,
-    },
+    Block,
 }
 
 impl Scope {
     pub fn get(&self, name: &str) -> Option<&ScopeObject> {
-        self.objects().get(name)
+        self.objects.get(name)
     }
 
     pub fn insert(&mut self, name: String, object: ScopeObject) -> Option<ScopeObject> {
-        self.objects_mut().insert(name, object)
+        self.objects.insert(name, object)
     }
 
     pub fn extend<I>(&mut self, iter: I)
     where
         I: IntoIterator<Item = (String, ScopeObject)>,
     {
-        self.objects_mut().extend(iter);
-    }
-
-    pub fn objects(&self) -> &HashMap<String, ScopeObject> {
-        match self {
-            Self::Module { objects }
-            | Self::Function { objects, .. }
-            | Self::Loop { objects, .. }
-            | Self::Block { objects } => objects,
-        }
-    }
-
-    pub fn objects_mut(&mut self) -> &mut HashMap<String, ScopeObject> {
-        match self {
-            Self::Module { objects }
-            | Self::Function { objects, .. }
-            | Self::Loop { objects, .. }
-            | Self::Block { objects } => objects,
-        }
+        self.objects.extend(iter);
     }
 }
 

@@ -11,7 +11,8 @@ use crate::{
     lexer::Lexer,
     parser::Parser,
     scope::{
-        Const, ExternFunction, ExternStatic, Function, Scope, ScopeObject, Scopes, Static, Struct,
+        Const, ExternFunction, ExternStatic, Function, Scope, ScopeKind, ScopeObject, Scopes,
+        Static, Struct,
     },
     span::Span,
     types::{Field, TypeContext, TypeId, TypeKind},
@@ -57,7 +58,8 @@ impl<'a> TypeChecker<'a> {
         td_paths: HashMap<String, String>,
     ) -> Self {
         let mut scopes = Scopes::new();
-        scopes.push(Scope::Module {
+        scopes.push(Scope {
+            kind: ScopeKind::Module,
             objects: HashMap::new(),
         });
 
@@ -362,7 +364,7 @@ impl<'a> TypeChecker<'a> {
                 )
             })?;
 
-            let objects = mem::take(checker.scopes.first_mut().objects_mut());
+            let objects = mem::take(&mut checker.scopes.first_mut().objects);
             self.scopes.first_mut().extend(objects);
         }
         Ok(())
@@ -786,8 +788,8 @@ impl<'a> TypeChecker<'a> {
     fn check_function(&mut self, func: &ast::FunctionDef) -> Result<hir::FunctionDef, TypeError> {
         let ident = self.make_ident(&func.path);
         let return_type_id = self.lower_type(&func.return_type_ann)?;
-        self.scopes.push(Scope::Function {
-            return_type_id,
+        self.scopes.push(Scope {
+            kind: ScopeKind::Function { return_type_id },
             objects: HashMap::new(),
         });
 
@@ -842,7 +844,8 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn check_block(&mut self, block: &ast::Block) -> Result<hir::Block, TypeError> {
-        self.scopes.push(Scope::Block {
+        self.scopes.push(Scope {
+            kind: ScopeKind::Block,
             objects: HashMap::new(),
         });
 
@@ -1573,8 +1576,8 @@ impl<'a> TypeChecker<'a> {
 
         let return_type_id = *self
             .scopes
-            .find_map(|s| match s {
-                Scope::Function { return_type_id, .. } => Some(return_type_id),
+            .find_map(|s| match &s.kind {
+                ScopeKind::Function { return_type_id, .. } => Some(return_type_id),
                 _ => None,
             })
             .ok_or_else(|| TypeError::new("return outside of function".to_string(), expr.span))?;
@@ -1685,9 +1688,11 @@ impl<'a> TypeChecker<'a> {
             unreachable!()
         };
 
-        self.scopes.push(Scope::Loop {
-            break_type: None,
-            allows_break_value: false,
+        self.scopes.push(Scope {
+            kind: ScopeKind::Loop {
+                break_type: None,
+                allows_break_value: false,
+            },
             objects: HashMap::new(),
         });
 
@@ -1723,16 +1728,18 @@ impl<'a> TypeChecker<'a> {
             unreachable!()
         };
 
-        self.scopes.push(Scope::Loop {
-            break_type: None,
-            allows_break_value: true,
+        self.scopes.push(Scope {
+            kind: ScopeKind::Loop {
+                break_type: None,
+                allows_break_value: true,
+            },
             objects: HashMap::new(),
         });
 
         let typed_body = self.check_block(&loop_expr.body)?;
 
-        let break_type = match self.scopes.last_mut() {
-            Scope::Loop { break_type, .. } => *break_type,
+        let break_type = match &self.scopes.last_mut().kind {
+            ScopeKind::Loop { break_type, .. } => *break_type,
             _ => unreachable!(),
         };
         self.scopes.pop();
@@ -1752,13 +1759,15 @@ impl<'a> TypeChecker<'a> {
             unreachable!()
         };
 
-        let allows_break_value = match self.scopes.find(|s| matches!(s, Scope::Loop { .. })) {
-            Some(Scope::Loop {
-                allows_break_value, ..
-            }) => *allows_break_value,
-            None => return Err(TypeError::new("break outside of loop".into(), expr.span)),
-            _ => unreachable!(),
-        };
+        let allows_break_value = self
+            .scopes
+            .find_map(|s| match &s.kind {
+                ScopeKind::Loop {
+                    allows_break_value, ..
+                } => Some(allows_break_value),
+                _ => None,
+            })
+            .ok_or_else(|| TypeError::new("break outside of loop".into(), expr.span))?;
 
         if !allows_break_value && val_expr.is_some() {
             return Err(TypeError::new(
@@ -1776,8 +1785,12 @@ impl<'a> TypeChecker<'a> {
             None => (hir::ExprKind::Break(None), TypeId::UNIT),
         };
 
-        let Some(Scope::Loop { break_type, .. }) =
-            self.scopes.find_mut(|s| matches!(s, Scope::Loop { .. }))
+        let Some(Scope {
+            kind: ScopeKind::Loop { break_type, .. },
+            ..
+        }) = self
+            .scopes
+            .find_mut(|s| matches!(s.kind, ScopeKind::Loop { .. }))
         else {
             unreachable!()
         };
@@ -1807,7 +1820,7 @@ impl<'a> TypeChecker<'a> {
 
         if self
             .scopes
-            .find(|s| matches!(s, Scope::Loop { .. }))
+            .find(|s| matches!(s.kind, ScopeKind::Loop { .. }))
             .is_none()
         {
             return Err(TypeError::new("continue outside of loop".into(), expr.span));
