@@ -169,6 +169,30 @@ fn test_while_loop() {
 }
 
 #[test]
+fn test_loop_break_value() {
+    let result = typecheck!("fn test() -> i64 { loop {} }");
+    assert!(result.is_ok());
+
+    let result = typecheck!("fn test() { loop { break; } }");
+    assert!(result.is_ok());
+
+    let result = typecheck!("fn test() -> i64 { loop { break 42; } }");
+    assert!(result.is_ok());
+
+    let result = typecheck!("fn test() -> i64 { loop { if true { break 1; } break 2; } }");
+    assert!(result.is_ok());
+
+    let result = typecheck!("fn test() -> i64 { let x: i64 = loop { break 1; }; x }");
+    assert!(result.is_ok());
+
+    let result = typecheck!("fn test() { loop { if true { break 1; } else { break true; } } }");
+    assert!(result.is_err());
+
+    let result = typecheck!("fn test() -> i64 { loop { break true; } }");
+    assert!(result.is_err());
+}
+
+#[test]
 fn test_break_continue() {
     let result = typecheck!("fn test() { while true { if true { break; } else { continue; } } }");
     assert!(result.is_ok());
