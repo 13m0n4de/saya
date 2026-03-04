@@ -41,6 +41,13 @@ impl Scopes {
         self.stack.iter().rev().find(|s| predicate(s))
     }
 
+    pub fn find_mut<P>(&mut self, predicate: P) -> Option<&mut Scope>
+    where
+        P: Fn(&Scope) -> bool,
+    {
+        self.stack.iter_mut().rev().find(|s| predicate(s))
+    }
+
     pub fn find_map<T, F>(&self, f: F) -> Option<&T>
     where
         F: Fn(&Scope) -> Option<&T>,
@@ -62,6 +69,7 @@ pub enum Scope {
         objects: HashMap<String, ScopeObject>,
     },
     Loop {
+        break_type: Option<TypeId>,
         objects: HashMap<String, ScopeObject>,
     },
     Block {
@@ -89,7 +97,7 @@ impl Scope {
         match self {
             Self::Module { objects }
             | Self::Function { objects, .. }
-            | Self::Loop { objects }
+            | Self::Loop { objects, .. }
             | Self::Block { objects } => objects,
         }
     }
@@ -98,7 +106,7 @@ impl Scope {
         match self {
             Self::Module { objects }
             | Self::Function { objects, .. }
-            | Self::Loop { objects }
+            | Self::Loop { objects, .. }
             | Self::Block { objects } => objects,
         }
     }
