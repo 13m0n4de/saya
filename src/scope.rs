@@ -70,6 +70,7 @@ pub enum Scope {
     },
     Loop {
         break_type: Option<TypeId>,
+        allows_break_value: bool,
         objects: HashMap<String, ScopeObject>,
     },
     Block {

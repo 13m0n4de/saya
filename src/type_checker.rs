@@ -1687,6 +1687,7 @@ impl<'a> TypeChecker<'a> {
 
         self.scopes.push(Scope::Loop {
             break_type: None,
+            allows_break_value: false,
             objects: HashMap::new(),
         });
 
@@ -1724,6 +1725,7 @@ impl<'a> TypeChecker<'a> {
 
         self.scopes.push(Scope::Loop {
             break_type: None,
+            allows_break_value: true,
             objects: HashMap::new(),
         });
 
@@ -1750,6 +1752,21 @@ impl<'a> TypeChecker<'a> {
             unreachable!()
         };
 
+        let allows_break_value = match self.scopes.find(|s| matches!(s, Scope::Loop { .. })) {
+            Some(Scope::Loop {
+                allows_break_value, ..
+            }) => *allows_break_value,
+            None => return Err(TypeError::new("break outside of loop".into(), expr.span)),
+            _ => unreachable!(),
+        };
+
+        if !allows_break_value && val_expr.is_some() {
+            return Err(TypeError::new(
+                "break with value is not allowed in while loop".into(),
+                expr.span,
+            ));
+        }
+
         let (kind, val_type) = match val_expr {
             Some(val_expr) => {
                 let typed = self.check_expression(val_expr)?;
@@ -1762,7 +1779,7 @@ impl<'a> TypeChecker<'a> {
         let Some(Scope::Loop { break_type, .. }) =
             self.scopes.find_mut(|s| matches!(s, Scope::Loop { .. }))
         else {
-            return Err(TypeError::new("break outside of loop".into(), expr.span));
+            unreachable!()
         };
 
         match *break_type {
