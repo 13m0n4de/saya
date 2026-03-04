@@ -33,11 +33,25 @@ impl From<GenValue> for qbe::Value {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct LoopContext {
     continue_label: String,
     break_label: String,
     break_values: Vec<(String, qbe::Value)>,
+}
+
+impl LoopContext {
+    fn new(
+        continue_label: String,
+        break_label: String,
+        break_values: Vec<(String, qbe::Value)>,
+    ) -> Self {
+        Self {
+            continue_label,
+            break_label,
+            break_values,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -428,29 +442,6 @@ impl<'a> CodeGen<'a> {
             let load_type = self.qbe_load_type(type_id);
             self.assign_to_temp(qfunc, type_id, qbe::Instr::Load(load_type, addr))
         }
-    }
-
-    fn push_loop(
-        &mut self,
-        continue_label: String,
-        break_label: String,
-        break_values: Vec<(String, qbe::Value)>,
-    ) {
-        self.loops.push(LoopContext {
-            continue_label,
-            break_label,
-            break_values,
-        });
-    }
-
-    fn pop_loop(&mut self) -> LoopContext {
-        self.loops
-            .pop()
-            .expect("ICE: cannot pop loop, loops stack is empty")
-    }
-
-    fn current_loop(&self) -> Option<&LoopContext> {
-        self.loops.last()
     }
 
     fn address_of(
@@ -983,7 +974,7 @@ impl<'a> CodeGen<'a> {
                 Ok(GenValue::Const(0, expr.type_id))
             }
             ExprKind::Continue => {
-                let Some(loop_ctx) = self.current_loop() else {
+                let Some(loop_ctx) = self.loops.last() else {
                     unreachable!()
                 };
                 qfunc.add_instr(qbe::Instr::Jmp(loop_ctx.continue_label.clone()));
@@ -1354,12 +1345,18 @@ impl<'a> CodeGen<'a> {
         ));
 
         qfunc.add_block(body_label);
-        self.push_loop(cond_label.clone(), end_label.clone(), vec![]);
+        self.loops.push(LoopContext::new(
+            cond_label.clone(),
+            end_label.clone(),
+            vec![],
+        ));
         self.generate_block(qfunc, &while_expr.body)?;
         if !qfunc.blocks.last().is_some_and(qbe::Block::jumps) {
             qfunc.add_instr(qbe::Instr::Jmp(cond_label));
         }
-        self.pop_loop();
+        self.loops
+            .pop()
+            .expect("ICE: cannot pop loop, loops stack is empty");
 
         qfunc.add_block(end_label);
 
@@ -1382,12 +1379,19 @@ impl<'a> CodeGen<'a> {
         qfunc.add_instr(qbe::Instr::Jmp(body_label.clone()));
 
         qfunc.add_block(body_label.clone());
-        self.push_loop(body_label.clone(), end_label.clone(), vec![]);
+        self.loops.push(LoopContext::new(
+            body_label.clone(),
+            end_label.clone(),
+            vec![],
+        ));
         self.generate_block(qfunc, &loop_expr.body)?;
         if !qfunc.blocks.last().is_some_and(qbe::Block::jumps) {
             qfunc.add_instr(qbe::Instr::Jmp(body_label));
         }
-        let loop_ctx = self.pop_loop();
+        let loop_ctx = self
+            .loops
+            .pop()
+            .expect("ICE: cannot pop loop, loops stack is empty");
 
         qfunc.add_block(end_label);
 
