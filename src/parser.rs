@@ -852,7 +852,14 @@ impl<'a> Parser<'a> {
             TokenKind::Loop => ExprKind::Loop(self.parse_loop()?),
             TokenKind::Break => {
                 self.advance()?;
-                ExprKind::Break
+                if self.current.kind == TokenKind::Semi
+                    || self.current.kind == TokenKind::CloseBrace
+                {
+                    ExprKind::Break(None)
+                } else {
+                    let expr = self.parse_expression()?;
+                    ExprKind::Break(Some(Box::new(expr)))
+                }
             }
             TokenKind::Continue => {
                 self.advance()?;

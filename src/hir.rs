@@ -156,7 +156,7 @@ pub enum ExprKind {
     If(If),
     While(While),
     Loop(Loop),
-    Break,
+    Break(Option<Box<Expr>>),
     Continue,
 }
 

@@ -298,10 +298,18 @@ fn test_while_loop() {
 
 #[test]
 fn test_break_continue() {
-    let break_expr = parse_expr!("break").unwrap();
+    let break_expr1 = parse_expr!("break;").unwrap();
+    let break_expr2 = parse_expr!("break 1337;").unwrap();
     let continue_expr = parse_expr!("continue").unwrap();
 
-    assert!(matches!(break_expr.kind, ExprKind::Break));
+    assert!(matches!(break_expr1.kind, ExprKind::Break(None)));
+    assert!(matches!(
+        break_expr2.kind,
+        ExprKind::Break(Some(expr)) if matches!(*expr, Expr {
+            kind: ExprKind::Literal(Literal::Integer(1337, None)),
+            ..
+        })
+    ));
     assert!(matches!(continue_expr.kind, ExprKind::Continue));
 }
 
