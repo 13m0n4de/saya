@@ -1026,7 +1026,7 @@ impl<'a> CodeGen<'a> {
         qfunc: &mut qbe::Function<'static>,
         expr: &Expr,
     ) -> Result<GenValue, CodeGenError> {
-        let ExprKind::Repeat(elem, Literal::Integer(count)) = &expr.kind else {
+        let ExprKind::Repeat(elem, count) = &expr.kind else {
             unreachable!()
         };
 
@@ -1038,8 +1038,8 @@ impl<'a> CodeGen<'a> {
         };
 
         let elem_type = self.types.get(elem_ty);
-        let elem_size = elem_type.size as u64;
-        let array_size = *count as u64 * elem_size;
+        let elem_size = elem_type.size;
+        let array_size = (*count * elem_size) as u64;
         let array_name = self.new_temp();
         let array_ptr = qbe::Value::Temporary(array_name.clone());
         qfunc.assign_instr(
@@ -1051,7 +1051,7 @@ impl<'a> CodeGen<'a> {
         let elem_val: qbe::Value = self.generate_expression(qfunc, elem)?.into();
 
         for i in 0..*count {
-            let offset = i as u64 * elem_size;
+            let offset = (i * elem_size) as u64;
             self.store_field(qfunc, array_ptr.clone(), offset, elem_val.clone(), elem_ty);
         }
 

@@ -144,7 +144,7 @@ pub enum ExprKind {
     Struct(StructExpr),
     Place(Place),
     Array(Vec<Expr>),
-    Repeat(Box<Expr>, Literal),
+    Repeat(Box<Expr>, usize),
     Field(Box<Expr>, String),
     Index(Box<Expr>, Box<Expr>),
     Call(Call),

@@ -1212,7 +1212,7 @@ impl<'a> TypeChecker<'a> {
 
         if let hir::Literal::Integer(n) = evaluated_count {
             Ok(hir::Expr {
-                kind: hir::ExprKind::Repeat(Box::new(typed_elem.clone()), evaluated_count),
+                kind: hir::ExprKind::Repeat(Box::new(typed_elem.clone()), n as usize),
                 type_id: self.types.mk_array(typed_elem.type_id, n as usize),
                 span: expr.span,
             })
