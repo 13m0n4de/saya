@@ -75,11 +75,12 @@ index-op = "[" expression "]"
 call-op = "(" [expression *("," expression) [","]] ")"
 
 primary-expr = literal / struct-expr / path / array-expr
-             / if-expr / while-expr / break-expr / continue-expr
+             / if-expr / while-expr / loop-expr / break-expr / continue-expr
              / block / "(" expression ")"
 
 if-expr = "if" expression block ["else" (if-expr / block)]
 while-expr = "while" expression block
+loop-expr = "loop" block
 break-expr = "break"
 continue-expr = "continue"
 
