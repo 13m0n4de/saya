@@ -12,7 +12,7 @@ macro_rules! typecheck {
         let mut type_context = TypeContext::new();
         let mut type_checker =
             TypeChecker::new(&mut type_context, None, std::collections::HashMap::new());
-        type_checker.check_program(&program)
+        type_checker.check(&program)
     }};
 }
 
@@ -51,7 +51,7 @@ fn test_string_literal() {
     let mut type_context = TypeContext::new();
     let mut type_checker =
         TypeChecker::new(&mut type_context, None, std::collections::HashMap::new());
-    let program = type_checker.check_program(&program).unwrap();
+    let program = type_checker.check(&program).unwrap();
 
     match &program.items[0].kind {
         ItemKind::Function(func) => {
@@ -72,7 +72,7 @@ fn test_cstring_literal() {
     let mut type_context = TypeContext::new();
     let mut type_checker =
         TypeChecker::new(&mut type_context, None, std::collections::HashMap::new());
-    let program = type_checker.check_program(&program).unwrap();
+    let program = type_checker.check(&program).unwrap();
 
     match &program.items[0].kind {
         ItemKind::Function(func) => {

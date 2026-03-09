@@ -71,7 +71,7 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    pub fn check_program(&mut self, prog: &ast::Program) -> Result<hir::Program, TypeError> {
+    pub fn check(&mut self, prog: &ast::Program) -> Result<hir::Program, TypeError> {
         self.load_uses(prog)?;
         self.scan_declarations(prog)?;
         self.check_items(prog)
@@ -378,7 +378,7 @@ impl<'a> TypeChecker<'a> {
             })?;
 
             let mut checker = TypeChecker::new(self.types, None, HashMap::new());
-            checker.check_program(&program).map_err(|e| {
+            checker.check(&program).map_err(|e| {
                 TypeError::new(
                     format!("failed to type check module `{}`: {}", use_item.name, e),
                     use_item.span,

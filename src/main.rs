@@ -62,7 +62,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let mut types = TypeContext::new();
 
     let mut type_checker = TypeChecker::new(&mut types, args.namespace, args.td_paths);
-    let typed_program = type_checker.check_program(&program)?;
+    let typed_program = type_checker.check(&program)?;
 
     if let Some(td_path) = &args.typedef {
         let mut file = fs::File::create(td_path)?;
