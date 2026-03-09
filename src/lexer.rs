@@ -25,6 +25,7 @@ pub enum TokenKind {
 
     Ident(String),
     Integer(i64, Option<String>),
+    Float(f64, Option<String>),
     String(String),
     CString(String),
 
@@ -354,7 +355,7 @@ impl<'a> Lexer<'a> {
         ident
     }
 
-    fn read_number(&mut self) -> Result<TokenKind, LexError> {
+    fn read_digits(&mut self) -> String {
         let mut num = String::new();
 
         while let Some(ch) = self.current {
@@ -366,20 +367,37 @@ impl<'a> Lexer<'a> {
             }
         }
 
+        num
+    }
+
+    fn read_number(&mut self) -> Result<TokenKind, LexError> {
+        let mut num = self.read_digits();
+
+        let is_float = self.current == Some('.') && self.peek.is_some_and(|c| c.is_ascii_digit());
+
+        if is_float {
+            num.push('.');
+            self.advance();
+            num.push_str(&self.read_digits());
+        }
+
         let suffix = if matches!(self.current, Some(c) if c.is_alphabetic()) {
             Some(self.read_raw_identifier())
         } else {
             None
         };
 
-        let value = num.parse::<i64>().map_err(|_| {
-            LexError::new(
-                format!("Integer literal is too large: {num}"),
-                self.start_span,
-            )
-        })?;
-
-        Ok(TokenKind::Integer(value, suffix))
+        if is_float {
+            let value = num.parse::<f64>().map_err(|_| {
+                LexError::new(format!("Invalid float literal: {num}"), self.start_span)
+            })?;
+            Ok(TokenKind::Float(value, suffix))
+        } else {
+            let value = num.parse::<i64>().map_err(|_| {
+                LexError::new(format!("Invalid integer literal: {num}"), self.start_span)
+            })?;
+            Ok(TokenKind::Integer(value, suffix))
+        }
     }
 
     fn read_string(&mut self) -> Result<TokenKind, LexError> {
