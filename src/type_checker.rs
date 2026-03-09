@@ -135,6 +135,25 @@ impl<'a> TypeChecker<'a> {
                             expr.span,
                         )),
                     },
+                    (hir::Literal::Float(l), hir::Literal::Float(r)) => match op {
+                        // Arithmetic operators
+                        hir::BinaryOp::Add => Ok(hir::Literal::Float(l + r)),
+                        hir::BinaryOp::Sub => Ok(hir::Literal::Float(l - r)),
+                        hir::BinaryOp::Mul => Ok(hir::Literal::Float(l * r)),
+                        hir::BinaryOp::Div => Ok(hir::Literal::Float(l / r)),
+                        hir::BinaryOp::Rem => Ok(hir::Literal::Float(l % r)),
+                        // Comparison operators
+                        hir::BinaryOp::Lt => Ok(hir::Literal::Bool(l < r)),
+                        hir::BinaryOp::Le => Ok(hir::Literal::Bool(l <= r)),
+                        hir::BinaryOp::Gt => Ok(hir::Literal::Bool(l > r)),
+                        hir::BinaryOp::Ge => Ok(hir::Literal::Bool(l >= r)),
+                        hir::BinaryOp::Eq => Ok(hir::Literal::Bool(l == r)),
+                        hir::BinaryOp::Ne => Ok(hir::Literal::Bool(l != r)),
+                        _ => Err(TypeError::new(
+                            "Invalid operator for float operands".to_string(),
+                            expr.span,
+                        )),
+                    },
                     (hir::Literal::Bool(l), hir::Literal::Bool(r)) => match op {
                         // Logical operators
                         hir::BinaryOp::And => Ok(hir::Literal::Bool(l && r)),
@@ -162,7 +181,9 @@ impl<'a> TypeChecker<'a> {
 
     fn type_dimensions(&mut self, type_ann: &ast::TypeAnn) -> Result<(usize, usize), TypeError> {
         match &type_ann.kind {
-            ast::TypeAnnKind::I64 | ast::TypeAnnKind::Pointer(_) => Ok((8, 8)),
+            ast::TypeAnnKind::I64 | ast::TypeAnnKind::F64 | ast::TypeAnnKind::Pointer(_) => {
+                Ok((8, 8))
+            }
             ast::TypeAnnKind::U8 | ast::TypeAnnKind::Bool => Ok((1, 1)),
             ast::TypeAnnKind::Unit | ast::TypeAnnKind::Never => Ok((0, 1)),
 
@@ -224,6 +245,7 @@ impl<'a> TypeChecker<'a> {
     fn lower_type(&mut self, type_ann: &ast::TypeAnn) -> Result<TypeId, TypeError> {
         match &type_ann.kind {
             ast::TypeAnnKind::I64 => Ok(TypeId::I64),
+            ast::TypeAnnKind::F64 => Ok(TypeId::F64),
             ast::TypeAnnKind::U8 => Ok(TypeId::U8),
             ast::TypeAnnKind::Bool => Ok(TypeId::BOOL),
             ast::TypeAnnKind::Unit => Ok(TypeId::UNIT),
@@ -1012,6 +1034,18 @@ impl<'a> TypeChecker<'a> {
                 };
                 (type_id, hir::ExprKind::Literal(hir::Literal::Integer(*n)))
             }
+            ast::Literal::Float(n, suffix) => {
+                let type_id = match suffix.as_deref() {
+                    Some("f64") | None => TypeId::F64,
+                    Some(unknown) => {
+                        return Err(TypeError::new(
+                            format!("Unknown float suffix `{unknown}`"),
+                            expr.span,
+                        ));
+                    }
+                };
+                (type_id, hir::ExprKind::Literal(hir::Literal::Float(*n)))
+            }
             ast::Literal::String(s) => (
                 self.types.mk_slice(TypeId::U8),
                 hir::ExprKind::Literal(hir::Literal::String(s.clone())),
@@ -1480,17 +1514,25 @@ impl<'a> TypeChecker<'a> {
         let typed_right = self.check_expression(right)?;
 
         let ty = match typed_op {
-            hir::BinaryOp::Add
-            | hir::BinaryOp::Sub
-            | hir::BinaryOp::Mul
-            | hir::BinaryOp::Div
-            | hir::BinaryOp::Rem
-            | hir::BinaryOp::BitAnd
-            | hir::BinaryOp::BitOr => {
-                if typed_left.type_id != TypeId::I64 || typed_right.type_id != TypeId::I64 {
+            hir::BinaryOp::Add | hir::BinaryOp::Sub | hir::BinaryOp::Mul | hir::BinaryOp::Div => {
+                let lk = &self.types.get(typed_left.type_id).kind;
+                if !lk.is_numeric() || typed_left.type_id != typed_right.type_id {
                     return Err(TypeError::new(
                         format!(
-                            "arithmetic operator requires `i64` operands, found `{:?}` and `{:?}`",
+                            "arithmetic operator requires numeric operands, found `{:?}` and `{:?}`",
+                            typed_left.type_id, typed_right.type_id
+                        ),
+                        expr.span,
+                    ));
+                }
+                typed_left.type_id
+            }
+            hir::BinaryOp::Rem | hir::BinaryOp::BitAnd | hir::BinaryOp::BitOr => {
+                let lk = &self.types.get(typed_left.type_id).kind;
+                if !lk.is_integer() || typed_left.type_id != typed_right.type_id {
+                    return Err(TypeError::new(
+                        format!(
+                            "arithmetic operator requires integer operands, found `{:?}` and `{:?}`",
                             typed_left.type_id, typed_right.type_id
                         ),
                         expr.span,
@@ -1499,10 +1541,11 @@ impl<'a> TypeChecker<'a> {
                 TypeId::I64
             }
             hir::BinaryOp::Lt | hir::BinaryOp::Le | hir::BinaryOp::Gt | hir::BinaryOp::Ge => {
-                if typed_left.type_id != TypeId::I64 || typed_right.type_id != TypeId::I64 {
+                let lk = &self.types.get(typed_left.type_id).kind;
+                if !lk.is_numeric() || typed_left.type_id != typed_right.type_id {
                     return Err(TypeError::new(
                         format!(
-                            "comparison operator requires `i64` operands, found `{:?}` and `{:?}`",
+                            "comparison operator requires numeric operands, found `{:?}` and `{:?}`",
                             typed_left.type_id, typed_right.type_id
                         ),
                         expr.span,

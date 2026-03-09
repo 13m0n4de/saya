@@ -122,6 +122,7 @@ fn emit_type(type_id: TypeId, types: &TypeContext, out: &mut impl io::Write) -> 
 
     match &ty.kind {
         TypeKind::I64 => write!(out, "i64"),
+        TypeKind::F64 => write!(out, "f64"),
         TypeKind::U8 => write!(out, "u8"),
         TypeKind::Bool => write!(out, "bool"),
         TypeKind::Unit => write!(out, "()"),
@@ -149,6 +150,7 @@ fn emit_type(type_id: TypeId, types: &TypeContext, out: &mut impl io::Write) -> 
 fn emit_literal(lit: &Literal, out: &mut impl io::Write) -> io::Result<()> {
     match lit {
         Literal::Integer(n) => write!(out, "{n}"),
+        Literal::Float(n) => write!(out, "{n}"),
         Literal::Bool(b) => write!(out, "{b}"),
         Literal::String(s) => write!(out, "\"{}\"", s.escape_default()),
         Literal::CString(s) => write!(out, "c\"{}\"", s.escape_default()),

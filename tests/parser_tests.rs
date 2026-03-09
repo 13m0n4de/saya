@@ -20,22 +20,34 @@ macro_rules! parse_expr {
 
 #[test]
 fn test_integer_literal() {
-    let expr = parse_expr!("42").unwrap();
-    assert!(matches!(
-        expr.kind,
-        ExprKind::Literal(Literal::Integer(42, None))
-    ));
-
     let expr_u8 = parse_expr!("255u8").unwrap();
     assert!(matches!(
         expr_u8.kind,
-        ExprKind::Literal(Literal::Integer(255, Some(ref s))) if s == "u8"
+        ExprKind::Literal(Literal::Integer(255, Some(s))) if s == "u8"
     ));
 
-    let expr_i64 = parse_expr!("100i64").unwrap();
+    let expr_i64 = parse_expr!("42").unwrap();
     assert!(matches!(
         expr_i64.kind,
-        ExprKind::Literal(Literal::Integer(100, Some(ref s))) if s == "i64"
+        ExprKind::Literal(Literal::Integer(42, None))
+    ));
+
+    let expr_i64_suffix = parse_expr!("100i64").unwrap();
+    assert!(matches!(
+        expr_i64_suffix.kind,
+        ExprKind::Literal(Literal::Integer(100, Some(s))) if s == "i64"
+    ));
+
+    let expr_f64 = parse_expr!("3.14").unwrap();
+    assert!(matches!(
+        expr_f64.kind,
+        ExprKind::Literal(Literal::Float(3.14, None))
+    ));
+
+    let expr_f64_suffix = parse_expr!("1.23f64").unwrap();
+    assert!(matches!(
+        expr_f64_suffix.kind,
+        ExprKind::Literal(Literal::Float(1.23, Some(s))) if s == "f64"
     ));
 }
 

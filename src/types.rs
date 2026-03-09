@@ -9,6 +9,7 @@ impl TypeId {
     pub const BOOL: TypeId = TypeId(2);
     pub const UNIT: TypeId = TypeId(3);
     pub const NEVER: TypeId = TypeId(4);
+    pub const F64: TypeId = TypeId(5);
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -22,6 +23,14 @@ impl Type {
     pub fn i64() -> Self {
         Type {
             kind: TypeKind::I64,
+            size: 8,
+            align: 8,
+        }
+    }
+
+    pub fn f64() -> Self {
+        Type {
+            kind: TypeKind::F64,
             size: 8,
             align: 8,
         }
@@ -94,6 +103,7 @@ impl Type {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TypeKind {
     I64,
+    F64,
     U8,
     Bool,
     Unit,
@@ -102,6 +112,18 @@ pub enum TypeKind {
     Array(TypeId, usize),
     Slice(TypeId),
     Struct(String, Vec<Field>),
+}
+
+impl TypeKind {
+    pub fn is_integer(&self) -> bool {
+        matches!(self, TypeKind::I64 | TypeKind::U8)
+    }
+    pub fn is_float(&self) -> bool {
+        matches!(self, TypeKind::F64)
+    }
+    pub fn is_numeric(&self) -> bool {
+        self.is_integer() || self.is_float()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -129,6 +151,7 @@ impl TypeContext {
         assert_eq!(ctx.intern(Type::bool()), TypeId::BOOL);
         assert_eq!(ctx.intern(Type::unit()), TypeId::UNIT);
         assert_eq!(ctx.intern(Type::never()), TypeId::NEVER);
+        assert_eq!(ctx.intern(Type::f64()), TypeId::F64);
 
         ctx
     }
