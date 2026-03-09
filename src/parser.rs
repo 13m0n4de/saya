@@ -108,6 +108,7 @@ impl<'a> Parser<'a> {
                 self.advance()?;
                 match name.as_str() {
                     "i64" => TypeAnnKind::I64,
+                    "f64" => TypeAnnKind::F64,
                     "u8" => TypeAnnKind::U8,
                     "bool" => TypeAnnKind::Bool,
                     _ => {
@@ -784,6 +785,12 @@ impl<'a> Parser<'a> {
                 let suffix = suffix.clone();
                 self.advance()?;
                 ExprKind::Literal(Literal::Integer(val, suffix))
+            }
+            TokenKind::Float(val, suffix) => {
+                let val = *val;
+                let suffix = suffix.clone();
+                self.advance()?;
+                ExprKind::Literal(Literal::Float(val, suffix))
             }
             TokenKind::String(str) => {
                 let val = str.to_owned();
