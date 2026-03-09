@@ -140,6 +140,7 @@ impl<'a> CodeGen<'a> {
         let ty = self.types.get(type_id);
         match &ty.kind {
             TypeKind::I64 => qbe::Type::Long,
+            TypeKind::F64 => qbe::Type::Double,
             TypeKind::U8 => qbe::Type::Word,
             TypeKind::Bool => qbe::Type::Word,
             TypeKind::Pointer(_) => qbe::Type::Long,
@@ -156,6 +157,7 @@ impl<'a> CodeGen<'a> {
         let ty = self.types.get(type_id);
         match &ty.kind {
             TypeKind::I64 => qbe::Type::Long,
+            TypeKind::F64 => qbe::Type::Double,
             TypeKind::U8 => qbe::Type::UnsignedByte,
             TypeKind::Bool => qbe::Type::UnsignedByte,
             TypeKind::Pointer(_) => qbe::Type::Long,
@@ -169,6 +171,7 @@ impl<'a> CodeGen<'a> {
         let ty = self.types.get(type_id);
         match &ty.kind {
             TypeKind::I64 => qbe::Type::Long,
+            TypeKind::F64 => qbe::Type::Double,
             TypeKind::U8 => qbe::Type::Byte,
             TypeKind::Bool => qbe::Type::Byte,
             TypeKind::Pointer(_) => qbe::Type::Long,
@@ -548,6 +551,7 @@ impl<'a> CodeGen<'a> {
     fn literal_to_data_items(&mut self, lit: &Literal) -> Vec<(qbe::Type<'static>, qbe::DataItem)> {
         match lit {
             Literal::Integer(n) => vec![(qbe::Type::Long, qbe::DataItem::Const(n.cast_unsigned()))],
+            Literal::Float(n) => vec![(qbe::Type::Double, qbe::DataItem::Const(n.to_bits()))],
             Literal::Bool(b) => vec![(qbe::Type::Word, qbe::DataItem::Const(u64::from(*b)))],
             Literal::String(s) => {
                 let label = self.emit_string_data(s);
@@ -745,6 +749,7 @@ impl<'a> CodeGen<'a> {
 
         match lit {
             Literal::Integer(n) => GenValue::Const(n.cast_unsigned(), expr.type_id),
+            Literal::Float(n) => GenValue::Const(n.to_bits(), expr.type_id),
             Literal::Bool(b) => GenValue::Const(u64::from(*b), TypeId::BOOL),
             Literal::String(_) => self.generate_string_slice(qfunc, expr),
             Literal::CString(s) => {
