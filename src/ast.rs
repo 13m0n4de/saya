@@ -21,6 +21,7 @@ pub struct TypeAnn {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeAnnKind {
     I64,
+    F64,
     U8,
     Bool,
     Pointer(Box<TypeAnn>),
@@ -191,6 +192,7 @@ pub enum ExprKind {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
     Integer(i64, Option<String>),
+    Float(f64, Option<String>),
     Bool(bool),
     String(String),
     CString(String),
