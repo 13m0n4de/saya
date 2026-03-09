@@ -47,8 +47,8 @@ fn test_keywords() {
 }
 
 #[test]
-fn test_identifiers_and_integers() {
-    let input = "x y123 _foo 42 0 9999 255u8 100i64";
+fn test_identifiers_and_numbers() {
+    let input = "x y123 _foo 42 0 9999 255u8 100i64 3.14 1.23f64";
     let tokens = tokenize(input).unwrap();
 
     assert_eq!(
@@ -62,6 +62,8 @@ fn test_identifiers_and_integers() {
             TokenKind::Integer(9999, None),
             TokenKind::Integer(255, Some("u8".to_string())),
             TokenKind::Integer(100, Some("i64".to_string())),
+            TokenKind::Float(3.14, None),
+            TokenKind::Float(1.23, Some("f64".to_string())),
             TokenKind::Eof,
         ]
     );

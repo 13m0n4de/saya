@@ -30,6 +30,19 @@ fn test_integer_literal() {
 }
 
 #[test]
+fn test_float_literal() {
+    let program = typecheck!("fn main() -> f64 { 3.14 }").unwrap();
+
+    match &program.items[0].kind {
+        ItemKind::Function(func) => {
+            let body = func.body.as_ref().expect("Expected function body");
+            assert_eq!(body.type_id, TypeId::F64);
+        }
+        _ => panic!("Expected function"),
+    }
+}
+
+#[test]
 fn test_string_literal() {
     let code = r#"fn main() -> [u8] { "hello" }"#;
     let lexer = Lexer::new(&code);
