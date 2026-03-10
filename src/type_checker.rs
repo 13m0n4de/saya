@@ -247,9 +247,9 @@ impl<'a> TypeChecker<'a> {
             ast::TypeAnnKind::I64 => Ok(TypeId::I64),
             ast::TypeAnnKind::F64 => Ok(TypeId::F64),
             ast::TypeAnnKind::U8 => Ok(TypeId::U8),
-            ast::TypeAnnKind::Bool => Ok(TypeId::BOOL),
-            ast::TypeAnnKind::Unit => Ok(TypeId::UNIT),
-            ast::TypeAnnKind::Never => Ok(TypeId::NEVER),
+            ast::TypeAnnKind::Bool => Ok(TypeId::Bool),
+            ast::TypeAnnKind::Unit => Ok(TypeId::Unit),
+            ast::TypeAnnKind::Never => Ok(TypeId::Never),
 
             ast::TypeAnnKind::Pointer(inner) => {
                 let inner_type_id = self.lower_type(inner)?;
@@ -841,7 +841,7 @@ impl<'a> TypeChecker<'a> {
         let typed_body = match &func.body {
             Some(block) => {
                 let block = self.check_block(block)?;
-                if block.type_id != return_type_id && block.type_id != TypeId::NEVER {
+                if block.type_id != return_type_id && block.type_id != TypeId::Never {
                     return Err(TypeError::new(
                         format!(
                             "mismatched return type in function `{ident}`: expected `{}`, found `{}`",
@@ -890,8 +890,8 @@ impl<'a> TypeChecker<'a> {
             match &typed_stmt.kind {
                 hir::StmtKind::Expr(expr)
                     if !is_last
-                        && expr.type_id != TypeId::UNIT
-                        && expr.type_id != TypeId::NEVER =>
+                        && expr.type_id != TypeId::Unit
+                        && expr.type_id != TypeId::Never =>
                 {
                     return Err(TypeError::new(
                         format!(
@@ -902,7 +902,7 @@ impl<'a> TypeChecker<'a> {
                     ));
                 }
                 hir::StmtKind::Expr(expr) | hir::StmtKind::Semi(expr)
-                    if expr.type_id == TypeId::NEVER =>
+                    if expr.type_id == TypeId::Never =>
                 {
                     has_never = true;
                 }
@@ -920,8 +920,8 @@ impl<'a> TypeChecker<'a> {
             Some(hir::Stmt {
                 kind: hir::StmtKind::Semi(expr),
                 ..
-            }) if expr.type_id == TypeId::NEVER => TypeId::NEVER,
-            _ => TypeId::UNIT,
+            }) if expr.type_id == TypeId::Never => TypeId::Never,
+            _ => TypeId::Unit,
         };
 
         self.scopes.pop();
@@ -1058,7 +1058,7 @@ impl<'a> TypeChecker<'a> {
                 self.types.mk_pointer(TypeId::U8),
                 hir::ExprKind::Literal(hir::Literal::CString(s.clone())),
             ),
-            ast::Literal::Bool(b) => (TypeId::BOOL, hir::ExprKind::Literal(hir::Literal::Bool(*b))),
+            ast::Literal::Bool(b) => (TypeId::Bool, hir::ExprKind::Literal(hir::Literal::Bool(*b))),
         };
 
         Ok(hir::Expr {
@@ -1480,7 +1480,7 @@ impl<'a> TypeChecker<'a> {
                 TypeId::I64
             }
             hir::UnaryOp::Not => match typed_operand.type_id {
-                TypeId::BOOL => TypeId::BOOL,
+                TypeId::Bool => TypeId::Bool,
                 TypeId::I64 => TypeId::I64,
                 _ => {
                     return Err(TypeError::new(
@@ -1573,7 +1573,7 @@ impl<'a> TypeChecker<'a> {
                         expr.span,
                     ));
                 }
-                TypeId::BOOL
+                TypeId::Bool
             }
             hir::BinaryOp::Eq | hir::BinaryOp::Ne => {
                 if typed_left.type_id != typed_right.type_id {
@@ -1586,10 +1586,10 @@ impl<'a> TypeChecker<'a> {
                         expr.span,
                     ));
                 }
-                TypeId::BOOL
+                TypeId::Bool
             }
             hir::BinaryOp::And | hir::BinaryOp::Or => {
-                if typed_left.type_id != TypeId::BOOL || typed_right.type_id != TypeId::BOOL {
+                if typed_left.type_id != TypeId::Bool || typed_right.type_id != TypeId::Bool {
                     return Err(TypeError::new(
                         format!(
                             "logical operator requires `bool` operands, found `{}` and `{}`",
@@ -1599,7 +1599,7 @@ impl<'a> TypeChecker<'a> {
                         expr.span,
                     ));
                 }
-                TypeId::BOOL
+                TypeId::Bool
             }
         };
 
@@ -1631,7 +1631,7 @@ impl<'a> TypeChecker<'a> {
 
         Ok(hir::Expr {
             kind: hir::ExprKind::Assign(Box::new(typed_lhs), Box::new(typed_rhs)),
-            type_id: TypeId::UNIT,
+            type_id: TypeId::Unit,
             span: expr.span,
         })
     }
@@ -1663,7 +1663,7 @@ impl<'a> TypeChecker<'a> {
             }
             hir::ExprKind::Return(Some(Box::new(typed_val)))
         } else {
-            if return_type_id != TypeId::UNIT {
+            if return_type_id != TypeId::Unit {
                 return Err(TypeError::new(
                     format!(
                         "expected return value of type `{}`",
@@ -1677,7 +1677,7 @@ impl<'a> TypeChecker<'a> {
 
         Ok(hir::Expr {
             kind,
-            type_id: TypeId::NEVER,
+            type_id: TypeId::Never,
             span: expr.span,
         })
     }
@@ -1704,7 +1704,7 @@ impl<'a> TypeChecker<'a> {
 
         let typed_cond = self.check_expression(&if_expr.cond)?;
 
-        if typed_cond.type_id != TypeId::BOOL {
+        if typed_cond.type_id != TypeId::Bool {
             return Err(TypeError::new(
                 format!(
                     "if condition must be `bool`, found `{}`",
@@ -1720,9 +1720,9 @@ impl<'a> TypeChecker<'a> {
             let typed_else = self.check_expression(else_expr)?;
 
             let result_ty = match (typed_then.type_id, typed_else.type_id) {
-                (TypeId::NEVER, TypeId::NEVER) => TypeId::NEVER,
-                (_, TypeId::NEVER) => typed_then.type_id,
-                (TypeId::NEVER, _) => typed_else.type_id,
+                (TypeId::Never, TypeId::Never) => TypeId::Never,
+                (_, TypeId::Never) => typed_then.type_id,
+                (TypeId::Never, _) => typed_else.type_id,
                 (then_ty, else_ty) if then_ty == else_ty => typed_then.type_id,
                 (then_ty, else_ty) => {
                     return Err(TypeError::new(
@@ -1741,7 +1741,7 @@ impl<'a> TypeChecker<'a> {
             // when there is no else-branch, the implicit else branch returns `Unit`,
             // so the entire `Expr` is always `Unit`
             // (even if the then-branch is `Never`)
-            (TypeId::UNIT, None)
+            (TypeId::Unit, None)
         };
 
         Ok(hir::Expr {
@@ -1771,7 +1771,7 @@ impl<'a> TypeChecker<'a> {
 
         let typed_cond = self.check_expression(&while_expr.cond)?;
 
-        if typed_cond.type_id != TypeId::BOOL {
+        if typed_cond.type_id != TypeId::Bool {
             return Err(TypeError::new(
                 format!(
                     "while condition must be `bool`, found `{}`",
@@ -1791,7 +1791,7 @@ impl<'a> TypeChecker<'a> {
                 body: Box::new(typed_body),
                 span: while_expr.span,
             }),
-            type_id: TypeId::UNIT,
+            type_id: TypeId::Unit,
             span: expr.span,
         })
     }
@@ -1822,7 +1822,7 @@ impl<'a> TypeChecker<'a> {
                 body: Box::new(typed_body),
                 span: loop_expr.span,
             }),
-            type_id: break_type.unwrap_or(TypeId::NEVER),
+            type_id: break_type.unwrap_or(TypeId::Never),
             span: expr.span,
         })
     }
@@ -1855,7 +1855,7 @@ impl<'a> TypeChecker<'a> {
                 let ty = typed.type_id;
                 (hir::ExprKind::Break(Some(Box::new(typed))), ty)
             }
-            None => (hir::ExprKind::Break(None), TypeId::UNIT),
+            None => (hir::ExprKind::Break(None), TypeId::Unit),
         };
 
         let Some(Scope {
@@ -1885,7 +1885,7 @@ impl<'a> TypeChecker<'a> {
 
         Ok(hir::Expr {
             kind,
-            type_id: TypeId::NEVER,
+            type_id: TypeId::Never,
             span: expr.span,
         })
     }
@@ -1905,7 +1905,7 @@ impl<'a> TypeChecker<'a> {
 
         Ok(hir::Expr {
             kind: hir::ExprKind::Continue,
-            type_id: TypeId::NEVER,
+            type_id: TypeId::Never,
             span: expr.span,
         })
     }

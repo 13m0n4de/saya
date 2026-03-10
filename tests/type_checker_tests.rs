@@ -91,7 +91,7 @@ fn test_bool_literal() {
     match &program.items[0].kind {
         ItemKind::Function(func) => {
             let body = func.body.as_ref().expect("Expected function body");
-            assert_eq!(body.type_id, TypeId::BOOL);
+            assert_eq!(body.type_id, TypeId::Bool);
         }
         _ => panic!("Expected function"),
     }

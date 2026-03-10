@@ -205,7 +205,10 @@ impl<'a> CodeGen<'a> {
             })
             .collect();
 
-        let ident = format!("type.{}", type_id.0);
+        let TypeId::Interned(n) = type_id else {
+            unreachable!()
+        };
+        let ident = format!("type.{n}");
 
         let def = Box::new(qbe::TypeDef::Regular {
             ident,
@@ -237,7 +240,10 @@ impl<'a> CodeGen<'a> {
 
         let items = vec![(qbe_elem_ty, len)];
 
-        let ident = format!("type.{}", type_id.0);
+        let TypeId::Interned(n) = type_id else {
+            unreachable!()
+        };
+        let ident = format!("type.{n}");
 
         let def = Box::new(qbe::TypeDef::Regular {
             ident,
@@ -253,7 +259,10 @@ impl<'a> CodeGen<'a> {
 
         let items = vec![(qbe::Type::Long, 1), (qbe::Type::Long, 1)];
 
-        let ident = format!("type.{}", type_id.0);
+        let TypeId::Interned(n) = type_id else {
+            unreachable!()
+        };
+        let ident = format!("type.{n}");
 
         let def = Box::new(qbe::TypeDef::Regular {
             ident,
@@ -636,7 +645,7 @@ impl<'a> CodeGen<'a> {
             })
             .collect();
 
-        let qbe_return_type: Option<qbe::Type<'static>> = if func.return_type_id == TypeId::UNIT {
+        let qbe_return_type: Option<qbe::Type<'static>> = if func.return_type_id == TypeId::Unit {
             None
         } else {
             Some(self.qbe_type(func.return_type_id))
@@ -675,15 +684,15 @@ impl<'a> CodeGen<'a> {
 
         let block_value = self.generate_block(&mut qfunc, block)?;
 
-        if func.return_type_id == TypeId::NEVER {
+        if func.return_type_id == TypeId::Never {
             qfunc.add_instr(qbe::Instr::Hlt);
-        } else if block.type_id == TypeId::NEVER {
+        } else if block.type_id == TypeId::Never {
             if let Some(last_block) = qfunc.blocks.last()
                 && !last_block.jumps()
             {
                 qfunc.add_instr(qbe::Instr::Hlt);
             }
-        } else if block.type_id == TypeId::UNIT {
+        } else if block.type_id == TypeId::Unit {
             qfunc.add_instr(qbe::Instr::Ret(None));
         } else {
             qfunc.add_instr(qbe::Instr::Ret(Some(block_value.into())));
@@ -697,7 +706,7 @@ impl<'a> CodeGen<'a> {
         qfunc: &mut qbe::Function<'static>,
         block: &Block,
     ) -> Result<GenValue, CodeGenError> {
-        let mut result = GenValue::Const(0, TypeId::UNIT);
+        let mut result = GenValue::Const(0, TypeId::Unit);
         for stmt in &block.stmts {
             match &stmt.kind {
                 StmtKind::Semi(expr) => {
@@ -756,7 +765,7 @@ impl<'a> CodeGen<'a> {
         match lit {
             Literal::Integer(n) => GenValue::Const(n.cast_unsigned(), expr.type_id),
             Literal::Float(n) => GenValue::Const(n.to_bits(), expr.type_id),
-            Literal::Bool(b) => GenValue::Const(u64::from(*b), TypeId::BOOL),
+            Literal::Bool(b) => GenValue::Const(u64::from(*b), TypeId::Bool),
             Literal::String(_) => self.generate_string_slice(qfunc, expr),
             Literal::CString(s) => {
                 let label = self.emit_cstring_data(s);
@@ -1126,7 +1135,7 @@ impl<'a> CodeGen<'a> {
             ExprKind::Field(..) => self.generate_expr_field(qfunc, expr),
         }?;
 
-        if expr.type_id == TypeId::NEVER {
+        if expr.type_id == TypeId::Never {
             let cont_label = format!("never.{}", self.new_label());
             qfunc.add_block(cont_label);
         }
@@ -1224,7 +1233,7 @@ impl<'a> CodeGen<'a> {
             qbe_args.push((arg_ty, arg_val));
         }
 
-        if expr.type_id == TypeId::UNIT {
+        if expr.type_id == TypeId::Unit {
             qfunc.add_instr(qbe::Instr::Call(symbol, qbe_args, None));
             Ok(GenValue::Const(0, expr.type_id))
         } else {
@@ -1260,7 +1269,7 @@ impl<'a> CodeGen<'a> {
 
                 qfunc.add_block(then_label);
                 self.generate_block(qfunc, &if_expr.then_body)?;
-                if if_expr.then_body.type_id != TypeId::NEVER {
+                if if_expr.then_body.type_id != TypeId::Never {
                     qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
                 }
 
@@ -1284,7 +1293,7 @@ impl<'a> CodeGen<'a> {
                     .expect("ICE: blocks should not be empty")
                     .label
                     .clone();
-                let then_is_never = if_expr.then_body.type_id == TypeId::NEVER;
+                let then_is_never = if_expr.then_body.type_id == TypeId::Never;
                 if !then_is_never {
                     qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
                 }
@@ -1298,7 +1307,7 @@ impl<'a> CodeGen<'a> {
                     .expect("ICE: blocks should not be empty")
                     .label
                     .clone();
-                let else_is_never = else_expr.type_id == TypeId::NEVER;
+                let else_is_never = else_expr.type_id == TypeId::Never;
                 if !else_is_never {
                     qfunc.add_instr(qbe::Instr::Jmp(end_label.clone()));
                 }
@@ -1308,7 +1317,7 @@ impl<'a> CodeGen<'a> {
 
                 // Determine result based on expression type and branch types
                 match expr.type_id {
-                    TypeId::UNIT | TypeId::NEVER => Ok(GenValue::Const(0, expr.type_id)),
+                    TypeId::Unit | TypeId::Never => Ok(GenValue::Const(0, expr.type_id)),
                     _ => match (then_is_never, else_is_never) {
                         (true, false) => {
                             // Only else branch has value

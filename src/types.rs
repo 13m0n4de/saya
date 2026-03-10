@@ -1,15 +1,14 @@
 use std::collections::HashMap;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub struct TypeId(pub u32);
-
-impl TypeId {
-    pub const I64: TypeId = TypeId(0);
-    pub const U8: TypeId = TypeId(1);
-    pub const BOOL: TypeId = TypeId(2);
-    pub const UNIT: TypeId = TypeId(3);
-    pub const NEVER: TypeId = TypeId(4);
-    pub const F64: TypeId = TypeId(5);
+pub enum TypeId {
+    I64,
+    F64,
+    U8,
+    Bool,
+    Unit,
+    Never,
+    Interned(u32),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -20,54 +19,39 @@ pub struct Type {
 }
 
 impl Type {
-    pub fn i64() -> Self {
-        Type {
-            kind: TypeKind::I64,
-            size: 8,
-            align: 8,
-        }
-    }
+    pub const I64: Self = Type {
+        kind: TypeKind::I64,
+        size: 8,
+        align: 8,
+    };
+    pub const F64: Self = Type {
+        kind: TypeKind::F64,
+        size: 8,
+        align: 8,
+    };
+    pub const U8: Self = Type {
+        kind: TypeKind::U8,
+        size: 1,
+        align: 1,
+    };
+    pub const BOOL: Self = Type {
+        kind: TypeKind::Bool,
+        size: 1,
+        align: 1,
+    };
+    pub const UNIT: Self = Type {
+        kind: TypeKind::Unit,
+        size: 0,
+        align: 1,
+    };
+    pub const NEVER: Self = Type {
+        kind: TypeKind::Never,
+        size: 0,
+        align: 1,
+    };
+}
 
-    pub fn f64() -> Self {
-        Type {
-            kind: TypeKind::F64,
-            size: 8,
-            align: 8,
-        }
-    }
-
-    pub fn u8() -> Self {
-        Type {
-            kind: TypeKind::U8,
-            size: 1,
-            align: 1,
-        }
-    }
-
-    pub fn bool() -> Self {
-        Type {
-            kind: TypeKind::Bool,
-            size: 1,
-            align: 1,
-        }
-    }
-
-    pub fn unit() -> Self {
-        Type {
-            kind: TypeKind::Unit,
-            size: 0,
-            align: 1,
-        }
-    }
-
-    pub fn never() -> Self {
-        Type {
-            kind: TypeKind::Never,
-            size: 0,
-            align: 1,
-        }
-    }
-
+impl Type {
     pub fn pointer(referent: TypeId) -> Self {
         Type {
             kind: TypeKind::Pointer(referent),
@@ -135,25 +119,16 @@ pub struct Field {
 
 #[derive(Default)]
 pub struct TypeContext {
-    types: Vec<Type>,
+    interned: Vec<Type>,
     cache: HashMap<Type, TypeId>,
 }
 
 impl TypeContext {
     pub fn new() -> Self {
-        let mut ctx = Self {
-            types: Vec::new(),
+        Self {
+            interned: Vec::new(),
             cache: HashMap::new(),
-        };
-
-        assert_eq!(ctx.intern(Type::i64()), TypeId::I64);
-        assert_eq!(ctx.intern(Type::u8()), TypeId::U8);
-        assert_eq!(ctx.intern(Type::bool()), TypeId::BOOL);
-        assert_eq!(ctx.intern(Type::unit()), TypeId::UNIT);
-        assert_eq!(ctx.intern(Type::never()), TypeId::NEVER);
-        assert_eq!(ctx.intern(Type::f64()), TypeId::F64);
-
-        ctx
+        }
     }
 
     fn intern(&mut self, data: Type) -> TypeId {
@@ -161,14 +136,22 @@ impl TypeContext {
             return id;
         }
 
-        let id = TypeId(self.types.len() as u32);
+        let id = TypeId::Interned(self.interned.len() as u32);
         self.cache.insert(data.clone(), id);
-        self.types.push(data);
+        self.interned.push(data);
         id
     }
 
     pub fn get(&self, id: TypeId) -> &Type {
-        &self.types[id.0 as usize]
+        match id {
+            TypeId::I64 => &Type::I64,
+            TypeId::F64 => &Type::F64,
+            TypeId::U8 => &Type::U8,
+            TypeId::Bool => &Type::BOOL,
+            TypeId::Unit => &Type::UNIT,
+            TypeId::Never => &Type::NEVER,
+            TypeId::Interned(n) => &self.interned[n as usize],
+        }
     }
 
     pub fn mk_pointer(&mut self, referent: TypeId) -> TypeId {
@@ -190,8 +173,8 @@ impl TypeContext {
             size: 0,
             align: 1,
         };
-        let id = TypeId(self.types.len() as u32);
-        self.types.push(data);
+        let id = TypeId::Interned(self.interned.len() as u32);
+        self.interned.push(data);
         id
     }
 
@@ -203,7 +186,10 @@ impl TypeContext {
         size: usize,
         align: usize,
     ) {
-        self.types[id.0 as usize] = Type {
+        let TypeId::Interned(n) = id else {
+            unreachable!()
+        };
+        self.interned[n as usize] = Type {
             kind: TypeKind::Struct(name, fields),
             size,
             align,
