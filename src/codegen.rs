@@ -408,8 +408,8 @@ impl<'a> CodeGen<'a> {
                 }
             }
             _ => unreachable!(
-                "copy_aggregate called on non-aggregate type: {:?}",
-                type_kind
+                "copy_aggregate called on non-aggregate type: {}",
+                self.types.type_name(type_id)
             ),
         }
     }
@@ -489,7 +489,10 @@ impl<'a> CodeGen<'a> {
                     }
                     _ => {
                         return Err(CodeGenError::new(
-                            format!("Cannot index into type {:?}", base.type_id),
+                            format!(
+                                "Cannot index into type {}",
+                                self.types.type_name(base.type_id)
+                            ),
                             expr.span,
                         ));
                     }
@@ -542,7 +545,10 @@ impl<'a> CodeGen<'a> {
                 Ok(field_addr)
             }
             _ => Err(CodeGenError::new(
-                format!("Cannot take address of this expression: {:?}", expr.kind),
+                format!(
+                    "Cannot take address of this expression: {}",
+                    self.types.type_name(expr.type_id)
+                ),
                 expr.span,
             )),
         }
@@ -591,7 +597,7 @@ impl<'a> CodeGen<'a> {
                 self.build_array_def(type_id, elem_type_id, len)
             }
             TypeKind::Slice(_) => self.build_slice_def(type_id),
-            _ => unreachable!("non-aggregate type: {:?}", type_kind),
+            _ => unreachable!("non-aggregate type: {}", self.types.type_name(type_id)),
         };
 
         self.type_defs.insert(type_id, def);
@@ -1001,7 +1007,10 @@ impl<'a> CodeGen<'a> {
 
         let TypeKind::Array(elem_ty, _) = self.types.get(expr.type_id).kind else {
             return Err(CodeGenError::new(
-                format!("Expected array type, found {:?}", expr.type_id),
+                format!(
+                    "Expected array type, found {}",
+                    self.types.type_name(expr.type_id)
+                ),
                 expr.span,
             ));
         };
@@ -1037,7 +1046,10 @@ impl<'a> CodeGen<'a> {
 
         let TypeKind::Array(elem_ty, _) = self.types.get(expr.type_id).kind else {
             return Err(CodeGenError::new(
-                format!("Expected array type, found {:?}", expr.type_id),
+                format!(
+                    "Expected array type, found {}",
+                    self.types.type_name(expr.type_id)
+                ),
                 expr.span,
             ));
         };

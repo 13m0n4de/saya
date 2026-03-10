@@ -209,4 +209,19 @@ impl TypeContext {
             align,
         };
     }
+
+    pub fn type_name(&self, id: TypeId) -> String {
+        match &self.get(id).kind {
+            TypeKind::I64 => "i64".into(),
+            TypeKind::F64 => "f64".into(),
+            TypeKind::U8 => "u8".into(),
+            TypeKind::Bool => "bool".into(),
+            TypeKind::Unit => "()".into(),
+            TypeKind::Never => "!".into(),
+            TypeKind::Pointer(inner) => format!("*{}", self.type_name(*inner)),
+            TypeKind::Array(elem, len) => format!("[{}; {len}]", self.type_name(*elem)),
+            TypeKind::Slice(elem) => format!("[{}]", self.type_name(*elem)),
+            TypeKind::Struct(name, _) => name.into(),
+        }
+    }
 }

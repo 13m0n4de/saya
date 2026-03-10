@@ -197,8 +197,8 @@ impl<'a> TypeChecker<'a> {
                 if typed_len.type_id != TypeId::I64 {
                     return Err(TypeError::new(
                         format!(
-                            "Array length must be `i64`, found `{:?}`",
-                            typed_len.type_id
+                            "Array length must be `i64`, found `{}`",
+                            self.types.type_name(typed_len.type_id)
                         ),
                         len_expr.span,
                     ));
@@ -264,8 +264,8 @@ impl<'a> TypeChecker<'a> {
                 if typed_len.type_id != TypeId::I64 {
                     return Err(TypeError::new(
                         format!(
-                            "Array length must be `i64`, found `{:?}`",
-                            typed_len.type_id
+                            "Array length must be `i64`, found `{}`",
+                            self.types.type_name(typed_len.type_id)
                         ),
                         len_expr.span,
                     ));
@@ -471,8 +471,9 @@ impl<'a> TypeChecker<'a> {
                 if typed_init.type_id != type_id {
                     return Err(TypeError::new(
                         format!(
-                            "type mismatch in const `{name}`: expected `{type_id:?}`, found `{:?}`",
-                            typed_init.type_id
+                            "type mismatch in const `{name}`: expected `{}`, found `{}`",
+                            self.types.type_name(type_id),
+                            self.types.type_name(typed_init.type_id)
                         ),
                         def.init.span,
                     ));
@@ -513,8 +514,9 @@ impl<'a> TypeChecker<'a> {
                 if typed_init.type_id != type_id {
                     return Err(TypeError::new(
                         format!(
-                            "type mismatch in static `{name}`: expected `{type_id:?}`, found `{:?}`",
-                            typed_init.type_id
+                            "type mismatch in static `{name}`: expected `{}`, found `{}`",
+                            self.types.type_name(type_id),
+                            self.types.type_name(typed_init.type_id)
                         ),
                         def.init.span,
                     ));
@@ -842,8 +844,9 @@ impl<'a> TypeChecker<'a> {
                 if block.type_id != return_type_id && block.type_id != TypeId::NEVER {
                     return Err(TypeError::new(
                         format!(
-                            "mismatched return type in function `{ident}`: expected `{return_type_id:?}`, found `{:?}`",
-                            block.type_id
+                            "mismatched return type in function `{ident}`: expected `{}`, found `{}`",
+                            self.types.type_name(return_type_id),
+                            self.types.type_name(block.type_id)
                         ),
                         block.span,
                     ));
@@ -892,8 +895,8 @@ impl<'a> TypeChecker<'a> {
                 {
                     return Err(TypeError::new(
                         format!(
-                            "expected `;` after expression: expected `()`, found `{:?}`",
-                            expr.type_id
+                            "expected `;` after expression: expected `()`, found `{}`",
+                            self.types.type_name(expr.type_id)
                         ),
                         expr.span,
                     ));
@@ -939,8 +942,9 @@ impl<'a> TypeChecker<'a> {
                 if typed_init.type_id != declared_type_id {
                     return Err(TypeError::new(
                         format!(
-                            "type mismatch in let binding: expected `{:?}`, found `{:?}`",
-                            declared_type_id, typed_init.type_id
+                            "type mismatch in let binding: expected `{}`, found `{}`",
+                            self.types.type_name(declared_type_id),
+                            self.types.type_name(typed_init.type_id)
                         ),
                         let_stmt.init.span,
                     ));
@@ -1117,8 +1121,10 @@ impl<'a> TypeChecker<'a> {
             if typed_value.type_id != field.type_id {
                 return Err(TypeError::new(
                     format!(
-                        "field `{}` has wrong type: expected `{:?}`, found `{:?}`",
-                        field.name, field.type_id, typed_value.type_id
+                        "field `{}` has wrong type: expected `{}`, found `{}`",
+                        field.name,
+                        self.types.type_name(field.type_id),
+                        self.types.type_name(typed_value.type_id)
                     ),
                     field_init.value.span,
                 ));
@@ -1207,8 +1213,9 @@ impl<'a> TypeChecker<'a> {
             if typed_elem.type_id != elem_type_id {
                 return Err(TypeError::new(
                     format!(
-                        "array element type mismatch: expected `{:?}`, found `{:?}`",
-                        elem_type_id, typed_elem.type_id
+                        "array element type mismatch: expected `{}`, found `{}`",
+                        self.types.type_name(elem_type_id),
+                        self.types.type_name(typed_elem.type_id)
                     ),
                     elem.span,
                 ));
@@ -1235,8 +1242,8 @@ impl<'a> TypeChecker<'a> {
         if typed_count.type_id != TypeId::I64 {
             return Err(TypeError::new(
                 format!(
-                    "repeat count must be `i64`, found `{:?}`",
-                    typed_count.type_id
+                    "repeat count must be `i64`, found `{}`",
+                    self.types.type_name(typed_count.type_id)
                 ),
                 count.span,
             ));
@@ -1270,7 +1277,8 @@ impl<'a> TypeChecker<'a> {
                 if !matches!(self.types.get(inner_type_id).kind, TypeKind::Struct(_, _)) {
                     return Err(TypeError::new(
                         format!(
-                            "cannot access field on pointer to non-struct type `{inner_type_id:?}`",
+                            "cannot access field on pointer to non-struct type `{}`",
+                            self.types.type_name(inner_type_id)
                         ),
                         base.span,
                     ));
@@ -1291,8 +1299,8 @@ impl<'a> TypeChecker<'a> {
             _ => {
                 return Err(TypeError::new(
                     format!(
-                        "cannot access field on non-struct type `{:?}`",
-                        typed_base.type_id
+                        "cannot access field on non-struct type `{}`",
+                        self.types.type_name(typed_base.type_id)
                     ),
                     base.span,
                 ));
@@ -1328,8 +1336,8 @@ impl<'a> TypeChecker<'a> {
         if typed_index.type_id != TypeId::I64 {
             return Err(TypeError::new(
                 format!(
-                    "array index must be `i64`, found `{:?}`",
-                    typed_index.type_id
+                    "array index must be `i64`, found `{}`",
+                    self.types.type_name(typed_index.type_id)
                 ),
                 index.span,
             ));
@@ -1348,7 +1356,8 @@ impl<'a> TypeChecker<'a> {
                 _ => {
                     return Err(TypeError::new(
                         format!(
-                            "cannot index into pointer to non-indexable type `{inner_type_id:?}`",
+                            "cannot index into pointer to non-indexable type `{}`",
+                            self.types.type_name(inner_type_id)
                         ),
                         array.span,
                     ));
@@ -1359,7 +1368,10 @@ impl<'a> TypeChecker<'a> {
             }
             _ => {
                 return Err(TypeError::new(
-                    format!("cannot index into type `{:?}`", typed_array.type_id),
+                    format!(
+                        "cannot index into type `{}`",
+                        self.types.type_name(typed_array.type_id)
+                    ),
                     array.span,
                 ));
             }
@@ -1417,8 +1429,9 @@ impl<'a> TypeChecker<'a> {
             if typed_arg.type_id != param_type_id {
                 return Err(TypeError::new(
                     format!(
-                        "argument type mismatch: expected `{param_type_id:?}`, found `{:?}`",
-                        typed_arg.type_id
+                        "argument type mismatch: expected `{}`, found `{}`",
+                        self.types.type_name(param_type_id),
+                        self.types.type_name(typed_arg.type_id)
                     ),
                     arg.span,
                 ));
@@ -1457,7 +1470,10 @@ impl<'a> TypeChecker<'a> {
             hir::UnaryOp::Neg => {
                 if typed_operand.type_id != TypeId::I64 {
                     return Err(TypeError::new(
-                        format!("cannot apply `-` to type `{:?}`", typed_operand.type_id),
+                        format!(
+                            "cannot apply `-` to type `{}`",
+                            self.types.type_name(typed_operand.type_id)
+                        ),
                         operand.span,
                     ));
                 }
@@ -1468,7 +1484,10 @@ impl<'a> TypeChecker<'a> {
                 TypeId::I64 => TypeId::I64,
                 _ => {
                     return Err(TypeError::new(
-                        format!("cannot apply `!` to type `{:?}`", typed_operand.type_id),
+                        format!(
+                            "cannot apply `!` to type `{}`",
+                            self.types.type_name(typed_operand.type_id)
+                        ),
                         operand.span,
                     ));
                 }
@@ -1488,8 +1507,8 @@ impl<'a> TypeChecker<'a> {
                 _ => {
                     return Err(TypeError::new(
                         format!(
-                            "cannot dereference non-pointer type `{:?}`",
-                            typed_operand.type_id
+                            "cannot dereference non-pointer type `{}`",
+                            self.types.type_name(typed_operand.type_id)
                         ),
                         operand.span,
                     ));
@@ -1519,8 +1538,9 @@ impl<'a> TypeChecker<'a> {
                 if !lk.is_numeric() || typed_left.type_id != typed_right.type_id {
                     return Err(TypeError::new(
                         format!(
-                            "arithmetic operator requires numeric operands, found `{:?}` and `{:?}`",
-                            typed_left.type_id, typed_right.type_id
+                            "arithmetic operator requires numeric operands, found `{}` and `{}`",
+                            self.types.type_name(typed_left.type_id),
+                            self.types.type_name(typed_right.type_id)
                         ),
                         expr.span,
                     ));
@@ -1532,8 +1552,9 @@ impl<'a> TypeChecker<'a> {
                 if !lk.is_integer() || typed_left.type_id != typed_right.type_id {
                     return Err(TypeError::new(
                         format!(
-                            "arithmetic operator requires integer operands, found `{:?}` and `{:?}`",
-                            typed_left.type_id, typed_right.type_id
+                            "arithmetic operator requires integer operands, found `{}` and `{}`",
+                            self.types.type_name(typed_left.type_id),
+                            self.types.type_name(typed_right.type_id)
                         ),
                         expr.span,
                     ));
@@ -1545,8 +1566,9 @@ impl<'a> TypeChecker<'a> {
                 if !lk.is_numeric() || typed_left.type_id != typed_right.type_id {
                     return Err(TypeError::new(
                         format!(
-                            "comparison operator requires numeric operands, found `{:?}` and `{:?}`",
-                            typed_left.type_id, typed_right.type_id
+                            "comparison operator requires numeric operands, found `{}` and `{}`",
+                            self.types.type_name(typed_left.type_id),
+                            self.types.type_name(typed_right.type_id)
                         ),
                         expr.span,
                     ));
@@ -1557,8 +1579,9 @@ impl<'a> TypeChecker<'a> {
                 if typed_left.type_id != typed_right.type_id {
                     return Err(TypeError::new(
                         format!(
-                            "equality operator requires same types, found `{:?}` and `{:?}`",
-                            typed_left.type_id, typed_right.type_id
+                            "equality operator requires same types, found `{}` and `{}`",
+                            self.types.type_name(typed_left.type_id),
+                            self.types.type_name(typed_right.type_id)
                         ),
                         expr.span,
                     ));
@@ -1569,8 +1592,9 @@ impl<'a> TypeChecker<'a> {
                 if typed_left.type_id != TypeId::BOOL || typed_right.type_id != TypeId::BOOL {
                     return Err(TypeError::new(
                         format!(
-                            "logical operator requires `bool` operands, found `{:?}` and `{:?}`",
-                            typed_left.type_id, typed_right.type_id
+                            "logical operator requires `bool` operands, found `{}` and `{}`",
+                            self.types.type_name(typed_left.type_id),
+                            self.types.type_name(typed_right.type_id)
                         ),
                         expr.span,
                     ));
@@ -1597,8 +1621,9 @@ impl<'a> TypeChecker<'a> {
         if typed_lhs.type_id != typed_rhs.type_id {
             return Err(TypeError::new(
                 format!(
-                    "assignment type mismatch: expected `{:?}`, found `{:?}`",
-                    typed_lhs.type_id, typed_rhs.type_id
+                    "assignment type mismatch: expected `{}`, found `{}`",
+                    self.types.type_name(typed_lhs.type_id),
+                    self.types.type_name(typed_rhs.type_id)
                 ),
                 expr.span,
             ));
@@ -1629,8 +1654,9 @@ impl<'a> TypeChecker<'a> {
             if typed_val.type_id != return_type_id {
                 return Err(TypeError::new(
                     format!(
-                        "return type mismatch: expected `{:?}`, found `{:?}`",
-                        return_type_id, typed_val.type_id
+                        "return type mismatch: expected `{}`, found `{}`",
+                        self.types.type_name(return_type_id),
+                        self.types.type_name(typed_val.type_id)
                     ),
                     v.span,
                 ));
@@ -1639,7 +1665,10 @@ impl<'a> TypeChecker<'a> {
         } else {
             if return_type_id != TypeId::UNIT {
                 return Err(TypeError::new(
-                    format!("expected return value of type `{return_type_id:?}`"),
+                    format!(
+                        "expected return value of type `{}`",
+                        self.types.type_name(return_type_id)
+                    ),
                     expr.span,
                 ));
             }
@@ -1678,8 +1707,8 @@ impl<'a> TypeChecker<'a> {
         if typed_cond.type_id != TypeId::BOOL {
             return Err(TypeError::new(
                 format!(
-                    "if condition must be `bool`, found `{:?}`",
-                    typed_cond.type_id
+                    "if condition must be `bool`, found `{}`",
+                    self.types.type_name(typed_cond.type_id)
                 ),
                 if_expr.cond.span,
             ));
@@ -1698,7 +1727,9 @@ impl<'a> TypeChecker<'a> {
                 (then_ty, else_ty) => {
                     return Err(TypeError::new(
                         format!(
-                            "if-else branches have different types: `{then_ty:?}` and `{else_ty:?}`",
+                            "if-else branches have different types: `{}` and `{}`",
+                            self.types.type_name(then_ty),
+                            self.types.type_name(else_ty),
                         ),
                         else_expr.span,
                     ));
@@ -1743,8 +1774,8 @@ impl<'a> TypeChecker<'a> {
         if typed_cond.type_id != TypeId::BOOL {
             return Err(TypeError::new(
                 format!(
-                    "while condition must be `bool`, found `{:?}`",
-                    typed_cond.type_id
+                    "while condition must be `bool`, found `{}`",
+                    self.types.type_name(typed_cond.type_id)
                 ),
                 while_expr.cond.span,
             ));
@@ -1841,7 +1872,11 @@ impl<'a> TypeChecker<'a> {
             None => *break_type = Some(val_type),
             Some(existing) if existing != val_type => {
                 return Err(TypeError::new(
-                    format!("break value type mismatch: expected {existing:?}, found {val_type:?}"),
+                    format!(
+                        "break value type mismatch: expected {}, found {}",
+                        self.types.type_name(existing),
+                        self.types.type_name(val_type),
+                    ),
                     expr.span,
                 ));
             }
