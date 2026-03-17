@@ -6,7 +6,7 @@ use-item = "use" path ";"
 
 extern-item = "extern" (extern-static / extern-fn)
 extern-static = "static" identifier ":" type-name ";"
-extern-fn = "fn" identifier "(" [param-list] ")" ["->" type-name]  ";"
+extern-fn = "fn" identifier "(" [param-list ["," "..."]] ")" ["->" type-name] ";"
 
 const-def = "const" path ":" type-name "=" expression ";"
 static-def = "static" path ":" type-name "=" expression ";"
@@ -81,7 +81,7 @@ primary-expr = literal / struct-expr / path / array-expr
 if-expr = "if" expression block ["else" (if-expr / block)]
 while-expr = "while" expression block
 loop-expr = "loop" block
-break-expr = "break"
+break-expr = "break" [expression]
 continue-expr = "continue"
 
 array-expr = "[" [array-list / array-repeat] "]"
