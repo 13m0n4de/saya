@@ -300,8 +300,8 @@ impl<'a> Parser<'a> {
 
         self.expect(TokenKind::OpenParen)?;
 
-        let params = if self.current.kind == TokenKind::CloseParen {
-            Vec::new()
+        let (params, is_variadic) = if self.current.kind == TokenKind::CloseParen {
+            (Vec::new(), false)
         } else {
             self.parse_param_list()?
         };
@@ -322,6 +322,7 @@ impl<'a> Parser<'a> {
         Ok(ExternFunctionDecl {
             name,
             params,
+            is_variadic,
             return_type_ann,
             span: start_span,
         })
@@ -468,8 +469,8 @@ impl<'a> Parser<'a> {
 
         self.expect(TokenKind::OpenParen)?;
 
-        let params = if self.current.kind == TokenKind::CloseParen {
-            Vec::new()
+        let (params, _) = if self.current.kind == TokenKind::CloseParen {
+            (Vec::new(), false)
         } else {
             self.parse_param_list()?
         };
@@ -500,19 +501,28 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_param_list(&mut self) -> Result<Vec<Param>, ParseError> {
+    fn parse_param_list(&mut self) -> Result<(Vec<Param>, bool), ParseError> {
         let mut params = Vec::new();
+        let mut is_variadic = false;
 
-        params.push(self.parse_param()?);
+        loop {
+            if self.current.kind == TokenKind::DotDotDot {
+                self.advance()?;
+                is_variadic = true;
+                break;
+            }
 
-        while self.eat(TokenKind::Comma)? {
+            params.push(self.parse_param()?);
+            if !self.eat(TokenKind::Comma)? {
+                break;
+            }
+
             if self.current.kind == TokenKind::CloseParen {
                 break;
             }
-            params.push(self.parse_param()?);
         }
 
-        Ok(params)
+        Ok((params, is_variadic))
     }
 
     fn parse_param(&mut self) -> Result<Param, ParseError> {

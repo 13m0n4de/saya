@@ -541,6 +541,37 @@ fn test_use() {
 }
 
 #[test]
+fn test_variadic_function() {
+    let program = parse!("extern fn abort(...) -> !;").unwrap();
+
+    match &program.items[0].kind {
+        ItemKind::Extern(ExternItem::Function(func)) => {
+            assert_eq!(func.params.len(), 0);
+            assert!(func.is_variadic);
+            assert_eq!(func.return_type_ann.kind, TypeAnnKind::Never);
+        }
+        _ => panic!("Expected extern function"),
+    }
+
+    let program = parse!("extern fn printf(fmt: *u8, ...) -> i64;").unwrap();
+
+    match &program.items[0].kind {
+        ItemKind::Extern(ExternItem::Function(func)) => {
+            assert_eq!(func.name, "printf");
+            assert_eq!(func.params.len(), 1);
+            assert_eq!(func.params[0].name, "fmt");
+            assert!(matches!(
+                func.params[0].type_ann.kind,
+                TypeAnnKind::Pointer(_)
+            ));
+            assert!(func.is_variadic);
+            assert_eq!(func.return_type_ann.kind, TypeAnnKind::I64);
+        }
+        _ => panic!("Expected extern function"),
+    }
+}
+
+#[test]
 fn test_function_declaration() {
     let program = parse!("pub fn add(a: i64, b: i64) -> i64;").unwrap();
 
