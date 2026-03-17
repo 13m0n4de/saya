@@ -58,6 +58,7 @@ pub enum TokenKind {
     OpenBracket,  // [
     CloseBracket, // ]
     Dot,          // .
+    DotDotDot,    //...
     Comma,        // ,
     Semi,         // ;
     Colon,        // :
@@ -159,6 +160,19 @@ impl<'a> Lexer<'a> {
             Some(']') => {
                 self.advance();
                 TokenKind::CloseBracket
+            }
+            Some('.') if self.peek == Some('.') => {
+                self.advance();
+                self.advance();
+                if self.current == Some('.') {
+                    self.advance();
+                    TokenKind::DotDotDot
+                } else {
+                    return Err(LexError::new(
+                        "unexpected token '..'".into(),
+                        self.start_span,
+                    ));
+                }
             }
             Some('.') => {
                 self.advance();
