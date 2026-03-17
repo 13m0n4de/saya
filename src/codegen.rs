@@ -1234,13 +1234,13 @@ impl<'a> CodeGen<'a> {
         }
 
         if expr.type_id == TypeId::Unit {
-            qfunc.add_instr(qbe::Instr::Call(symbol, qbe_args, None));
+            qfunc.add_instr(qbe::Instr::Call(symbol, qbe_args, call.variadic_start));
             Ok(GenValue::Const(0, expr.type_id))
         } else {
             Ok(self.assign_to_temp(
                 qfunc,
                 expr.type_id,
-                qbe::Instr::Call(symbol, qbe_args, None),
+                qbe::Instr::Call(symbol, qbe_args, call.variadic_start),
             ))
         }
     }
