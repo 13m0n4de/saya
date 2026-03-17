@@ -61,6 +61,7 @@ pub struct ExternStaticDecl {
 pub struct ExternFunctionDecl {
     pub name: String,
     pub params: Vec<Param>,
+    pub is_variadic: bool,
     pub return_type_id: TypeId,
     pub span: Span,
 }
@@ -187,6 +188,7 @@ pub struct FieldInit {
 pub struct Call {
     pub callee: Box<Expr>,
     pub args: Vec<Expr>,
+    pub variadic_start: Option<u64>,
     pub span: Span,
 }
 

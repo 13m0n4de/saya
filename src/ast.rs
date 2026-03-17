@@ -84,6 +84,7 @@ pub struct ExternStaticDecl {
 pub struct ExternFunctionDecl {
     pub name: String,
     pub params: Vec<Param>,
+    pub is_variadic: bool,
     pub return_type_ann: TypeAnn,
     pub span: Span,
 }

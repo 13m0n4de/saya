@@ -142,5 +142,5 @@ pub enum ExternStatic {
 #[derive(Debug, Clone)]
 pub enum ExternFunction {
     Unresolved(Rc<ast::ExternFunctionDecl>),
-    Resolved(Vec<TypeId>, TypeId),
+    Resolved(Vec<TypeId>, TypeId, bool),
 }

@@ -270,6 +270,21 @@ fn test_integer_overflow() {
 }
 
 #[test]
+fn test_dot_tokens() {
+    let tokens = tokenize("a.b ...").unwrap();
+    assert_eq!(
+        tokens,
+        vec![
+            TokenKind::Ident("a".to_string()),
+            TokenKind::Dot,
+            TokenKind::Ident("b".to_string()),
+            TokenKind::DotDotDot,
+            TokenKind::Eof,
+        ]
+    );
+}
+
+#[test]
 fn test_empty_input() {
     let tokens = tokenize("").unwrap();
     assert_eq!(tokens, vec![TokenKind::Eof]);

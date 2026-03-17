@@ -326,6 +326,48 @@ fn test_external_function() {
 }
 
 #[test]
+fn test_variadic_function() {
+    let result = typecheck!("extern fn printf(fmt: *u8, ...) -> i64;");
+    assert!(result.is_ok());
+
+    let result = typecheck!(
+        r#"
+        extern fn printf(fmt: *u8, ...) -> i64;
+        fn main() -> i64 { printf(c"hello") }
+        "#
+    );
+    assert!(result.is_ok());
+
+    let program = typecheck!(
+        r#"
+        extern fn printf(fmt: *u8, ...) -> i64;
+        fn main() -> i64 { printf(c"%d", 42) }
+        "#
+    )
+    .unwrap();
+    let ItemKind::Function(func) = &program.items[1].kind else {
+        panic!("expected function");
+    };
+    let body = func.body.as_ref().unwrap();
+    let StmtKind::Expr(Expr {
+        kind: ExprKind::Call(call),
+        ..
+    }) = &body.stmts[0].kind
+    else {
+        panic!("expected call");
+    };
+    assert_eq!(call.variadic_start, Some(1));
+
+    let result = typecheck!(
+        r#"
+        extern fn printf(fmt: *u8, ...) -> i64;
+        fn main() -> i64 { printf() }
+        "#
+    );
+    assert!(result.is_err());
+}
+
+#[test]
 fn test_bitwise_operators() {
     let result = typecheck!("fn test() -> i64 { 1 & 2 }");
     assert!(result.is_ok());
