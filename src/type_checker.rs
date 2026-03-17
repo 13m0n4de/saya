@@ -646,8 +646,8 @@ impl<'a> TypeChecker<'a> {
         };
 
         match decl {
-            ExternStatic::Unresolved(def) => {
-                let type_id = self.lower_type(&def.type_ann)?;
+            ExternStatic::Unresolved(decl) => {
+                let type_id = self.lower_type(&decl.type_ann)?;
                 self.scopes.first_mut().insert(
                     name.to_string(),
                     ScopeObject::ExternStatic(ExternStatic::Resolved(type_id)),
@@ -668,20 +668,26 @@ impl<'a> TypeChecker<'a> {
         };
 
         match decl {
-            ExternFunction::Unresolved(def) => {
-                let params = def
+            ExternFunction::Unresolved(decl) => {
+                let params = decl
                     .params
                     .iter()
                     .map(|p| self.lower_type(&p.type_ann))
                     .collect::<Result<Vec<_>, _>>()?;
-                let return_ty = self.lower_type(&def.return_type_ann)?;
+
+                let return_ty = self.lower_type(&decl.return_type_ann)?;
+
                 self.scopes.first_mut().insert(
                     name.to_string(),
-                    ScopeObject::ExternFunction(ExternFunction::Resolved(params, return_ty)),
+                    ScopeObject::ExternFunction(ExternFunction::Resolved(
+                        params,
+                        return_ty,
+                        decl.is_variadic,
+                    )),
                 );
                 Ok(())
             }
-            ExternFunction::Resolved(_, _) => Ok(()),
+            ExternFunction::Resolved(_, _, _) => Ok(()),
         }
     }
 
@@ -752,11 +758,11 @@ impl<'a> TypeChecker<'a> {
                         }
                         ast::ExternItem::Function(decl) => {
                             self.resolve_declaration(&decl.name)?;
-                            let (param_types, return_type_id) =
+                            let (param_types, return_type_id, is_variadic) =
                                 match self.scopes.lookup(&decl.name) {
                                     Some(ScopeObject::ExternFunction(
-                                        ExternFunction::Resolved(params, ret),
-                                    )) => (params.clone(), *ret),
+                                        ExternFunction::Resolved(params, ret, v),
+                                    )) => (params.clone(), *ret, *v),
                                     _ => unreachable!(),
                                 };
                             let params = decl
@@ -773,6 +779,7 @@ impl<'a> TypeChecker<'a> {
                                 name: decl.name.clone(),
                                 params,
                                 return_type_id,
+                                is_variadic,
                                 span: decl.span,
                             })
                         }
@@ -1399,11 +1406,15 @@ impl<'a> TypeChecker<'a> {
         let name = callee.to_string();
         self.resolve_declaration(&name)?;
 
-        let (params, return_ty) = match self.scopes.lookup(&name) {
-            Some(
-                ScopeObject::Function(Function::Resolved(params, return_ty))
-                | ScopeObject::ExternFunction(ExternFunction::Resolved(params, return_ty)),
-            ) => (params.clone(), *return_ty),
+        let (params, return_ty, is_variadic) = match self.scopes.lookup(&name) {
+            Some(ScopeObject::Function(Function::Resolved(params, return_ty))) => {
+                (params.clone(), *return_ty, false)
+            }
+            Some(ScopeObject::ExternFunction(ExternFunction::Resolved(
+                params,
+                return_ty,
+                is_variadic,
+            ))) => (params.clone(), *return_ty, *is_variadic),
             _ => {
                 return Err(TypeError::new(
                     format!("undefined function `{callee}`"),
@@ -1412,11 +1423,21 @@ impl<'a> TypeChecker<'a> {
             }
         };
 
-        if call.args.len() != params.len() {
+        let min_args = params.len();
+        if is_variadic {
+            if call.args.len() < min_args {
+                return Err(TypeError::new(
+                    format!(
+                        "function `{callee}` expects at least {min_args} arguments, got {}",
+                        call.args.len()
+                    ),
+                    call.span,
+                ));
+            }
+        } else if call.args.len() != min_args {
             return Err(TypeError::new(
                 format!(
-                    "function `{callee}` expects {} arguments, got {}",
-                    params.len(),
+                    "function `{callee}` expects {min_args} arguments, got {}",
                     call.args.len()
                 ),
                 call.span,
@@ -1439,6 +1460,10 @@ impl<'a> TypeChecker<'a> {
             typed_args.push(typed_arg);
         }
 
+        for arg in call.args.iter().skip(min_args) {
+            typed_args.push(self.check_expression(arg)?);
+        }
+
         let ident = self.make_ident(callee);
 
         let typed_callee = hir::Expr {
@@ -1447,10 +1472,13 @@ impl<'a> TypeChecker<'a> {
             span: call.callee.span,
         };
 
+        let variadic_start = is_variadic.then_some(min_args as u64);
+
         Ok(hir::Expr {
             kind: hir::ExprKind::Call(hir::Call {
                 callee: Box::new(typed_callee),
                 args: typed_args,
+                variadic_start,
                 span: call.span,
             }),
             type_id: return_ty,
