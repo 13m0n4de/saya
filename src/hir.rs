@@ -69,16 +69,14 @@ pub struct ExternFunctionDecl {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConstDef {
     pub ident: String,
-    pub type_id: TypeId,
-    pub init: Literal,
+    pub init: ConstVal,
     pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StaticDef {
     pub ident: String,
-    pub type_id: TypeId,
-    pub init: Literal,
+    pub init: ConstVal,
     pub span: Span,
 }
 
@@ -142,6 +140,7 @@ pub struct Expr {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExprKind {
     Literal(Literal),
+    Const(ConstVal),
     Struct(StructExpr),
     Place(Place),
     Array(Vec<Expr>),
@@ -168,6 +167,29 @@ pub enum Literal {
     Bool(bool),
     String(String),
     CString(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConstVal {
+    pub kind: ConstValKind,
+    pub type_id: TypeId,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConstValKind {
+    Integer(i64),
+    Float(f64),
+    Bool(bool),
+    String(String),
+    CString(String),
+    Struct(Vec<ConstVal>),
+    Array(Vec<ConstVal>),
+}
+
+impl ConstVal {
+    pub fn new(kind: ConstValKind, type_id: TypeId) -> Self {
+        Self { kind, type_id }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

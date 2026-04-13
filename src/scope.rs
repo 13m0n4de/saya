@@ -109,14 +109,14 @@ pub enum ScopeObject {
 pub enum Const {
     Unresolved(Rc<ast::ConstDef>),
     Resolving(Rc<ast::ConstDef>),
-    Resolved(TypeId, hir::Literal),
+    Resolved(hir::ConstVal),
 }
 
 #[derive(Debug, Clone)]
 pub enum Static {
     Unresolved(Rc<ast::StaticDef>),
     Resolving(Rc<ast::StaticDef>),
-    Resolved(TypeId, hir::Literal),
+    Resolved(hir::ConstVal),
 }
 
 #[derive(Debug, Clone)]
