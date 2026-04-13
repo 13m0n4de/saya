@@ -87,23 +87,90 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    fn eval_const_expr(&mut self, expr: &hir::Expr) -> Result<hir::Literal, TypeError> {
+    fn eval_const_expr(&mut self, expr: &hir::Expr) -> Result<hir::ConstVal, TypeError> {
         match &expr.kind {
-            hir::ExprKind::Literal(lit) => Ok(lit.clone()),
+            hir::ExprKind::Literal(lit) => Ok(match lit {
+                hir::Literal::Integer(n) => {
+                    hir::ConstVal::new(hir::ConstValKind::Integer(*n), expr.type_id)
+                }
+                hir::Literal::Float(n) => {
+                    hir::ConstVal::new(hir::ConstValKind::Float(*n), expr.type_id)
+                }
+                hir::Literal::Bool(b) => {
+                    hir::ConstVal::new(hir::ConstValKind::Bool(*b), expr.type_id)
+                }
+                hir::Literal::String(s) => {
+                    hir::ConstVal::new(hir::ConstValKind::String(s.clone()), expr.type_id)
+                }
+                hir::Literal::CString(s) => {
+                    hir::ConstVal::new(hir::ConstValKind::CString(s.clone()), expr.type_id)
+                }
+            }),
+
+            hir::ExprKind::Const(val) => Ok(val.clone()),
             hir::ExprKind::Place(hir::Place::Local(symbol) | hir::Place::Global(symbol)) => {
                 match self.scopes.lookup(symbol) {
-                    Some(ScopeObject::Const(Const::Resolved(_, value))) => Ok(value.clone()),
+                    Some(ScopeObject::Const(Const::Resolved(val))) => Ok(val.clone()),
                     _ => Err(TypeError::new(
                         format!("Constant `{symbol}` not found"),
                         expr.span,
                     )),
                 }
             }
+            hir::ExprKind::Struct(struct_expr) => {
+                let type_kind = self.types.get(expr.type_id).kind.clone();
+                let TypeKind::Struct(_, fields) = type_kind else {
+                    unreachable!()
+                };
+                let struct_fields = struct_expr.fields.clone();
+                let mut values = Vec::with_capacity(fields.len());
+                for field in &fields {
+                    let field_init = struct_fields
+                        .iter()
+                        .find(|f| f.name == field.name)
+                        .ok_or_else(|| {
+                            TypeError::new(
+                                format!("missing field `{}` in struct literal", field.name),
+                                expr.span,
+                            )
+                        })?;
+                    values.push(self.eval_const_expr(&field_init.value)?);
+                }
+                Ok(hir::ConstVal::new(
+                    hir::ConstValKind::Struct(values),
+                    expr.type_id,
+                ))
+            }
+            hir::ExprKind::Array(elems) => {
+                let mut values = Vec::with_capacity(elems.len());
+                for elem in elems {
+                    values.push(self.eval_const_expr(elem)?);
+                }
+                Ok(hir::ConstVal::new(
+                    hir::ConstValKind::Array(values),
+                    expr.type_id,
+                ))
+            }
+            hir::ExprKind::Repeat(elem, count) => {
+                let elem_val = self.eval_const_expr(elem)?;
+                Ok(hir::ConstVal::new(
+                    hir::ConstValKind::Array(vec![elem_val; *count]),
+                    expr.type_id,
+                ))
+            }
             hir::ExprKind::Unary(hir::UnaryOp::Neg, operand) => {
-                match self.eval_const_expr(operand)? {
-                    hir::Literal::Integer(n) => Ok(hir::Literal::Integer(-n)),
+                let val = self.eval_const_expr(operand)?;
+                match val.kind {
+                    hir::ConstValKind::Integer(n) => Ok(hir::ConstVal {
+                        kind: hir::ConstValKind::Integer(-n),
+                        type_id: expr.type_id,
+                    }),
+                    hir::ConstValKind::Float(n) => Ok(hir::ConstVal {
+                        kind: hir::ConstValKind::Float(-n),
+                        type_id: expr.type_id,
+                    }),
                     _ => Err(TypeError::new(
-                        "Cannot negate a non-integer value".to_string(),
+                        "Cannot negate a non-numeric value".to_string(),
                         expr.span,
                     )),
                 }
@@ -112,65 +179,78 @@ impl<'a> TypeChecker<'a> {
                 let left_val = self.eval_const_expr(left)?;
                 let right_val = self.eval_const_expr(right)?;
 
-                match (left_val, right_val) {
-                    (hir::Literal::Integer(l), hir::Literal::Integer(r)) => match op {
+                let kind = match (left_val.kind, right_val.kind) {
+                    (hir::ConstValKind::Integer(l), hir::ConstValKind::Integer(r)) => match op {
                         // Arithmetic operators
-                        hir::BinaryOp::Add => Ok(hir::Literal::Integer(l + r)),
-                        hir::BinaryOp::Sub => Ok(hir::Literal::Integer(l - r)),
-                        hir::BinaryOp::Mul => Ok(hir::Literal::Integer(l * r)),
-                        hir::BinaryOp::Div => Ok(hir::Literal::Integer(l / r)),
-                        hir::BinaryOp::Rem => Ok(hir::Literal::Integer(l % r)),
+                        hir::BinaryOp::Add => hir::ConstValKind::Integer(l + r),
+                        hir::BinaryOp::Sub => hir::ConstValKind::Integer(l - r),
+                        hir::BinaryOp::Mul => hir::ConstValKind::Integer(l * r),
+                        hir::BinaryOp::Div => hir::ConstValKind::Integer(l / r),
+                        hir::BinaryOp::Rem => hir::ConstValKind::Integer(l % r),
                         // Bitwise operators
-                        hir::BinaryOp::BitAnd => Ok(hir::Literal::Integer(l & r)),
-                        hir::BinaryOp::BitOr => Ok(hir::Literal::Integer(l | r)),
+                        hir::BinaryOp::BitAnd => hir::ConstValKind::Integer(l & r),
+                        hir::BinaryOp::BitOr => hir::ConstValKind::Integer(l | r),
                         // Comparison operators
-                        hir::BinaryOp::Lt => Ok(hir::Literal::Bool(l < r)),
-                        hir::BinaryOp::Le => Ok(hir::Literal::Bool(l <= r)),
-                        hir::BinaryOp::Gt => Ok(hir::Literal::Bool(l > r)),
-                        hir::BinaryOp::Ge => Ok(hir::Literal::Bool(l >= r)),
-                        hir::BinaryOp::Eq => Ok(hir::Literal::Bool(l == r)),
-                        hir::BinaryOp::Ne => Ok(hir::Literal::Bool(l != r)),
-                        _ => Err(TypeError::new(
-                            "Invalid operator for integer operands".to_string(),
-                            expr.span,
-                        )),
+                        hir::BinaryOp::Lt => hir::ConstValKind::Bool(l < r),
+                        hir::BinaryOp::Le => hir::ConstValKind::Bool(l <= r),
+                        hir::BinaryOp::Gt => hir::ConstValKind::Bool(l > r),
+                        hir::BinaryOp::Ge => hir::ConstValKind::Bool(l >= r),
+                        hir::BinaryOp::Eq => hir::ConstValKind::Bool(l == r),
+                        hir::BinaryOp::Ne => hir::ConstValKind::Bool(l != r),
+                        _ => {
+                            return Err(TypeError::new(
+                                "Invalid operator for integer operands".to_string(),
+                                expr.span,
+                            ));
+                        }
                     },
-                    (hir::Literal::Float(l), hir::Literal::Float(r)) => match op {
+                    (hir::ConstValKind::Float(l), hir::ConstValKind::Float(r)) => match op {
                         // Arithmetic operators
-                        hir::BinaryOp::Add => Ok(hir::Literal::Float(l + r)),
-                        hir::BinaryOp::Sub => Ok(hir::Literal::Float(l - r)),
-                        hir::BinaryOp::Mul => Ok(hir::Literal::Float(l * r)),
-                        hir::BinaryOp::Div => Ok(hir::Literal::Float(l / r)),
-                        hir::BinaryOp::Rem => Ok(hir::Literal::Float(l % r)),
-                        // Comparison operators
-                        hir::BinaryOp::Lt => Ok(hir::Literal::Bool(l < r)),
-                        hir::BinaryOp::Le => Ok(hir::Literal::Bool(l <= r)),
-                        hir::BinaryOp::Gt => Ok(hir::Literal::Bool(l > r)),
-                        hir::BinaryOp::Ge => Ok(hir::Literal::Bool(l >= r)),
-                        hir::BinaryOp::Eq => Ok(hir::Literal::Bool(l == r)),
-                        hir::BinaryOp::Ne => Ok(hir::Literal::Bool(l != r)),
-                        _ => Err(TypeError::new(
-                            "Invalid operator for float operands".to_string(),
-                            expr.span,
-                        )),
+                        hir::BinaryOp::Add => hir::ConstValKind::Float(l + r),
+                        hir::BinaryOp::Sub => hir::ConstValKind::Float(l - r),
+                        hir::BinaryOp::Mul => hir::ConstValKind::Float(l * r),
+                        hir::BinaryOp::Div => hir::ConstValKind::Float(l / r),
+                        hir::BinaryOp::Rem => hir::ConstValKind::Float(l % r),
+                        // Comparison perators
+                        hir::BinaryOp::Lt => hir::ConstValKind::Bool(l < r),
+                        hir::BinaryOp::Le => hir::ConstValKind::Bool(l <= r),
+                        hir::BinaryOp::Gt => hir::ConstValKind::Bool(l > r),
+                        hir::BinaryOp::Ge => hir::ConstValKind::Bool(l >= r),
+                        hir::BinaryOp::Eq => hir::ConstValKind::Bool(l == r),
+                        hir::BinaryOp::Ne => hir::ConstValKind::Bool(l != r),
+                        _ => {
+                            return Err(TypeError::new(
+                                "Invalid operator for float operands".to_string(),
+                                expr.span,
+                            ));
+                        }
                     },
-                    (hir::Literal::Bool(l), hir::Literal::Bool(r)) => match op {
+                    (hir::ConstValKind::Bool(l), hir::ConstValKind::Bool(r)) => match op {
                         // Logical operators
-                        hir::BinaryOp::And => Ok(hir::Literal::Bool(l && r)),
-                        hir::BinaryOp::Or => Ok(hir::Literal::Bool(l || r)),
+                        hir::BinaryOp::And => hir::ConstValKind::Bool(l && r),
+                        hir::BinaryOp::Or => hir::ConstValKind::Bool(l || r),
                         // Equality operators
-                        hir::BinaryOp::Eq => Ok(hir::Literal::Bool(l == r)),
-                        hir::BinaryOp::Ne => Ok(hir::Literal::Bool(l != r)),
-                        _ => Err(TypeError::new(
-                            "Invalid operator for boolean operands".to_string(),
-                            expr.span,
-                        )),
+                        hir::BinaryOp::Eq => hir::ConstValKind::Bool(l == r),
+                        hir::BinaryOp::Ne => hir::ConstValKind::Bool(l != r),
+                        _ => {
+                            return Err(TypeError::new(
+                                "Invalid operator for boolean operands".to_string(),
+                                expr.span,
+                            ));
+                        }
                     },
-                    _ => Err(TypeError::new(
-                        "Type mismatch in constant expression".to_string(),
-                        expr.span,
-                    )),
-                }
+                    _ => {
+                        return Err(TypeError::new(
+                            "Type mismatch in constant expression".to_string(),
+                            expr.span,
+                        ));
+                    }
+                };
+
+                Ok(hir::ConstVal {
+                    kind,
+                    type_id: expr.type_id,
+                })
             }
             _ => Err(TypeError::new(
                 "Invalid constant expression".to_string(),
@@ -206,7 +286,7 @@ impl<'a> TypeChecker<'a> {
 
                 let evaluated_len = self.eval_const_expr(&typed_len)?;
 
-                let hir::Literal::Integer(len_val) = evaluated_len else {
+                let hir::ConstValKind::Integer(len_val) = evaluated_len.kind else {
                     return Err(TypeError::new(
                         "Array length must be an integer".to_string(),
                         len_expr.span,
@@ -273,7 +353,7 @@ impl<'a> TypeChecker<'a> {
 
                 let evaluated_len = self.eval_const_expr(&typed_len)?;
 
-                let hir::Literal::Integer(len_val) = evaluated_len else {
+                let hir::ConstValKind::Integer(len_val) = evaluated_len.kind else {
                     return Err(TypeError::new(
                         "Array length must be an integer".to_string(),
                         len_expr.span,
@@ -481,10 +561,9 @@ impl<'a> TypeChecker<'a> {
 
                 let value = self.eval_const_expr(&typed_init)?;
 
-                self.scopes.first_mut().insert(
-                    name.to_string(),
-                    ScopeObject::Const(Const::Resolved(type_id, value)),
-                );
+                self.scopes
+                    .first_mut()
+                    .insert(name.to_string(), ScopeObject::Const(Const::Resolved(value)));
 
                 Ok(())
             }
@@ -492,7 +571,7 @@ impl<'a> TypeChecker<'a> {
                 format!("circular dependency for const `{name}`"),
                 def.span,
             )),
-            Const::Resolved(_, _) => Ok(()),
+            Const::Resolved(_) => Ok(()),
         }
     }
 
@@ -526,7 +605,7 @@ impl<'a> TypeChecker<'a> {
 
                 self.scopes.first_mut().insert(
                     name.to_string(),
-                    ScopeObject::Static(Static::Resolved(type_id, value)),
+                    ScopeObject::Static(Static::Resolved(value)),
                 );
 
                 Ok(())
@@ -535,7 +614,7 @@ impl<'a> TypeChecker<'a> {
                 format!("circular dependency for static `{name}`"),
                 def.span,
             )),
-            Static::Resolved(_, _) => Ok(()),
+            Static::Resolved(_) => Ok(()),
         }
     }
 
@@ -704,16 +783,13 @@ impl<'a> TypeChecker<'a> {
                 ast::ItemKind::Const(def) => {
                     let name = def.path.to_string();
                     self.resolve_declaration(&name)?;
-                    let (type_id, value) = match self.scopes.lookup(&name) {
-                        Some(ScopeObject::Const(Const::Resolved(type_id, value))) => {
-                            (*type_id, value.clone())
-                        }
+                    let value = match self.scopes.lookup(&name) {
+                        Some(ScopeObject::Const(Const::Resolved(value))) => value.clone(),
                         _ => unreachable!(),
                     };
 
                     hir::ItemKind::Const(hir::ConstDef {
                         ident: self.make_ident(&def.path),
-                        type_id,
                         init: value,
                         span: def.span,
                     })
@@ -721,16 +797,13 @@ impl<'a> TypeChecker<'a> {
                 ast::ItemKind::Static(def) => {
                     let name = def.path.to_string();
                     self.resolve_declaration(&name)?;
-                    let (type_id, value) = match self.scopes.lookup(&name) {
-                        Some(ScopeObject::Static(Static::Resolved(type_id, value))) => {
-                            (*type_id, value.clone())
-                        }
+                    let value = match self.scopes.lookup(&name) {
+                        Some(ScopeObject::Static(Static::Resolved(value))) => value.clone(),
                         _ => unreachable!(),
                     };
 
                     hir::ItemKind::Static(hir::StaticDef {
                         ident: self.make_ident(&def.path),
-                        type_id,
                         init: value,
                         span: def.span,
                     })
@@ -1179,16 +1252,16 @@ impl<'a> TypeChecker<'a> {
                 span: expr.span,
             }),
             Some(
-                ScopeObject::Static(Static::Resolved(type_id, _))
+                ScopeObject::Static(Static::Resolved(hir::ConstVal { type_id, .. }))
                 | ScopeObject::ExternStatic(ExternStatic::Resolved(type_id)),
             ) => Ok(hir::Expr {
                 kind: hir::ExprKind::Place(hir::Place::Global(self.make_ident(path))),
                 type_id: *type_id,
                 span: expr.span,
             }),
-            Some(ScopeObject::Const(Const::Resolved(type_id, literal))) => Ok(hir::Expr {
-                kind: hir::ExprKind::Literal(literal.clone()),
-                type_id: *type_id,
+            Some(ScopeObject::Const(Const::Resolved(val))) => Ok(hir::Expr {
+                kind: hir::ExprKind::Const(val.clone()),
+                type_id: val.type_id,
                 span: expr.span,
             }),
             _ => Err(TypeError::new(
@@ -1258,7 +1331,7 @@ impl<'a> TypeChecker<'a> {
 
         let evaluated_count = self.eval_const_expr(&typed_count)?;
 
-        if let hir::Literal::Integer(n) = evaluated_count {
+        if let hir::ConstValKind::Integer(n) = evaluated_count.kind {
             Ok(hir::Expr {
                 kind: hir::ExprKind::Repeat(Box::new(typed_elem.clone()), n as usize),
                 type_id: self.types.mk_array(typed_elem.type_id, n as usize),
@@ -1521,11 +1594,20 @@ impl<'a> TypeChecker<'a> {
                 }
             },
             hir::UnaryOp::Ref => {
-                if let hir::ExprKind::Literal(literal) = &typed_operand.kind {
-                    return Err(TypeError::new(
-                        format!("cannot take address of constant `{literal:?}`"),
-                        operand.span,
-                    ));
+                match &typed_operand.kind {
+                    hir::ExprKind::Literal(lit) => {
+                        return Err(TypeError::new(
+                            format!("cannot take address of constant `{lit:?}`"),
+                            operand.span,
+                        ));
+                    }
+                    hir::ExprKind::Const(val) => {
+                        return Err(TypeError::new(
+                            format!("cannot take address of constant `{val:?}`"),
+                            operand.span,
+                        ));
+                    }
+                    _ => {}
                 }
 
                 self.types.mk_pointer(typed_operand.type_id)

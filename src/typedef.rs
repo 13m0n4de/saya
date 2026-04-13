@@ -2,8 +2,8 @@ use std::io;
 
 use crate::{
     hir::{
-        ConstDef, ExternItem, FunctionDef, ItemKind, Literal, Program, StaticDef, TypeDef,
-        Visibility,
+        ConstDef, ConstVal, ConstValKind, ExternItem, FunctionDef, ItemKind, Program, StaticDef,
+        TypeDef, Visibility,
     },
     types::{TypeContext, TypeId, TypeKind},
 };
@@ -40,17 +40,17 @@ pub fn emit_typedefs(
 
 fn emit_const(def: &ConstDef, types: &TypeContext, out: &mut impl io::Write) -> io::Result<()> {
     write!(out, "pub const {}: ", def.ident)?;
-    emit_type(def.type_id, types, out)?;
+    emit_type(def.init.type_id, types, out)?;
     write!(out, " = ")?;
-    emit_literal(&def.init, out)?;
+    emit_const_val(&def.init, types, out)?;
     writeln!(out, ";")
 }
 
 fn emit_static(def: &StaticDef, types: &TypeContext, out: &mut impl io::Write) -> io::Result<()> {
     write!(out, "pub static {}: ", def.ident)?;
-    emit_type(def.type_id, types, out)?;
+    emit_type(def.init.type_id, types, out)?;
     write!(out, " = ")?;
-    emit_literal(&def.init, out)?;
+    emit_const_val(&def.init, types, out)?;
     writeln!(out, ";")
 }
 
@@ -147,12 +147,37 @@ fn emit_type(type_id: TypeId, types: &TypeContext, out: &mut impl io::Write) -> 
     }
 }
 
-fn emit_literal(lit: &Literal, out: &mut impl io::Write) -> io::Result<()> {
-    match lit {
-        Literal::Integer(n) => write!(out, "{n}"),
-        Literal::Float(n) => write!(out, "{n}"),
-        Literal::Bool(b) => write!(out, "{b}"),
-        Literal::String(s) => write!(out, "\"{}\"", s.escape_default()),
-        Literal::CString(s) => write!(out, "c\"{}\"", s.escape_default()),
+fn emit_const_val(val: &ConstVal, types: &TypeContext, out: &mut impl io::Write) -> io::Result<()> {
+    match &val.kind {
+        ConstValKind::Integer(n) => write!(out, "{n}"),
+        ConstValKind::Float(n) => write!(out, "{n}"),
+        ConstValKind::Bool(b) => write!(out, "{b}"),
+        ConstValKind::String(s) => write!(out, "\"{}\"", s.escape_default()),
+        ConstValKind::CString(s) => write!(out, "c\"{}\"", s.escape_default()),
+        ConstValKind::Struct(field_values) => {
+            let TypeKind::Struct(name, fields) = &types.get(val.type_id).kind else {
+                unreachable!()
+            };
+            let (name, fields) = (name.clone(), fields.clone());
+            write!(out, "{name} {{")?;
+            for (i, (field, field_val)) in fields.iter().zip(field_values.iter()).enumerate() {
+                if i > 0 {
+                    write!(out, ", ")?;
+                }
+                write!(out, "{}: ", field.name)?;
+                emit_const_val(field_val, types, out)?;
+            }
+            write!(out, "}}")
+        }
+        ConstValKind::Array(elems) => {
+            write!(out, "[")?;
+            for (i, e) in elems.iter().enumerate() {
+                if i > 0 {
+                    write!(out, ", ")?;
+                }
+                emit_const_val(e, types, out)?;
+            }
+            write!(out, "]")
+        }
     }
 }

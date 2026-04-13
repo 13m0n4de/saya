@@ -553,6 +553,16 @@ impl<'a> CodeGen<'a> {
 
                 Ok(field_addr)
             }
+            ExprKind::Const(_) => {
+                let gv = self.generate_expr_const(qfunc, expr);
+                match gv.into() {
+                    addr @ (qbe::Value::Temporary(_) | qbe::Value::Global(_)) => Ok(addr),
+                    qbe::Value::Const(_) => Err(CodeGenError::new(
+                        "cannot take address of primitive constant".to_string(),
+                        expr.span,
+                    )),
+                }
+            }
             _ => Err(CodeGenError::new(
                 format!(
                     "Cannot take address of this expression: {}",
@@ -563,22 +573,62 @@ impl<'a> CodeGen<'a> {
         }
     }
 
-    fn literal_to_data_items(&mut self, lit: &Literal) -> Vec<(qbe::Type<'static>, qbe::DataItem)> {
-        match lit {
-            Literal::Integer(n) => vec![(qbe::Type::Long, qbe::DataItem::Const(n.cast_unsigned()))],
-            Literal::Float(n) => vec![(qbe::Type::Double, qbe::DataItem::Const(n.to_bits()))],
-            Literal::Bool(b) => vec![(qbe::Type::Word, qbe::DataItem::Const(u64::from(*b)))],
-            Literal::String(s) => {
+    fn const_to_data_items(&mut self, val: &ConstVal) -> Vec<(qbe::Type<'static>, qbe::DataItem)> {
+        match &val.kind {
+            ConstValKind::Integer(n) => {
+                vec![(qbe::Type::Long, qbe::DataItem::Const(n.cast_unsigned()))]
+            }
+            ConstValKind::Float(n) => {
+                vec![(qbe::Type::Double, qbe::DataItem::Const(n.to_bits()))]
+            }
+            ConstValKind::Bool(b) => {
+                vec![(qbe::Type::Word, qbe::DataItem::Const(u64::from(*b)))]
+            }
+            ConstValKind::String(s) => {
                 let label = self.emit_string_data(s);
                 vec![
-                    (qbe::Type::Long, qbe::DataItem::Symbol(label, None)), // ptr
-                    (qbe::Type::Long, qbe::DataItem::Const(s.len() as u64)), // len
+                    (qbe::Type::Long, qbe::DataItem::Symbol(label, None)),
+                    (qbe::Type::Long, qbe::DataItem::Const(s.len() as u64)),
                 ]
             }
-            Literal::CString(s) => {
+            ConstValKind::CString(s) => {
                 let label = self.emit_cstring_data(s);
                 vec![(qbe::Type::Long, qbe::DataItem::Symbol(label, None))]
             }
+            ConstValKind::Struct(field_values) => {
+                let (fields, total_size) = {
+                    let ty = self.types.get(val.type_id);
+                    let TypeKind::Struct(_, fields) = &ty.kind else {
+                        unreachable!()
+                    };
+                    (fields.clone(), ty.size)
+                };
+                let mut items = Vec::new();
+                let mut offset = 0usize;
+                for (field, field_val) in fields.iter().zip(field_values.iter()) {
+                    if field.offset > offset {
+                        items.push((
+                            qbe::Type::Byte,
+                            qbe::DataItem::Zero((field.offset - offset) as u64),
+                        ));
+                        offset = field.offset;
+                    }
+                    let field_size = self.types.get(field.type_id).size;
+                    items.extend(self.const_to_data_items(field_val));
+                    offset += field_size;
+                }
+                if total_size > offset {
+                    items.push((
+                        qbe::Type::Byte,
+                        qbe::DataItem::Zero((total_size - offset) as u64),
+                    ));
+                }
+                items
+            }
+            ConstValKind::Array(elems) => elems
+                .iter()
+                .flat_map(|e| self.const_to_data_items(e))
+                .collect(),
         }
     }
 
@@ -616,7 +666,7 @@ impl<'a> CodeGen<'a> {
 
     fn generate_static(&mut self, static_def: &StaticDef, vis: &Visibility) {
         let symbol = Self::ident_to_symbol(&static_def.ident);
-        let data_items = self.literal_to_data_items(&static_def.init);
+        let data_items = self.const_to_data_items(&static_def.init);
         let linkage = match vis {
             Visibility::Public => qbe::Linkage::public(),
             Visibility::Private => qbe::Linkage::private(),
@@ -766,7 +816,7 @@ impl<'a> CodeGen<'a> {
             Literal::Integer(n) => GenValue::Const(n.cast_unsigned(), expr.type_id),
             Literal::Float(n) => GenValue::Const(n.to_bits(), expr.type_id),
             Literal::Bool(b) => GenValue::Const(u64::from(*b), TypeId::Bool),
-            Literal::String(_) => self.generate_string_slice(qfunc, expr),
+            Literal::String(s) => self.generate_string_slice(qfunc, s, expr.type_id),
             Literal::CString(s) => {
                 let label = self.emit_cstring_data(s);
                 GenValue::Global(label, expr.type_id)
@@ -1117,6 +1167,7 @@ impl<'a> CodeGen<'a> {
     ) -> Result<GenValue, CodeGenError> {
         let result = match &expr.kind {
             ExprKind::Literal(..) => Ok(self.generate_expr_literal(qfunc, expr)),
+            ExprKind::Const(..) => Ok(self.generate_expr_const(qfunc, expr)),
             ExprKind::Place(..) => Ok(self.generate_expr_place(qfunc, expr)),
             ExprKind::Struct(..) => self.generate_expr_struct(qfunc, expr),
             ExprKind::Call(..) => self.generate_expr_call(qfunc, expr),
@@ -1177,13 +1228,9 @@ impl<'a> CodeGen<'a> {
     fn generate_string_slice(
         &mut self,
         qfunc: &mut qbe::Function<'static>,
-        expr: &Expr,
+        s: &str,
+        type_id: TypeId,
     ) -> GenValue {
-        let ExprKind::Literal(Literal::String(s)) = &expr.kind else {
-            unreachable!()
-        };
-
-        // Emit global string data
         let data_label = self.emit_string_data(s);
 
         // Allocate slice on stack: { ptr: l, len: l }
@@ -1200,8 +1247,86 @@ impl<'a> CodeGen<'a> {
 
         // Return address of slice
         match slice_addr {
-            qbe::Value::Temporary(name) => GenValue::Temp(name, expr.type_id),
+            qbe::Value::Temporary(name) => GenValue::Temp(name, type_id),
             _ => unreachable!(),
+        }
+    }
+
+    fn generate_expr_const(&mut self, qfunc: &mut qbe::Function<'static>, expr: &Expr) -> GenValue {
+        let ExprKind::Const(val) = &expr.kind else {
+            unreachable!()
+        };
+
+        self.generate_const_val(qfunc, val)
+    }
+
+    fn generate_const_val(
+        &mut self,
+        qfunc: &mut qbe::Function<'static>,
+        val: &ConstVal,
+    ) -> GenValue {
+        match &val.kind {
+            ConstValKind::Integer(n) => GenValue::Const(n.cast_unsigned(), val.type_id),
+            ConstValKind::Float(n) => GenValue::Const(n.to_bits(), val.type_id),
+            ConstValKind::Bool(b) => GenValue::Const(u64::from(*b), val.type_id),
+            ConstValKind::CString(s) => {
+                let label = self.emit_cstring_data(s);
+                GenValue::Global(label, val.type_id)
+            }
+            ConstValKind::String(s) => self.generate_string_slice(qfunc, s, val.type_id),
+            ConstValKind::Struct(field_values) => {
+                let (fields, ty) = {
+                    let type_ref = self.types.get(val.type_id);
+                    let TypeKind::Struct(_, fields) = &type_ref.kind else {
+                        unreachable!()
+                    };
+                    (fields.clone(), type_ref.clone())
+                };
+                let struct_addr = self.alloc_local(qfunc, &ty);
+                let field_values = field_values.clone();
+                for (field, field_val) in fields.iter().zip(field_values.iter()) {
+                    let gv = self.generate_const_val(qfunc, field_val);
+                    self.store_field(
+                        qfunc,
+                        struct_addr.clone(),
+                        field.offset as u64,
+                        gv.into(),
+                        field.type_id,
+                    );
+                }
+                match struct_addr {
+                    qbe::Value::Temporary(name) => GenValue::Temp(name, val.type_id),
+                    _ => unreachable!(),
+                }
+            }
+            ConstValKind::Array(elems) => {
+                let elem_size = {
+                    let TypeKind::Array(elem_type_id, _) = self.types.get(val.type_id).kind else {
+                        unreachable!()
+                    };
+                    self.types.get(elem_type_id).size as u64
+                };
+                let array_size = elems.len() as u64 * elem_size;
+                let array_name = self.new_temp();
+                let array_ptr = qbe::Value::Temporary(array_name.clone());
+                qfunc.assign_instr(
+                    array_ptr.clone(),
+                    qbe::Type::Long,
+                    qbe::Instr::Alloc8(array_size),
+                );
+                for (i, elem_val) in elems.iter().enumerate() {
+                    let offset = i as u64 * elem_size;
+                    let gv = self.generate_const_val(qfunc, elem_val);
+                    self.store_field(
+                        qfunc,
+                        array_ptr.clone(),
+                        offset,
+                        gv.into(),
+                        elem_val.type_id,
+                    );
+                }
+                GenValue::Temp(array_name, val.type_id)
+            }
         }
     }
 
