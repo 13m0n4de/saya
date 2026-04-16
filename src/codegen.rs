@@ -144,8 +144,7 @@ impl<'a> CodeGen<'a> {
             TypeKind::U8 => qbe::Type::Word,
             TypeKind::Bool => qbe::Type::Word,
             TypeKind::Pointer(_) => qbe::Type::Long,
-            TypeKind::Unit => qbe::Type::Long,
-            TypeKind::Never => qbe::Type::Long,
+            TypeKind::Unit | TypeKind::Never | TypeKind::Opaque => unreachable!(),
             TypeKind::Struct(..) | TypeKind::Array(..) | TypeKind::Slice(_) => {
                 let def = self.generate_type_def(type_id);
                 qbe::Type::aggregate(&def)
@@ -161,8 +160,7 @@ impl<'a> CodeGen<'a> {
             TypeKind::U8 => qbe::Type::UnsignedByte,
             TypeKind::Bool => qbe::Type::UnsignedByte,
             TypeKind::Pointer(_) => qbe::Type::Long,
-            TypeKind::Unit => qbe::Type::Long,
-            TypeKind::Never => qbe::Type::Long,
+            TypeKind::Unit | TypeKind::Never | TypeKind::Opaque => unreachable!(),
             TypeKind::Struct(..) | TypeKind::Array(..) | TypeKind::Slice(_) => qbe::Type::Long,
         }
     }
@@ -175,8 +173,7 @@ impl<'a> CodeGen<'a> {
             TypeKind::U8 => qbe::Type::Byte,
             TypeKind::Bool => qbe::Type::Byte,
             TypeKind::Pointer(_) => qbe::Type::Long,
-            TypeKind::Unit => qbe::Type::Long,
-            TypeKind::Never => qbe::Type::Long,
+            TypeKind::Unit | TypeKind::Never | TypeKind::Opaque => unreachable!(),
             TypeKind::Struct(..) | TypeKind::Array(..) | TypeKind::Slice(_) => qbe::Type::Long,
         }
     }

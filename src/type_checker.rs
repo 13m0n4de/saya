@@ -319,6 +319,10 @@ impl<'a> TypeChecker<'a> {
                     )),
                 }
             }
+            ast::TypeAnnKind::Opaque => Err(TypeError::new(
+                "opaque type cannot be used as a struct field".to_string(),
+                type_ann.span,
+            )),
         }
     }
 
@@ -330,6 +334,7 @@ impl<'a> TypeChecker<'a> {
             ast::TypeAnnKind::Bool => Ok(TypeId::Bool),
             ast::TypeAnnKind::Unit => Ok(TypeId::Unit),
             ast::TypeAnnKind::Never => Ok(TypeId::Never),
+            ast::TypeAnnKind::Opaque => Ok(TypeId::Opaque),
 
             ast::TypeAnnKind::Pointer(inner) => {
                 let inner_type_id = self.lower_type(inner)?;
@@ -532,7 +537,6 @@ impl<'a> TypeChecker<'a> {
             ScopeObject::Var(_) => Ok(()),
         }
     }
-
     fn resolve_const_decl(&mut self, name: &str, obj: ScopeObject) -> Result<(), TypeError> {
         let ScopeObject::Const(decl) = obj else {
             unreachable!()
@@ -548,7 +552,7 @@ impl<'a> TypeChecker<'a> {
                 let type_id = self.lower_type(&def.type_ann)?;
                 let typed_init = self.check_expression(&def.init)?;
 
-                if typed_init.type_id != type_id {
+                if !self.types.is_assignable(typed_init.type_id, type_id) {
                     return Err(TypeError::new(
                         format!(
                             "type mismatch in const `{name}`: expected `{}`, found `{}`",
@@ -590,7 +594,7 @@ impl<'a> TypeChecker<'a> {
                 let type_id = self.lower_type(&def.type_ann)?;
                 let typed_init = self.check_expression(&def.init)?;
 
-                if typed_init.type_id != type_id {
+                if !self.types.is_assignable(typed_init.type_id, type_id) {
                     return Err(TypeError::new(
                         format!(
                             "type mismatch in static `{name}`: expected `{}`, found `{}`",
@@ -1019,7 +1023,10 @@ impl<'a> TypeChecker<'a> {
                 let declared_type_id = self.lower_type(&let_stmt.type_ann)?;
                 let typed_init = self.check_expression(&let_stmt.init)?;
 
-                if typed_init.type_id != declared_type_id {
+                if !self
+                    .types
+                    .is_assignable(typed_init.type_id, declared_type_id)
+                {
                     return Err(TypeError::new(
                         format!(
                             "type mismatch in let binding: expected `{}`, found `{}`",
@@ -1198,7 +1205,7 @@ impl<'a> TypeChecker<'a> {
 
             let typed_value = self.check_expression(&field_init.value)?;
 
-            if typed_value.type_id != field.type_id {
+            if !self.types.is_assignable(typed_value.type_id, field.type_id) {
                 return Err(TypeError::new(
                     format!(
                         "field `{}` has wrong type: expected `{}`, found `{}`",
@@ -1290,7 +1297,7 @@ impl<'a> TypeChecker<'a> {
 
         for elem in &elems[1..] {
             let typed_elem = self.check_expression(elem)?;
-            if typed_elem.type_id != elem_type_id {
+            if !self.types.is_assignable(typed_elem.type_id, elem_type_id) {
                 return Err(TypeError::new(
                     format!(
                         "array element type mismatch: expected `{}`, found `{}`",
@@ -1520,7 +1527,7 @@ impl<'a> TypeChecker<'a> {
         let mut typed_args = Vec::new();
         for (arg, param_type_id) in call.args.iter().zip(params) {
             let typed_arg = self.check_expression(arg)?;
-            if typed_arg.type_id != param_type_id {
+            if !self.types.is_assignable(typed_arg.type_id, param_type_id) {
                 return Err(TypeError::new(
                     format!(
                         "argument type mismatch: expected `{}`, found `{}`",
@@ -1728,7 +1735,10 @@ impl<'a> TypeChecker<'a> {
         let typed_lhs = self.check_expression(lhs)?;
         let typed_rhs = self.check_expression(rhs)?;
 
-        if typed_lhs.type_id != typed_rhs.type_id {
+        if !self
+            .types
+            .is_assignable(typed_lhs.type_id, typed_rhs.type_id)
+        {
             return Err(TypeError::new(
                 format!(
                     "assignment type mismatch: expected `{}`, found `{}`",
@@ -1761,7 +1771,7 @@ impl<'a> TypeChecker<'a> {
 
         let kind = if let Some(v) = val {
             let typed_val = self.check_expression(v)?;
-            if typed_val.type_id != return_type_id {
+            if !self.types.is_assignable(typed_val.type_id, return_type_id) {
                 return Err(TypeError::new(
                     format!(
                         "return type mismatch: expected `{}`, found `{}`",

@@ -8,6 +8,7 @@ pub enum TypeId {
     Bool,
     Unit,
     Never,
+    Opaque,
     Interned(u32),
 }
 
@@ -46,6 +47,11 @@ impl Type {
     };
     pub const NEVER: Self = Type {
         kind: TypeKind::Never,
+        size: 0,
+        align: 1,
+    };
+    pub const OPAQUE: Self = Type {
+        kind: TypeKind::Opaque,
         size: 0,
         align: 1,
     };
@@ -92,6 +98,7 @@ pub enum TypeKind {
     Bool,
     Unit,
     Never,
+    Opaque,
     Pointer(TypeId),
     Array(TypeId, usize),
     Slice(TypeId),
@@ -150,6 +157,7 @@ impl TypeContext {
             TypeId::Bool => &Type::BOOL,
             TypeId::Unit => &Type::UNIT,
             TypeId::Never => &Type::NEVER,
+            TypeId::Opaque => &Type::OPAQUE,
             TypeId::Interned(n) => &self.interned[n as usize],
         }
     }
@@ -204,10 +212,23 @@ impl TypeContext {
             TypeKind::Bool => "bool".into(),
             TypeKind::Unit => "()".into(),
             TypeKind::Never => "!".into(),
+            TypeKind::Opaque => "opaque".into(),
             TypeKind::Pointer(inner) => format!("*{}", self.type_name(*inner)),
             TypeKind::Array(elem, len) => format!("[{}; {len}]", self.type_name(*elem)),
             TypeKind::Slice(elem) => format!("[{}]", self.type_name(*elem)),
             TypeKind::Struct(name, _) => name.into(),
         }
+    }
+
+    pub fn is_assignable(&self, from: TypeId, to: TypeId) -> bool {
+        // from any pointer to *opaque
+        if matches!(
+            self.get(to).kind,
+            TypeKind::Pointer(inner) if matches!(self.get(inner).kind, TypeKind::Opaque)
+        ) {
+            return matches!(self.get(from).kind, TypeKind::Pointer(_));
+        }
+
+        from == to
     }
 }

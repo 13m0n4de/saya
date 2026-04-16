@@ -127,6 +127,7 @@ fn emit_type(type_id: TypeId, types: &TypeContext, out: &mut impl io::Write) -> 
         TypeKind::Bool => write!(out, "bool"),
         TypeKind::Unit => write!(out, "()"),
         TypeKind::Never => write!(out, "!"),
+        TypeKind::Opaque => write!(out, "opaque"),
         TypeKind::Pointer(inner) => {
             write!(out, "*")?;
             emit_type(*inner, types, out)

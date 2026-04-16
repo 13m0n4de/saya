@@ -30,6 +30,7 @@ pub enum TypeAnnKind {
     Path(Path),
     Unit,
     Never,
+    Opaque,
 }
 
 #[derive(Debug, Clone, PartialEq)]

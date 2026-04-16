@@ -111,6 +111,7 @@ impl<'a> Parser<'a> {
                     "f64" => TypeAnnKind::F64,
                     "u8" => TypeAnnKind::U8,
                     "bool" => TypeAnnKind::Bool,
+                    "opaque" => TypeAnnKind::Opaque,
                     _ => {
                         let path_span = self.current.span;
                         let mut segments = vec![name];
