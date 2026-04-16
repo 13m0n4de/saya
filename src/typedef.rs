@@ -2,10 +2,10 @@ use std::io;
 
 use crate::{
     hir::{
-        ConstDef, ConstVal, ConstValKind, ExternItem, FunctionDef, ItemKind, Program, StaticDef,
-        TypeDef, Visibility,
+        ConstDef, ConstVal, ConstValKind, ExternItem, FunctionDef, ItemKind, Param, Program,
+        StaticDef, TypeDef, Visibility,
     },
-    types::{TypeContext, TypeId, TypeKind},
+    types::{TypeContext, TypeKind},
 };
 
 pub fn emit_typedefs(
@@ -39,19 +39,35 @@ pub fn emit_typedefs(
 }
 
 fn emit_const(def: &ConstDef, types: &TypeContext, out: &mut impl io::Write) -> io::Result<()> {
-    write!(out, "pub const {}: ", def.ident)?;
-    emit_type(def.init.type_id, types, out)?;
-    write!(out, " = ")?;
+    write!(
+        out,
+        "pub const {}: {} = ",
+        def.ident,
+        types.type_name(def.init.type_id)
+    )?;
     emit_const_val(&def.init, types, out)?;
     writeln!(out, ";")
 }
 
 fn emit_static(def: &StaticDef, types: &TypeContext, out: &mut impl io::Write) -> io::Result<()> {
-    write!(out, "pub static {}: ", def.ident)?;
-    emit_type(def.init.type_id, types, out)?;
-    write!(out, " = ")?;
+    write!(
+        out,
+        "pub static {}: {} = ",
+        def.ident,
+        types.type_name(def.init.type_id)
+    )?;
     emit_const_val(&def.init, types, out)?;
     writeln!(out, ";")
+}
+
+fn emit_params(params: &[Param], types: &TypeContext, out: &mut impl io::Write) -> io::Result<()> {
+    for (i, param) in params.iter().enumerate() {
+        if i > 0 {
+            write!(out, ", ")?;
+        }
+        write!(out, "{}: {}", param.name, types.type_name(param.type_id))?;
+    }
+    Ok(())
 }
 
 fn emit_function(
@@ -60,18 +76,9 @@ fn emit_function(
     out: &mut impl io::Write,
 ) -> io::Result<()> {
     write!(out, "pub fn {}(", def.ident)?;
-
-    for (i, param) in def.params.iter().enumerate() {
-        if i > 0 {
-            write!(out, ", ")?;
-        }
-        write!(out, "{}: ", param.name)?;
-        emit_type(param.type_id, types, out)?;
-    }
-
+    emit_params(&def.params, types, out)?;
     write!(out, ") -> ")?;
-    emit_type(def.return_type_id, types, out)?;
-    writeln!(out, ";")
+    writeln!(out, "{};", types.type_name(def.return_type_id))
 }
 
 fn emit_typedef(def: &TypeDef, types: &TypeContext, out: &mut impl io::Write) -> io::Result<()> {
@@ -82,9 +89,12 @@ fn emit_typedef(def: &TypeDef, types: &TypeContext, out: &mut impl io::Write) ->
     if let TypeKind::Struct(_, fields) = &ty.kind {
         writeln!(out, "{{")?;
         for field in fields {
-            write!(out, "    {}: ", field.name)?;
-            emit_type(field.type_id, types, out)?;
-            writeln!(out, ",")?;
+            writeln!(
+                out,
+                "    {}: {},",
+                field.name,
+                types.type_name(field.type_id)
+            )?;
         }
         write!(out, "}}")?;
     }
@@ -95,55 +105,17 @@ fn emit_typedef(def: &TypeDef, types: &TypeContext, out: &mut impl io::Write) ->
 fn emit_extern(ext: &ExternItem, types: &TypeContext, out: &mut impl io::Write) -> io::Result<()> {
     match ext {
         ExternItem::Static(def) => {
-            write!(out, "extern static {}: ", def.name)?;
-            emit_type(def.type_id, types, out)?;
-            writeln!(out, ";")
+            writeln!(
+                out,
+                "extern static {}: {};",
+                def.name,
+                types.type_name(def.type_id)
+            )
         }
         ExternItem::Function(def) => {
             write!(out, "extern fn {}(", def.name)?;
-
-            for (i, param) in def.params.iter().enumerate() {
-                if i > 0 {
-                    write!(out, ", ")?;
-                }
-                write!(out, "{}: ", param.name)?;
-                emit_type(param.type_id, types, out)?;
-            }
-
-            write!(out, ") -> ")?;
-            emit_type(def.return_type_id, types, out)?;
-            writeln!(out, ";")
-        }
-    }
-}
-
-fn emit_type(type_id: TypeId, types: &TypeContext, out: &mut impl io::Write) -> io::Result<()> {
-    let ty = types.get(type_id);
-
-    match &ty.kind {
-        TypeKind::I64 => write!(out, "i64"),
-        TypeKind::F64 => write!(out, "f64"),
-        TypeKind::U8 => write!(out, "u8"),
-        TypeKind::Bool => write!(out, "bool"),
-        TypeKind::Unit => write!(out, "()"),
-        TypeKind::Never => write!(out, "!"),
-        TypeKind::Opaque => write!(out, "opaque"),
-        TypeKind::Pointer(inner) => {
-            write!(out, "*")?;
-            emit_type(*inner, types, out)
-        }
-        TypeKind::Array(elem, len) => {
-            write!(out, "[")?;
-            emit_type(*elem, types, out)?;
-            write!(out, "; {len}]")
-        }
-        TypeKind::Slice(elem) => {
-            write!(out, "[")?;
-            emit_type(*elem, types, out)?;
-            write!(out, "]")
-        }
-        TypeKind::Struct(name, _) => {
-            write!(out, "{name}")
+            emit_params(&def.params, types, out)?;
+            writeln!(out, ") -> {};", types.type_name(def.return_type_id))
         }
     }
 }
