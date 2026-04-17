@@ -26,6 +26,24 @@ fn test_integer_literal() {
         ExprKind::Literal(Literal::Integer(255, Some(s))) if s == "u8"
     ));
 
+    let expr_u16 = parse_expr!("100u16").unwrap();
+    assert!(matches!(
+        expr_u16.kind,
+        ExprKind::Literal(Literal::Integer(100, Some(s))) if s == "u16"
+    ));
+
+    let expr_u32 = parse_expr!("200u32").unwrap();
+    assert!(matches!(
+        expr_u32.kind,
+        ExprKind::Literal(Literal::Integer(200, Some(s))) if s == "u32"
+    ));
+
+    let expr_i32 = parse_expr!("300i32").unwrap();
+    assert!(matches!(
+        expr_i32.kind,
+        ExprKind::Literal(Literal::Integer(300, Some(s))) if s == "i32"
+    ));
+
     let expr_i64 = parse_expr!("42").unwrap();
     assert!(matches!(
         expr_i64.kind,
@@ -36,6 +54,12 @@ fn test_integer_literal() {
     assert!(matches!(
         expr_i64_suffix.kind,
         ExprKind::Literal(Literal::Integer(100, Some(s))) if s == "i64"
+    ));
+
+    let expr_f32 = parse_expr!("1.5f32").unwrap();
+    assert!(matches!(
+        expr_f32.kind,
+        ExprKind::Literal(Literal::Float(1.5, Some(s))) if s == "f32"
     ));
 
     let expr_f64 = parse_expr!("3.14").unwrap();

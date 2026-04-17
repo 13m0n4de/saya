@@ -67,6 +67,20 @@ fn test_identifiers_and_numbers() {
             TokenKind::Eof,
         ]
     );
+
+    let input = "100u16 200u32 300i32 1.5f32";
+    let tokens = tokenize(input).unwrap();
+
+    assert_eq!(
+        tokens,
+        vec![
+            TokenKind::Integer(100, Some("u16".to_string())),
+            TokenKind::Integer(200, Some("u32".to_string())),
+            TokenKind::Integer(300, Some("i32".to_string())),
+            TokenKind::Float(1.5, Some("f32".to_string())),
+            TokenKind::Eof,
+        ]
+    );
 }
 
 #[test]

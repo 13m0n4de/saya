@@ -18,8 +18,39 @@ macro_rules! typecheck {
 
 #[test]
 fn test_integer_literal() {
-    let program = typecheck!("fn main() -> i64 { 42 }").unwrap();
+    let program = typecheck!("fn main() -> u8 { 255u8 }").unwrap();
+    match &program.items[0].kind {
+        ItemKind::Function(func) => {
+            assert_eq!(func.body.as_ref().unwrap().type_id, TypeId::U8);
+        }
+        _ => panic!("Expected function"),
+    }
 
+    let program = typecheck!("fn main() -> u16 { 1000u16 }").unwrap();
+    match &program.items[0].kind {
+        ItemKind::Function(func) => {
+            assert_eq!(func.body.as_ref().unwrap().type_id, TypeId::U16);
+        }
+        _ => panic!("Expected function"),
+    }
+
+    let program = typecheck!("fn main() -> u32 { 70000u32 }").unwrap();
+    match &program.items[0].kind {
+        ItemKind::Function(func) => {
+            assert_eq!(func.body.as_ref().unwrap().type_id, TypeId::U32);
+        }
+        _ => panic!("Expected function"),
+    }
+
+    let program = typecheck!("fn main() -> i32 { 100i32 }").unwrap();
+    match &program.items[0].kind {
+        ItemKind::Function(func) => {
+            assert_eq!(func.body.as_ref().unwrap().type_id, TypeId::I32);
+        }
+        _ => panic!("Expected function"),
+    }
+
+    let program = typecheck!("fn main() -> i64 { 42 }").unwrap();
     match &program.items[0].kind {
         ItemKind::Function(func) => {
             let body = func.body.as_ref().expect("Expected function body");
@@ -27,10 +58,25 @@ fn test_integer_literal() {
         }
         _ => panic!("Expected function"),
     }
+
+    // out of range
+    assert!(typecheck!("fn main() -> u8 { 256u8 }").is_err());
+    assert!(typecheck!("fn main() -> u16 { 65536u16 }").is_err());
+    assert!(typecheck!("fn main() -> u32 { 4294967296u32 }").is_err());
+    assert!(typecheck!("fn main() -> i32 { 2147483648i32 }").is_err());
+    assert!(typecheck!("fn main() -> i32 { -2147483649i32 }").is_err());
 }
 
 #[test]
 fn test_float_literal() {
+    let program = typecheck!("fn main() -> f32 { 1.5f32 }").unwrap();
+    match &program.items[0].kind {
+        ItemKind::Function(func) => {
+            assert_eq!(func.body.as_ref().unwrap().type_id, TypeId::F32);
+        }
+        _ => panic!("Expected function"),
+    }
+
     let program = typecheck!("fn main() -> f64 { 3.14 }").unwrap();
 
     match &program.items[0].kind {
@@ -374,6 +420,19 @@ fn test_bitwise_operators() {
 
     let result = typecheck!("fn test() -> i64 { 1 | 2 }");
     assert!(result.is_ok());
+
+    let result = typecheck!("fn test() -> u16 { 0u16 & 255u16 }");
+    assert!(result.is_ok());
+
+    let result = typecheck!("fn test() -> u32 { 0u32 | 1u32 }");
+    assert!(result.is_ok());
+
+    let result = typecheck!("fn test() -> i32 { 0i32 & 1i32 }");
+    assert!(result.is_ok());
+
+    // not integer
+    let result = typecheck!("fn test() -> f32 { 1.0f32 & 2.0f32 }");
+    assert!(result.is_err());
 }
 
 #[test]
