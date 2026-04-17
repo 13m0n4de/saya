@@ -139,42 +139,69 @@ impl<'a> CodeGen<'a> {
     fn qbe_type(&mut self, type_id: TypeId) -> qbe::Type {
         let ty = self.types.get(type_id);
         match &ty.kind {
+            TypeKind::U8 | TypeKind::U16 | TypeKind::U32 | TypeKind::I32 => qbe::Type::Word,
+
             TypeKind::I64 => qbe::Type::Long,
+
+            TypeKind::F32 => qbe::Type::Single,
             TypeKind::F64 => qbe::Type::Double,
-            TypeKind::U8 => qbe::Type::Word,
+
             TypeKind::Bool => qbe::Type::Word,
+
             TypeKind::Pointer(_) => qbe::Type::Long,
-            TypeKind::Unit | TypeKind::Never | TypeKind::Opaque => unreachable!(),
+
             TypeKind::Struct(..) | TypeKind::Array(..) | TypeKind::Slice(_) => {
                 let def = self.generate_type_def(type_id);
                 qbe::Type::aggregate(&def)
             }
+
+            TypeKind::Unit | TypeKind::Never | TypeKind::Opaque => unreachable!(),
         }
     }
 
     fn qbe_load_type(&self, type_id: TypeId) -> qbe::Type {
         let ty = self.types.get(type_id);
         match &ty.kind {
-            TypeKind::I64 => qbe::Type::Long,
-            TypeKind::F64 => qbe::Type::Double,
             TypeKind::U8 => qbe::Type::UnsignedByte,
+            TypeKind::U16 => qbe::Type::UnsignedHalfword,
+            TypeKind::U32 => qbe::Type::Word,
+
+            TypeKind::I32 => qbe::Type::Word,
+            TypeKind::I64 => qbe::Type::Long,
+
+            TypeKind::F32 => qbe::Type::Single,
+            TypeKind::F64 => qbe::Type::Double,
+
             TypeKind::Bool => qbe::Type::UnsignedByte,
+
             TypeKind::Pointer(_) => qbe::Type::Long,
-            TypeKind::Unit | TypeKind::Never | TypeKind::Opaque => unreachable!(),
+
             TypeKind::Struct(..) | TypeKind::Array(..) | TypeKind::Slice(_) => qbe::Type::Long,
+
+            TypeKind::Unit | TypeKind::Never | TypeKind::Opaque => unreachable!(),
         }
     }
 
     fn qbe_store_type(&self, type_id: TypeId) -> qbe::Type {
         let ty = self.types.get(type_id);
         match &ty.kind {
-            TypeKind::I64 => qbe::Type::Long,
-            TypeKind::F64 => qbe::Type::Double,
             TypeKind::U8 => qbe::Type::Byte,
+            TypeKind::U16 => qbe::Type::Halfword,
+            TypeKind::U32 => qbe::Type::Word,
+
+            TypeKind::I32 => qbe::Type::Word,
+            TypeKind::I64 => qbe::Type::Long,
+
+            TypeKind::F32 => qbe::Type::Single,
+            TypeKind::F64 => qbe::Type::Double,
+
             TypeKind::Bool => qbe::Type::Byte,
+
             TypeKind::Pointer(_) => qbe::Type::Long,
-            TypeKind::Unit | TypeKind::Never | TypeKind::Opaque => unreachable!(),
+
             TypeKind::Struct(..) | TypeKind::Array(..) | TypeKind::Slice(_) => qbe::Type::Long,
+
+            TypeKind::Unit | TypeKind::Never | TypeKind::Opaque => unreachable!(),
         }
     }
 
@@ -565,9 +592,14 @@ impl<'a> CodeGen<'a> {
             ConstValKind::Integer(n) => {
                 vec![(qbe::Type::Long, qbe::DataItem::Const(n.cast_unsigned()))]
             }
-            ConstValKind::Float(n) => {
-                vec![(qbe::Type::Double, qbe::DataItem::Const(n.to_bits()))]
-            }
+            ConstValKind::Float(n) => match val.type_id {
+                TypeId::F32 => vec![(
+                    qbe::Type::Single,
+                    qbe::DataItem::Const((*n as f32).to_bits() as u64),
+                )],
+                TypeId::F64 => vec![(qbe::Type::Double, qbe::DataItem::Const(n.to_bits()))],
+                _ => unreachable!(),
+            },
             ConstValKind::Bool(b) => {
                 vec![(qbe::Type::Word, qbe::DataItem::Const(u64::from(*b)))]
             }
@@ -797,7 +829,11 @@ impl<'a> CodeGen<'a> {
 
         match lit {
             Literal::Integer(n) => GenValue::Const(n.cast_unsigned(), expr.type_id),
-            Literal::Float(n) => GenValue::Const(n.to_bits(), expr.type_id),
+            Literal::Float(n) => match expr.type_id {
+                TypeId::F32 => GenValue::Const((*n as f32).to_bits() as u64, expr.type_id),
+                TypeId::F64 => GenValue::Const(n.to_bits(), expr.type_id),
+                _ => unreachable!(),
+            },
             Literal::Bool(b) => GenValue::Const(u64::from(*b), TypeId::Bool),
             Literal::String(s) => self.generate_string_slice(qfunc, s, expr.type_id),
             Literal::CString(s) => {
@@ -1246,7 +1282,11 @@ impl<'a> CodeGen<'a> {
     fn generate_const_val(&mut self, qfunc: &mut qbe::Function, val: &ConstVal) -> GenValue {
         match &val.kind {
             ConstValKind::Integer(n) => GenValue::Const(n.cast_unsigned(), val.type_id),
-            ConstValKind::Float(n) => GenValue::Const(n.to_bits(), val.type_id),
+            ConstValKind::Float(n) => match val.type_id {
+                TypeId::F32 => GenValue::Const((*n as f32).to_bits() as u64, val.type_id),
+                TypeId::F64 => GenValue::Const(n.to_bits(), val.type_id),
+                _ => unreachable!(),
+            },
             ConstValKind::Bool(b) => GenValue::Const(u64::from(*b), val.type_id),
             ConstValKind::CString(s) => {
                 let label = self.emit_cstring_data(s);

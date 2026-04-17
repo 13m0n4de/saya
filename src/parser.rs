@@ -107,9 +107,16 @@ impl<'a> Parser<'a> {
                 let name = name.clone();
                 self.advance()?;
                 match name.as_str() {
-                    "i64" => TypeAnnKind::I64,
-                    "f64" => TypeAnnKind::F64,
                     "u8" => TypeAnnKind::U8,
+                    "u16" => TypeAnnKind::U16,
+                    "u32" => TypeAnnKind::U32,
+
+                    "i32" => TypeAnnKind::I32,
+                    "i64" => TypeAnnKind::I64,
+
+                    "f32" => TypeAnnKind::F32,
+                    "f64" => TypeAnnKind::F64,
+
                     "bool" => TypeAnnKind::Bool,
                     "opaque" => TypeAnnKind::Opaque,
                     _ => {

@@ -261,10 +261,15 @@ impl<'a> TypeChecker<'a> {
 
     fn type_dimensions(&mut self, type_ann: &ast::TypeAnn) -> Result<(usize, usize), TypeError> {
         match &type_ann.kind {
+            ast::TypeAnnKind::U8 | ast::TypeAnnKind::Bool => Ok((1, 1)),
+
+            ast::TypeAnnKind::U16 => Ok((2, 2)),
+
+            ast::TypeAnnKind::U32 | ast::TypeAnnKind::I32 | ast::TypeAnnKind::F32 => Ok((4, 4)),
+
             ast::TypeAnnKind::I64 | ast::TypeAnnKind::F64 | ast::TypeAnnKind::Pointer(_) => {
                 Ok((8, 8))
             }
-            ast::TypeAnnKind::U8 | ast::TypeAnnKind::Bool => Ok((1, 1)),
             ast::TypeAnnKind::Unit | ast::TypeAnnKind::Never => Ok((0, 1)),
 
             ast::TypeAnnKind::Slice(_) => Ok((16, 8)),
@@ -328,10 +333,18 @@ impl<'a> TypeChecker<'a> {
 
     fn lower_type(&mut self, type_ann: &ast::TypeAnn) -> Result<TypeId, TypeError> {
         match &type_ann.kind {
-            ast::TypeAnnKind::I64 => Ok(TypeId::I64),
-            ast::TypeAnnKind::F64 => Ok(TypeId::F64),
             ast::TypeAnnKind::U8 => Ok(TypeId::U8),
+            ast::TypeAnnKind::U16 => Ok(TypeId::U16),
+            ast::TypeAnnKind::U32 => Ok(TypeId::U32),
+
+            ast::TypeAnnKind::I32 => Ok(TypeId::I32),
+            ast::TypeAnnKind::I64 => Ok(TypeId::I64),
+
+            ast::TypeAnnKind::F32 => Ok(TypeId::F32),
+            ast::TypeAnnKind::F64 => Ok(TypeId::F64),
+
             ast::TypeAnnKind::Bool => Ok(TypeId::Bool),
+
             ast::TypeAnnKind::Unit => Ok(TypeId::Unit),
             ast::TypeAnnKind::Never => Ok(TypeId::Never),
             ast::TypeAnnKind::Opaque => Ok(TypeId::Opaque),
@@ -1104,9 +1117,8 @@ impl<'a> TypeChecker<'a> {
         let (ty, kind) = match lit {
             ast::Literal::Integer(n, suffix) => {
                 let type_id = match suffix.as_deref() {
-                    Some("i64") | None => TypeId::I64,
                     Some("u8") => {
-                        if *n < 0 || *n > 255 {
+                        if *n < 0 || *n > u8::MAX as i64 {
                             return Err(TypeError::new(
                                 format!(
                                     "Integer literal `{n}` is out of range for type u8 (0..=255)"
@@ -1116,6 +1128,42 @@ impl<'a> TypeChecker<'a> {
                         }
                         TypeId::U8
                     }
+                    Some("u16") => {
+                        if *n < 0 || *n > u16::MAX as i64 {
+                            return Err(TypeError::new(
+                                format!(
+                                    "Integer literal `{n}` is out of range for type u16 (0..=65535)"
+                                ),
+                                expr.span,
+                            ));
+                        }
+                        TypeId::U16
+                    }
+                    Some("u32") => {
+                        if *n < 0 || *n > u32::MAX as i64 {
+                            return Err(TypeError::new(
+                                format!(
+                                    "Integer literal `{n}` is out of range for type u32 (0..=4294967295)"
+                                ),
+                                expr.span,
+                            ));
+                        }
+                        TypeId::U32
+                    }
+
+                    Some("i32") => {
+                        if *n < i32::MIN as i64 || *n > i32::MAX as i64 {
+                            return Err(TypeError::new(
+                                format!(
+                                    "Integer literal `{n}` is out of range for type i32 (-2147483648..=2147483647)"
+                                ),
+                                expr.span,
+                            ));
+                        }
+                        TypeId::I32
+                    }
+                    Some("i64") | None => TypeId::I64,
+
                     Some(unknown) => {
                         return Err(TypeError::new(
                             format!("Unknown integer suffix `{unknown}`"),
@@ -1127,6 +1175,7 @@ impl<'a> TypeChecker<'a> {
             }
             ast::Literal::Float(n, suffix) => {
                 let type_id = match suffix.as_deref() {
+                    Some("f32") => TypeId::F32,
                     Some("f64") | None => TypeId::F64,
                     Some(unknown) => {
                         return Err(TypeError::new(
@@ -1676,7 +1725,7 @@ impl<'a> TypeChecker<'a> {
                         expr.span,
                     ));
                 }
-                TypeId::I64
+                typed_left.type_id
             }
             hir::BinaryOp::Lt | hir::BinaryOp::Le | hir::BinaryOp::Gt | hir::BinaryOp::Ge => {
                 let lk = &self.types.get(typed_left.type_id).kind;

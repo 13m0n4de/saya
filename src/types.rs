@@ -2,13 +2,22 @@ use std::collections::HashMap;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum TypeId {
-    I64,
-    F64,
     U8,
+    U16,
+    U32,
+
+    I32,
+    I64,
+
+    F32,
+    F64,
+
     Bool,
+
     Unit,
     Never,
     Opaque,
+
     Interned(u32),
 }
 
@@ -20,21 +29,44 @@ pub struct Type {
 }
 
 impl Type {
+    pub const U8: Self = Type {
+        kind: TypeKind::U8,
+        size: 1,
+        align: 1,
+    };
+    pub const U16: Self = Type {
+        kind: TypeKind::U16,
+        size: 2,
+        align: 2,
+    };
+    pub const U32: Self = Type {
+        kind: TypeKind::U32,
+        size: 4,
+        align: 4,
+    };
+
+    pub const I32: Self = Type {
+        kind: TypeKind::I32,
+        size: 4,
+        align: 4,
+    };
     pub const I64: Self = Type {
         kind: TypeKind::I64,
         size: 8,
         align: 8,
+    };
+
+    pub const F32: Self = Type {
+        kind: TypeKind::F32,
+        size: 4,
+        align: 4,
     };
     pub const F64: Self = Type {
         kind: TypeKind::F64,
         size: 8,
         align: 8,
     };
-    pub const U8: Self = Type {
-        kind: TypeKind::U8,
-        size: 1,
-        align: 1,
-    };
+
     pub const BOOL: Self = Type {
         kind: TypeKind::Bool,
         size: 1,
@@ -92,14 +124,23 @@ impl Type {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TypeKind {
-    I64,
-    F64,
     U8,
+    U16,
+    U32,
+
+    I32,
+    I64,
+
+    F32,
+    F64,
+
     Bool,
+
     Unit,
     Never,
     Opaque,
     Pointer(TypeId),
+
     Array(TypeId, usize),
     Slice(TypeId),
     Struct(String, Vec<Field>),
@@ -107,10 +148,13 @@ pub enum TypeKind {
 
 impl TypeKind {
     pub fn is_integer(&self) -> bool {
-        matches!(self, TypeKind::I64 | TypeKind::U8)
+        matches!(
+            self,
+            TypeKind::U8 | TypeKind::U16 | TypeKind::U32 | TypeKind::I32 | TypeKind::I64
+        )
     }
     pub fn is_float(&self) -> bool {
-        matches!(self, TypeKind::F64)
+        matches!(self, TypeKind::F32 | TypeKind::F64)
     }
     pub fn is_numeric(&self) -> bool {
         self.is_integer() || self.is_float()
@@ -151,9 +195,13 @@ impl TypeContext {
 
     pub fn get(&self, id: TypeId) -> &Type {
         match id {
-            TypeId::I64 => &Type::I64,
-            TypeId::F64 => &Type::F64,
             TypeId::U8 => &Type::U8,
+            TypeId::U16 => &Type::U16,
+            TypeId::U32 => &Type::U32,
+            TypeId::I32 => &Type::I32,
+            TypeId::I64 => &Type::I64,
+            TypeId::F32 => &Type::F32,
+            TypeId::F64 => &Type::F64,
             TypeId::Bool => &Type::BOOL,
             TypeId::Unit => &Type::UNIT,
             TypeId::Never => &Type::NEVER,
@@ -206,9 +254,13 @@ impl TypeContext {
 
     pub fn type_name(&self, id: TypeId) -> String {
         match &self.get(id).kind {
-            TypeKind::I64 => "i64".into(),
-            TypeKind::F64 => "f64".into(),
             TypeKind::U8 => "u8".into(),
+            TypeKind::U16 => "u16".into(),
+            TypeKind::U32 => "u32".into(),
+            TypeKind::I32 => "i32".into(),
+            TypeKind::I64 => "i64".into(),
+            TypeKind::F32 => "f32".into(),
+            TypeKind::F64 => "f64".into(),
             TypeKind::Bool => "bool".into(),
             TypeKind::Unit => "()".into(),
             TypeKind::Never => "!".into(),

@@ -20,14 +20,24 @@ pub struct TypeAnn {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeAnnKind {
-    I64,
-    F64,
     U8,
+    U16,
+    U32,
+
+    I32,
+    I64,
+
+    F32,
+    F64,
+
     Bool,
+
     Pointer(Box<TypeAnn>),
     Array(Box<TypeAnn>, Box<Expr>),
     Slice(Box<TypeAnn>),
+
     Path(Path),
+
     Unit,
     Never,
     Opaque,
