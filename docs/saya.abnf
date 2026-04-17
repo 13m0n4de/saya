@@ -21,7 +21,7 @@ param-list = param *("," param) [","]
 param = identifier ":" type-name
 
 type-name = slice-type / array-type / pointer-type / base-type / custom-type
-base-type = "i64" / "f64" / "u8" / "bool" / "()" / "!"
+base-type = "u8" / "u16" / "u32" / "i32" / "i64" / "f32" / "f64"  / "bool" / "()" / "!"
 pointer-type = "*" type-name
 array-type = "[" type-name ";" integer "]"
 slice-type = "[" type-name "]"
@@ -88,10 +88,13 @@ array-expr = "[" [array-list / array-repeat] "]"
 array-list = expression *("," expression) [","]
 array-repeat = expression ";" expression
 
-literal = integer / cstring / string / bool
+literal = float / integer / cstring / string / bool
 
 integer = 1*DIGIT [int-suffix]
-int-suffix = "i64" / "u8"
+int-suffix = "u8" / "u16" / "u32" / "i32" / "i64"
+
+float = 1*DIGIT "." 1*DIGIT [float-suffix]
+float-suffix = "f32" / "f64"
 
 bool = "true" / "false"
 
