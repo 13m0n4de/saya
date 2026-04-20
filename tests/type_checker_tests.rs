@@ -764,3 +764,44 @@ fn test_structs() {
     let result = typecheck!("fn test() -> i64 { let x: i64 = 42; let ptr: *i64 = &x; ptr.field }");
     assert!(result.is_err());
 }
+
+#[test]
+fn test_type_alias() {
+    assert!(typecheck!("type MyInt = i64; fn test() -> MyInt { let x: MyInt = 42; x }").is_ok());
+
+    let program = typecheck!("type MyInt = i64; fn test() -> MyInt { 42 }").unwrap();
+    let ItemKind::Function(func) = &program.items[1].kind else {
+        panic!("Expected function");
+    };
+    assert_eq!(func.return_type_id, TypeId::I64);
+
+    assert!(typecheck!("type A = i64; type B = A; fn test() -> B { 42 }").is_ok());
+
+    assert!(typecheck!("type Handle = *opaque; extern fn get() -> Handle;").is_ok());
+    assert!(typecheck!("type Bytes = *u8; fn test() -> Bytes { c\"hello\" }").is_ok());
+
+    assert!(typecheck!("type MyInt = i64; struct Point { x: MyInt, y: MyInt }").is_ok());
+
+    assert!(typecheck!("type MyInt = i64; fn add(a: MyInt, b: MyInt) -> MyInt { a + b }").is_ok());
+
+    assert!(
+        typecheck!(
+            r#"
+        struct Point { x: i64, y: i64 }
+        type Pos = Point;
+        fn test() -> i64 {
+            let p: Pos = Pos { x: 1, y: 2 };
+            p.x
+        }
+        "#
+        )
+        .is_ok()
+    );
+
+    assert!(typecheck!("type MyInt = i64; fn test() { let x: MyInt = true; }").is_err());
+
+    assert!(typecheck!("type A = A;").is_err());
+    assert!(typecheck!("type A = B; type B = A;").is_err());
+
+    assert!(typecheck!("type A = Undefined;").is_err());
+}

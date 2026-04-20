@@ -444,6 +444,32 @@ fn test_struct_definition() {
 }
 
 #[test]
+fn test_type_alias() {
+    let program = parse!("type c_uint = u32;").unwrap();
+
+    match &program.items[0].kind {
+        ItemKind::TypeAlias(def) => {
+            assert_eq!(def.path.to_string(), "c_uint");
+            assert_eq!(def.type_ann.kind, TypeAnnKind::U32);
+        }
+        _ => panic!("Expected type alias"),
+    }
+
+    let program = parse!("type pos = Position;").unwrap();
+
+    match &program.items[0].kind {
+        ItemKind::TypeAlias(def) => {
+            assert_eq!(def.path.to_string(), "pos");
+            match &def.type_ann.kind {
+                TypeAnnKind::Path(path) => assert_eq!(path.to_string(), "Position"),
+                _ => panic!("Expected path type annotation"),
+            }
+        }
+        _ => panic!("Expected type alias"),
+    }
+}
+
+#[test]
 fn test_multiple_items() {
     let program = parse!(
         r#"
