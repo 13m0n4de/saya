@@ -1,6 +1,6 @@
 program = *item
 
-item = ["pub"] (use-item / extern-item / const-def / static-def / struct-def / function-def)
+item = ["pub"] (use-item / extern-item / const-def / static-def / struct-def / type-alias-def / function-def)
 
 use-item = "use" path ";"
 
@@ -14,6 +14,8 @@ static-def = "static" path ":" type-name "=" expression ";"
 struct-def = "struct" path "{" [field-list] "}"
 field-list = field *("," field) [","]
 field = identifier ":" type-name
+
+type-alias-def = "type" path "=" type-name ";"
 
 function-def = "fn" path "(" [param-list] ")" ["->" type-name] block
 
