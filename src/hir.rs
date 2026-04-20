@@ -34,11 +34,19 @@ pub enum ItemKind {
     Static(StaticDef),
     Function(FunctionDef),
     TypeDef(TypeDef),
+    TypeAlias(TypeAlias),
     Extern(ExternItem),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeDef {
+    pub ident: String,
+    pub type_id: TypeId,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypeAlias {
     pub ident: String,
     pub type_id: TypeId,
     pub span: Span,

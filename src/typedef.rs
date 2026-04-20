@@ -3,7 +3,7 @@ use std::io;
 use crate::{
     hir::{
         ConstDef, ConstVal, ConstValKind, ExternItem, FunctionDef, ItemKind, Param, Program,
-        StaticDef, TypeDef, Visibility,
+        StaticDef, TypeAlias, TypeDef, Visibility,
     },
     types::{TypeContext, TypeKind},
 };
@@ -31,6 +31,7 @@ pub fn emit_typedefs(
             ItemKind::Static(def) => emit_static(def, types, out)?,
             ItemKind::Function(def) => emit_function(def, types, out)?,
             ItemKind::TypeDef(def) => emit_typedef(def, types, out)?,
+            ItemKind::TypeAlias(def) => emit_type_alias(def, types, out)?,
             ItemKind::Extern(ext) => emit_extern(ext, types, out)?,
         }
     }
@@ -100,6 +101,19 @@ fn emit_typedef(def: &TypeDef, types: &TypeContext, out: &mut impl io::Write) ->
     }
 
     writeln!(out, " // size: {}, align: {}", ty.size, ty.align)
+}
+
+fn emit_type_alias(
+    def: &TypeAlias,
+    types: &TypeContext,
+    out: &mut impl io::Write,
+) -> io::Result<()> {
+    writeln!(
+        out,
+        "pub type {} = {};",
+        def.ident,
+        types.type_name(def.type_id)
+    )
 }
 
 fn emit_extern(ext: &ExternItem, types: &TypeContext, out: &mut impl io::Write) -> io::Result<()> {

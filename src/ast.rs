@@ -73,6 +73,7 @@ pub enum ItemKind {
     Use(Use),
     Const(ConstDef),
     Static(StaticDef),
+    TypeAlias(TypeAliasDef),
     Function(FunctionDef),
     Struct(StructDef),
     Extern(ExternItem),
@@ -120,6 +121,13 @@ pub struct StaticDef {
 pub struct StructDef {
     pub path: Path,
     pub fields: Vec<Field>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypeAliasDef {
+    pub path: Path,
+    pub type_ann: TypeAnn,
     pub span: Span,
 }
 

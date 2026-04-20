@@ -220,6 +220,7 @@ impl<'a> Parser<'a> {
                 TokenKind::Const => ItemKind::Const(self.parse_const()?),
                 TokenKind::Static => ItemKind::Static(self.parse_static()?),
                 TokenKind::Struct => ItemKind::Struct(self.parse_struct()?),
+                TokenKind::Type => ItemKind::TypeAlias(self.parse_type_alias()?),
                 TokenKind::Fn => ItemKind::Function(self.parse_function()?),
                 TokenKind::Extern => ItemKind::Extern(self.parse_extern_item()?),
                 TokenKind::Eof => break,
@@ -464,6 +465,26 @@ impl<'a> Parser<'a> {
         Ok(FieldInit {
             name,
             value,
+            span: start_span,
+        })
+    }
+
+    fn parse_type_alias(&mut self) -> Result<TypeAliasDef, ParseError> {
+        let start_span = self.current.span;
+
+        self.expect(TokenKind::Type)?;
+
+        let path = self.parse_path()?;
+
+        self.expect(TokenKind::Eq)?;
+
+        let type_ann = self.parse_type_ann()?;
+
+        self.expect(TokenKind::Semi)?;
+
+        Ok(TypeAliasDef {
+            path,
+            type_ann,
             span: start_span,
         })
     }

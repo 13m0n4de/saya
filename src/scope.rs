@@ -101,6 +101,7 @@ pub enum ScopeObject {
     Static(Static),
     Function(Function),
     Struct(Struct),
+    TypeAlias(TypeAlias),
     ExternStatic(ExternStatic),
     ExternFunction(ExternFunction),
 }
@@ -130,6 +131,13 @@ pub enum Function {
 pub enum Struct {
     Unresolved(Rc<ast::StructDef>),
     Resolving(Rc<ast::StructDef>),
+    Resolved(TypeId),
+}
+
+#[derive(Debug, Clone)]
+pub enum TypeAlias {
+    Unresolved(Rc<ast::TypeAliasDef>),
+    Resolving(Rc<ast::TypeAliasDef>),
     Resolved(TypeId),
 }
 

@@ -12,7 +12,7 @@ use crate::{
     parser::Parser,
     scope::{
         Const, ExternFunction, ExternStatic, Function, Scope, ScopeKind, ScopeObject, Scopes,
-        Static, Struct,
+        Static, Struct, TypeAlias,
     },
     span::Span,
     types::{Field, TypeContext, TypeId, TypeKind},
@@ -314,7 +314,10 @@ impl<'a> TypeChecker<'a> {
                 self.resolve_declaration(&name)?;
 
                 match self.scopes.lookup(&name) {
-                    Some(ScopeObject::Struct(Struct::Resolved(type_id))) => {
+                    Some(
+                        ScopeObject::Struct(Struct::Resolved(type_id))
+                        | ScopeObject::TypeAlias(TypeAlias::Resolved(type_id)),
+                    ) => {
                         let t = self.types.get(*type_id);
                         Ok((t.size, t.align))
                     }
@@ -399,7 +402,10 @@ impl<'a> TypeChecker<'a> {
                 self.resolve_declaration(&name)?;
 
                 match self.scopes.lookup(&name) {
-                    Some(ScopeObject::Struct(Struct::Resolved(type_id))) => Ok(*type_id),
+                    Some(
+                        ScopeObject::Struct(Struct::Resolved(type_id))
+                        | ScopeObject::TypeAlias(TypeAlias::Resolved(type_id)),
+                    ) => Ok(*type_id),
                     _ => Err(TypeError::new(
                         format!("undefined type `{path}`"),
                         type_ann.span,
@@ -512,6 +518,11 @@ impl<'a> TypeChecker<'a> {
                     ScopeObject::Struct(Struct::Unresolved(Rc::new(def.clone()))),
                     def.span,
                 ),
+                ast::ItemKind::TypeAlias(def) => (
+                    def.path.to_string(),
+                    ScopeObject::TypeAlias(TypeAlias::Unresolved(Rc::new(def.clone()))),
+                    def.span,
+                ),
                 ast::ItemKind::Extern(ast::ExternItem::Static(decl)) => (
                     decl.name.clone(),
                     ScopeObject::ExternStatic(ExternStatic::Unresolved(Rc::new(decl.clone()))),
@@ -545,6 +556,7 @@ impl<'a> TypeChecker<'a> {
             ScopeObject::Static(_) => self.resolve_static_decl(name, obj),
             ScopeObject::Function(_) => self.resolve_function_decl(name, obj),
             ScopeObject::Struct(_) => self.resolve_struct_decl(name, obj),
+            ScopeObject::TypeAlias(_) => self.resolve_type_alias(name, obj),
             ScopeObject::ExternStatic(_) => self.resolve_extern_static_decl(name, obj),
             ScopeObject::ExternFunction(_) => self.resolve_extern_function_decl(name, obj),
             ScopeObject::Var(_) => Ok(()),
@@ -732,6 +744,35 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    fn resolve_type_alias(&mut self, name: &str, obj: ScopeObject) -> Result<(), TypeError> {
+        let ScopeObject::TypeAlias(decl) = obj else {
+            unreachable!()
+        };
+
+        match decl {
+            TypeAlias::Unresolved(def) => {
+                self.scopes.first_mut().insert(
+                    name.to_string(),
+                    ScopeObject::TypeAlias(TypeAlias::Resolving(def.clone())),
+                );
+
+                let type_id = self.lower_type(&def.type_ann)?;
+
+                self.scopes.first_mut().insert(
+                    name.to_string(),
+                    ScopeObject::TypeAlias(TypeAlias::Resolved(type_id)),
+                );
+
+                Ok(())
+            }
+            TypeAlias::Resolving(def) => Err(TypeError::new(
+                format!("circular dependency for type alias `{name}`"),
+                def.span,
+            )),
+            TypeAlias::Resolved(_) => Ok(()),
+        }
+    }
+
     fn resolve_extern_static_decl(
         &mut self,
         name: &str,
@@ -885,6 +926,20 @@ impl<'a> TypeChecker<'a> {
                     };
 
                     hir::ItemKind::TypeDef(hir::TypeDef {
+                        ident: self.make_ident(&def.path),
+                        type_id,
+                        span: def.span,
+                    })
+                }
+                ast::ItemKind::TypeAlias(def) => {
+                    let name = def.path.to_string();
+                    self.resolve_declaration(&name)?;
+                    let type_id = match self.scopes.lookup(&name) {
+                        Some(ScopeObject::TypeAlias(TypeAlias::Resolved(type_id))) => *type_id,
+                        _ => unreachable!(),
+                    };
+
+                    hir::ItemKind::TypeAlias(hir::TypeAlias {
                         ident: self.make_ident(&def.path),
                         type_id,
                         span: def.span,
@@ -1211,7 +1266,10 @@ impl<'a> TypeChecker<'a> {
 
         let path = &struct_expr.path;
         let struct_type_id = match self.scopes.lookup(&path.to_string()) {
-            Some(ScopeObject::Struct(Struct::Resolved(type_id))) => *type_id,
+            Some(
+                ScopeObject::Struct(Struct::Resolved(type_id))
+                | ScopeObject::TypeAlias(TypeAlias::Resolved(type_id)),
+            ) => *type_id,
             _ => {
                 return Err(TypeError::new(
                     format!("undefined struct `{path}`"),
