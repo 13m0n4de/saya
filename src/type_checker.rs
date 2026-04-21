@@ -267,9 +267,11 @@ impl<'a> TypeChecker<'a> {
 
             ast::TypeAnnKind::U32 | ast::TypeAnnKind::I32 | ast::TypeAnnKind::F32 => Ok((4, 4)),
 
-            ast::TypeAnnKind::I64 | ast::TypeAnnKind::F64 | ast::TypeAnnKind::Pointer(_) => {
-                Ok((8, 8))
-            }
+            ast::TypeAnnKind::I64
+            | ast::TypeAnnKind::F64
+            | ast::TypeAnnKind::Pointer(_)
+            | ast::TypeAnnKind::Fn(_, _, _) => Ok((8, 8)),
+
             ast::TypeAnnKind::Unit | ast::TypeAnnKind::Never => Ok((0, 1)),
 
             ast::TypeAnnKind::Slice(_) => Ok((16, 8)),
@@ -411,6 +413,17 @@ impl<'a> TypeChecker<'a> {
                         type_ann.span,
                     )),
                 }
+            }
+
+            ast::TypeAnnKind::Fn(params_type_ann, return_type_ann, is_variadic) => {
+                let params_type_id = params_type_ann
+                    .iter()
+                    .map(|ann| self.lower_type(ann))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let return_type_id = self.lower_type(return_type_ann)?;
+                Ok(self
+                    .types
+                    .mk_fn(params_type_id, return_type_id, *is_variadic))
             }
         }
     }
@@ -1173,7 +1186,7 @@ impl<'a> TypeChecker<'a> {
             ast::Literal::Integer(n, suffix) => {
                 let type_id = match suffix.as_deref() {
                     Some("u8") => {
-                        if *n < 0 || *n > u8::MAX as i64 {
+                        if *n < 0 || *n > i64::from(u8::MAX) {
                             return Err(TypeError::new(
                                 format!(
                                     "Integer literal `{n}` is out of range for type u8 (0..=255)"
@@ -1184,7 +1197,7 @@ impl<'a> TypeChecker<'a> {
                         TypeId::U8
                     }
                     Some("u16") => {
-                        if *n < 0 || *n > u16::MAX as i64 {
+                        if *n < 0 || *n > i64::from(u16::MAX) {
                             return Err(TypeError::new(
                                 format!(
                                     "Integer literal `{n}` is out of range for type u16 (0..=65535)"
@@ -1195,7 +1208,7 @@ impl<'a> TypeChecker<'a> {
                         TypeId::U16
                     }
                     Some("u32") => {
-                        if *n < 0 || *n > u32::MAX as i64 {
+                        if *n < 0 || *n > i64::from(u32::MAX) {
                             return Err(TypeError::new(
                                 format!(
                                     "Integer literal `{n}` is out of range for type u32 (0..=4294967295)"
@@ -1207,7 +1220,7 @@ impl<'a> TypeChecker<'a> {
                     }
 
                     Some("i32") => {
-                        if *n < i32::MIN as i64 || *n > i32::MAX as i64 {
+                        if *n < i64::from(i32::MIN) || *n > i64::from(i32::MAX) {
                             return Err(TypeError::new(
                                 format!(
                                     "Integer literal `{n}` is out of range for type i32 (-2147483648..=2147483647)"
@@ -1378,6 +1391,26 @@ impl<'a> TypeChecker<'a> {
                 type_id: val.type_id,
                 span: expr.span,
             }),
+            Some(ScopeObject::Function(Function::Resolved(params, ret))) => {
+                let fn_type_id = self.types.mk_fn(params.clone(), *ret, false);
+                Ok(hir::Expr {
+                    kind: hir::ExprKind::Place(hir::Place::Global(self.make_ident(path))),
+                    type_id: fn_type_id,
+                    span: expr.span,
+                })
+            }
+            Some(ScopeObject::ExternFunction(ExternFunction::Resolved(
+                params,
+                ret,
+                is_variadic,
+            ))) => {
+                let fn_type_id = self.types.mk_fn(params.clone(), *ret, *is_variadic);
+                Ok(hir::Expr {
+                    kind: hir::ExprKind::Place(hir::Place::Global(self.make_ident(path))),
+                    type_id: fn_type_id,
+                    span: expr.span,
+                })
+            }
             _ => Err(TypeError::new(
                 format!("undefined variable `{path}`"),
                 expr.span,
@@ -1583,31 +1616,15 @@ impl<'a> TypeChecker<'a> {
             unreachable!()
         };
 
-        let ast::ExprKind::Path(callee) = &call.callee.kind else {
+        let typed_callee = self.check_expression(&call.callee)?;
+
+        let TypeKind::Fn(params, return_ty, is_variadic) =
+            self.types.get(typed_callee.type_id).kind.clone()
+        else {
             return Err(TypeError::new(
-                "function call must use identifier".to_string(),
+                "expression is not callable".to_string(),
                 call.callee.span,
             ));
-        };
-
-        let name = callee.to_string();
-        self.resolve_declaration(&name)?;
-
-        let (params, return_ty, is_variadic) = match self.scopes.lookup(&name) {
-            Some(ScopeObject::Function(Function::Resolved(params, return_ty))) => {
-                (params.clone(), *return_ty, false)
-            }
-            Some(ScopeObject::ExternFunction(ExternFunction::Resolved(
-                params,
-                return_ty,
-                is_variadic,
-            ))) => (params.clone(), *return_ty, *is_variadic),
-            _ => {
-                return Err(TypeError::new(
-                    format!("undefined function `{callee}`"),
-                    call.span,
-                ));
-            }
         };
 
         let min_args = params.len();
@@ -1615,7 +1632,7 @@ impl<'a> TypeChecker<'a> {
             if call.args.len() < min_args {
                 return Err(TypeError::new(
                     format!(
-                        "function `{callee}` expects at least {min_args} arguments, got {}",
+                        "function expects at least {min_args} arguments, got {}",
                         call.args.len()
                     ),
                     call.span,
@@ -1624,7 +1641,7 @@ impl<'a> TypeChecker<'a> {
         } else if call.args.len() != min_args {
             return Err(TypeError::new(
                 format!(
-                    "function `{callee}` expects {min_args} arguments, got {}",
+                    "function expects {min_args} arguments, got {}",
                     call.args.len()
                 ),
                 call.span,
@@ -1632,7 +1649,7 @@ impl<'a> TypeChecker<'a> {
         }
 
         let mut typed_args = Vec::new();
-        for (arg, param_type_id) in call.args.iter().zip(params) {
+        for (arg, &param_type_id) in call.args.iter().zip(&params) {
             let typed_arg = self.check_expression(arg)?;
             if !self.types.is_assignable(typed_arg.type_id, param_type_id) {
                 return Err(TypeError::new(
@@ -1646,18 +1663,9 @@ impl<'a> TypeChecker<'a> {
             }
             typed_args.push(typed_arg);
         }
-
         for arg in call.args.iter().skip(min_args) {
             typed_args.push(self.check_expression(arg)?);
         }
-
-        let ident = self.make_ident(callee);
-
-        let typed_callee = hir::Expr {
-            kind: hir::ExprKind::Place(hir::Place::Global(ident)),
-            type_id: return_ty,
-            span: call.callee.span,
-        };
 
         let variadic_start = is_variadic.then_some(min_args as u64);
 

@@ -167,6 +167,41 @@ impl<'a> Parser<'a> {
                 let inner_type = self.parse_type_ann()?;
                 TypeAnnKind::Pointer(Box::new(inner_type))
             }
+            // Fn: fn(T1, T2) -> R  or  fn(T1, ...) -> R
+            TokenKind::Fn => {
+                self.advance()?;
+
+                self.expect(TokenKind::OpenParen)?;
+
+                let mut params_type = Vec::new();
+                let mut is_variadic = false;
+
+                while !self.eat(TokenKind::CloseParen)? {
+                    if self.eat(TokenKind::DotDotDot)? {
+                        is_variadic = true;
+                        self.expect(TokenKind::CloseParen)?;
+                        break;
+                    }
+
+                    params_type.push(self.parse_type_ann()?);
+
+                    if !self.eat(TokenKind::Comma)? {
+                        self.expect(TokenKind::CloseParen)?;
+                        break;
+                    }
+                }
+
+                let return_type_ann = if self.eat(TokenKind::Arrow)? {
+                    self.parse_type_ann()?
+                } else {
+                    TypeAnn {
+                        kind: TypeAnnKind::Unit,
+                        span: self.current.span,
+                    }
+                };
+
+                TypeAnnKind::Fn(params_type, Box::new(return_type_ann), is_variadic)
+            }
             // Unit: ()
             TokenKind::OpenParen => {
                 self.advance()?;

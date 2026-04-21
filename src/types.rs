@@ -114,6 +114,14 @@ impl Type {
         }
     }
 
+    pub fn func(params_type: Vec<TypeId>, return_type: TypeId, is_variadic: bool) -> Self {
+        Type {
+            kind: TypeKind::Fn(params_type, return_type, is_variadic),
+            size: 8,
+            align: 8,
+        }
+    }
+
     pub fn is_aggregate(&self) -> bool {
         matches!(
             self.kind,
@@ -144,6 +152,7 @@ pub enum TypeKind {
     Array(TypeId, usize),
     Slice(TypeId),
     Struct(String, Vec<Field>),
+    Fn(Vec<TypeId>, TypeId, bool),
 }
 
 impl TypeKind {
@@ -252,6 +261,10 @@ impl TypeContext {
         };
     }
 
+    pub fn mk_fn(&mut self, params_type: Vec<TypeId>, return_type: TypeId, is_variadic: bool) -> TypeId {
+        self.intern(Type::func(params_type, return_type, is_variadic))
+    }
+
     pub fn type_name(&self, id: TypeId) -> String {
         match &self.get(id).kind {
             TypeKind::U8 => "u8".into(),
@@ -269,6 +282,19 @@ impl TypeContext {
             TypeKind::Array(elem, len) => format!("[{}; {len}]", self.type_name(*elem)),
             TypeKind::Slice(elem) => format!("[{}]", self.type_name(*elem)),
             TypeKind::Struct(name, _) => name.into(),
+            TypeKind::Fn(params_type, return_type, is_variadic) => {
+                let mut parts: Vec<String> =
+                    params_type.iter().map(|id| self.type_name(*id)).collect();
+                if *is_variadic {
+                    parts.push("...".to_string());
+                }
+                let ret = if *return_type == TypeId::Unit {
+                    String::new()
+                } else {
+                    format!(" -> {}", self.type_name(*return_type))
+                };
+                format!("fn({}){}", parts.join(", "), ret)
+            }
         }
     }
 

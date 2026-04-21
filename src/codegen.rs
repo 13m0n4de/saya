@@ -148,7 +148,7 @@ impl<'a> CodeGen<'a> {
 
             TypeKind::Bool => qbe::Type::Word,
 
-            TypeKind::Pointer(_) => qbe::Type::Long,
+            TypeKind::Pointer(_) | TypeKind::Fn(..) => qbe::Type::Long,
 
             TypeKind::Struct(..) | TypeKind::Array(..) | TypeKind::Slice(_) => {
                 let def = self.generate_type_def(type_id);
@@ -174,7 +174,7 @@ impl<'a> CodeGen<'a> {
 
             TypeKind::Bool => qbe::Type::UnsignedByte,
 
-            TypeKind::Pointer(_) => qbe::Type::Long,
+            TypeKind::Pointer(_) | TypeKind::Fn(..) => qbe::Type::Long,
 
             TypeKind::Struct(..) | TypeKind::Array(..) | TypeKind::Slice(_) => qbe::Type::Long,
 
@@ -197,7 +197,7 @@ impl<'a> CodeGen<'a> {
 
             TypeKind::Bool => qbe::Type::Byte,
 
-            TypeKind::Pointer(_) => qbe::Type::Long,
+            TypeKind::Pointer(_) | TypeKind::Fn(..) => qbe::Type::Long,
 
             TypeKind::Struct(..) | TypeKind::Array(..) | TypeKind::Slice(_) => qbe::Type::Long,
 
@@ -595,7 +595,7 @@ impl<'a> CodeGen<'a> {
             ConstValKind::Float(n) => match val.type_id {
                 TypeId::F32 => vec![(
                     qbe::Type::Single,
-                    qbe::DataItem::Const((*n as f32).to_bits() as u64),
+                    qbe::DataItem::Const(u64::from((*n as f32).to_bits())),
                 )],
                 TypeId::F64 => vec![(qbe::Type::Double, qbe::DataItem::Const(n.to_bits()))],
                 _ => unreachable!(),
@@ -830,7 +830,7 @@ impl<'a> CodeGen<'a> {
         match lit {
             Literal::Integer(n) => GenValue::Const(n.cast_unsigned(), expr.type_id),
             Literal::Float(n) => match expr.type_id {
-                TypeId::F32 => GenValue::Const((*n as f32).to_bits() as u64, expr.type_id),
+                TypeId::F32 => GenValue::Const(u64::from((*n as f32).to_bits()), expr.type_id),
                 TypeId::F64 => GenValue::Const(n.to_bits(), expr.type_id),
                 _ => unreachable!(),
             },
@@ -896,8 +896,11 @@ impl<'a> CodeGen<'a> {
             }
             Place::Global(ident) => {
                 let symbol = Self::ident_to_symbol(ident);
-                let addr = qbe::Value::Global(symbol);
-                self.load_value(qfunc, addr, expr.type_id)
+                if matches!(self.types.get(expr.type_id).kind, TypeKind::Fn(..)) {
+                    GenValue::Global(symbol, expr.type_id)
+                } else {
+                    self.load_value(qfunc, qbe::Value::Global(symbol), expr.type_id)
+                }
             }
         }
     }
@@ -1283,7 +1286,7 @@ impl<'a> CodeGen<'a> {
         match &val.kind {
             ConstValKind::Integer(n) => GenValue::Const(n.cast_unsigned(), val.type_id),
             ConstValKind::Float(n) => match val.type_id {
-                TypeId::F32 => GenValue::Const((*n as f32).to_bits() as u64, val.type_id),
+                TypeId::F32 => GenValue::Const(u64::from((*n as f32).to_bits()), val.type_id),
                 TypeId::F64 => GenValue::Const(n.to_bits(), val.type_id),
                 _ => unreachable!(),
             },
@@ -1359,15 +1362,10 @@ impl<'a> CodeGen<'a> {
         };
 
         let symbol = match &call.callee.kind {
-            ExprKind::Place(Place::Local(ident) | Place::Global(ident)) => {
-                Self::ident_to_symbol(ident)
+            ExprKind::Place(Place::Global(ident)) => {
+                qbe::Value::Global(Self::ident_to_symbol(ident))
             }
-            _ => {
-                return Err(CodeGenError::new(
-                    "callee must be an identifier".to_string(),
-                    call.callee.span,
-                ));
-            }
+            _ => self.generate_expression(qfunc, &call.callee)?.into(),
         };
 
         let mut qbe_args = Vec::new();

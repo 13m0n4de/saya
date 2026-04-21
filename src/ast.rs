@@ -35,6 +35,7 @@ pub enum TypeAnnKind {
     Pointer(Box<TypeAnn>),
     Array(Box<TypeAnn>, Box<Expr>),
     Slice(Box<TypeAnn>),
+    Fn(Vec<TypeAnn>, Box<TypeAnn>, bool),
 
     Path(Path),
 

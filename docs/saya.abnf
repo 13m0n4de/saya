@@ -22,11 +22,13 @@ function-def = "fn" path "(" [param-list] ")" ["->" type-name] block
 param-list = param *("," param) [","]
 param = identifier ":" type-name
 
-type-name = slice-type / array-type / pointer-type / base-type / custom-type
+type-name = slice-type / array-type / pointer-type / fn-type / base-type / custom-type
 base-type = "u8" / "u16" / "u32" / "i32" / "i64" / "f32" / "f64"  / "bool" / "()" / "!"
 pointer-type = "*" type-name
 array-type = "[" type-name ";" integer "]"
 slice-type = "[" type-name "]"
+fn-type = "fn" "(" [fn-type-params] ")" ["->" type-name]
+fn-type-params = type-name *("," type-name) ["," "..."]
 custom-type = path
 
 block = "{" *statement [expression] "}"
