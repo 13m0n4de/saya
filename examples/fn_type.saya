@@ -1,0 +1,59 @@
+extern fn printf(fmt: *u8, ...) -> i64;
+
+fn add(a: i64, b: i64) -> i64 { a + b }
+fn mul(a: i64, b: i64) -> i64 { a * b }
+fn sub(a: i64, b: i64) -> i64 { a - b }
+
+// apply_twice: f(f(x, x), x)
+fn apply_twice(f: fn(i64, i64) -> i64, x: i64) -> i64 {
+    f(f(x, x), x)
+}
+
+fn pick_op(prefer_mul: bool) -> fn(i64, i64) -> i64 {
+    if prefer_mul { mul } else { add }
+}
+
+struct Combiner {
+    f: fn(i64, i64) -> i64,
+    g: fn(i64, i64) -> i64,
+}
+
+// g(f(a, b), f(a, b))
+fn combine(c: Combiner, a: i64, b: i64) -> i64 {
+    let mid: i64 = c.f(a, b);
+    c.g(mid, mid)
+}
+
+pub fn main() -> i64 {
+    // mul(6, 7) = 42
+    let ops: [fn(i64, i64) -> i64; 3] = [add, mul, sub];
+    let idx: i64 = 1;
+    let r1: i64 = ops[idx](6, 7);
+    printf(c"r1 = %d\n", r1);
+
+    // mul(mul(3,3), 3) = mul(9,3) = 27
+    let r2: i64 = apply_twice(mul, 3);
+    printf(c"r2 = %d\n", r2);
+
+    // add(10, 5) = 15
+    let op: fn(i64, i64) -> i64 = pick_op(false);
+    let r3: i64 = op(10, 5);
+    printf(c"r3 = %d\n", r3);
+
+    // mul(mul(4,4), 4) = mul(16, 4) = 64
+    let r4: i64 = apply_twice(pick_op(true), 4);
+    printf(c"r4 = %d\n", r4);
+
+    // add(3,4) = 7, mul(7,7) = 49
+    let c: Combiner = Combiner { f: add, g: mul };
+    let r5: i64 = combine(c, 3, 4);
+    printf(c"r5 = %d\n", r5);
+
+    // r3 = 15, r2 = 27 => 15 > 27 is false => chosen = add
+    // add(42, 27) = 69
+    let chosen: fn(i64, i64) -> i64 = if r3 > r2 { sub } else { add };
+    let r6: i64 = chosen(r1, r2);
+    printf(c"r6 = %d\n", r6);
+
+    0
+}
