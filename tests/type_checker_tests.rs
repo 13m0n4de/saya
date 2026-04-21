@@ -805,3 +805,82 @@ fn test_type_alias() {
 
     assert!(typecheck!("type A = Undefined;").is_err());
 }
+
+#[test]
+fn test_fn_type() {
+    // fn type as variable
+    let result = typecheck!(
+        r#"
+        fn add(a: i64, b: i64) -> i64 { a + b }
+        fn main() -> i64 {
+            let f: fn(i64, i64) -> i64 = add;
+            f(1, 2)
+        }
+        "#
+    );
+    assert!(result.is_ok());
+
+    // fn type as parameter
+    let result = typecheck!(
+        r#"
+        fn add(a: i64, b: i64) -> i64 { a + b }
+        fn apply(f: fn(i64, i64) -> i64, a: i64, b: i64) -> i64 { f(a, b) }
+        fn main() -> i64 { apply(add, 3, 7) }
+        "#
+    );
+    assert!(result.is_ok());
+
+    // no args no return
+    let result = typecheck!(
+        r#"
+        fn noop() {}
+        fn call(f: fn()) { f() }
+        fn main() { call(noop) }
+        "#
+    );
+    assert!(result.is_ok());
+
+    // signature mismatch
+    let result = typecheck!(
+        r#"
+        fn inc(a: i64) -> i64 { a + 1 }
+        fn apply(f: fn(i64, i64) -> i64, a: i64, b: i64) -> i64 { f(a, b) }
+        fn main() -> i64 { apply(inc, 1, 2) }
+        "#
+    );
+    assert!(result.is_err());
+
+    // call non func
+    let result = typecheck!(
+        r#"
+        fn main() -> i64 {
+            let x: i64 = 42;
+            x(1)
+        }
+        "#
+    );
+    assert!(result.is_err());
+
+    // fn type in type alias
+    let result = typecheck!(
+        r#"
+        type Callback = fn(i64) -> i64;
+        fn double(x: i64) -> i64 { x * 2 }
+        fn apply(f: Callback, x: i64) -> i64 { f(x) }
+        fn main() -> i64 { apply(double, 21) }
+        "#
+    );
+    assert!(result.is_ok());
+
+    // variadic fn type via type alias
+    let result = typecheck!(
+        r#"
+        extern fn printf(fmt: *u8, ...) -> i64;
+        fn main() -> i64 {
+            let f: fn(*u8, ...) -> i64 = printf;
+            f(c"hello %d", 42)
+        }
+        "#
+    );
+    assert!(result.is_ok());
+}

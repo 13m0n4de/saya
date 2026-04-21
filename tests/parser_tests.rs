@@ -622,6 +622,75 @@ fn test_variadic_function() {
 }
 
 #[test]
+fn test_fn_type_annotation() {
+    // fn() -> ()
+    let program = parse!("fn test() { let f: fn() = foo; }").unwrap();
+    match &program.items[0].kind {
+        ItemKind::Function(func) => {
+            let body = func.body.as_ref().unwrap();
+            match &body.stmts[0].kind {
+                StmtKind::Let(let_stmt) => {
+                    assert!(matches!(let_stmt.type_ann.kind, TypeAnnKind::Fn(_, _, false)));
+                }
+                _ => panic!("Expected let statement"),
+            }
+        }
+        _ => panic!("Expected function"),
+    }
+
+    // fn(i64, i64) -> i64
+    let program = parse!("fn test() { let f: fn(i64, i64) -> i64 = add; }").unwrap();
+    match &program.items[0].kind {
+        ItemKind::Function(func) => {
+            let body = func.body.as_ref().unwrap();
+            match &body.stmts[0].kind {
+                StmtKind::Let(let_stmt) => match &let_stmt.type_ann.kind {
+                    TypeAnnKind::Fn(params, ret, false) => {
+                        assert_eq!(params.len(), 2);
+                        assert_eq!(params[0].kind, TypeAnnKind::I64);
+                        assert_eq!(params[1].kind, TypeAnnKind::I64);
+                        assert_eq!(ret.kind, TypeAnnKind::I64);
+                    }
+                    _ => panic!("Expected fn type annotation"),
+                },
+                _ => panic!("Expected let statement"),
+            }
+        }
+        _ => panic!("Expected function"),
+    }
+
+    // variadic fn type: fn(*u8, ...) -> i64
+    let program = parse!("fn test() { let f: fn(*u8, ...) -> i64 = printf; }").unwrap();
+    match &program.items[0].kind {
+        ItemKind::Function(func) => {
+            let body = func.body.as_ref().unwrap();
+            match &body.stmts[0].kind {
+                StmtKind::Let(let_stmt) => match &let_stmt.type_ann.kind {
+                    TypeAnnKind::Fn(params, ret, true) => {
+                        assert_eq!(params.len(), 1);
+                        assert!(matches!(params[0].kind, TypeAnnKind::Pointer(_)));
+                        assert_eq!(ret.kind, TypeAnnKind::I64);
+                    }
+                    _ => panic!("Expected variadic fn type annotation"),
+                },
+                _ => panic!("Expected let statement"),
+            }
+        }
+        _ => panic!("Expected function"),
+    }
+
+    // fn type as param type
+    let program = parse!("fn apply(f: fn(i64) -> i64, x: i64) -> i64 { f(x) }").unwrap();
+    match &program.items[0].kind {
+        ItemKind::Function(func) => {
+            assert_eq!(func.params.len(), 2);
+            assert!(matches!(func.params[0].type_ann.kind, TypeAnnKind::Fn(_, _, false)));
+        }
+        _ => panic!("Expected function"),
+    }
+}
+
+#[test]
 fn test_function_declaration() {
     let program = parse!("pub fn add(a: i64, b: i64) -> i64;").unwrap();
 
