@@ -27,7 +27,7 @@ dependencies = [
 [[package]]
 name = "qbe"
 version = "4.0.0"
-source = "git+https://github.com/garritfra/qbe-rs#9a3100e6bc20dc717e89f044ce0c99f533f64ea7"
+source = "git+https://github.com/13m0n4de/qbe-rs?branch=feature%2Findirect-call#c6b706a481e7b5c13b226d791c33486f7f3bbc5e"
 
 [[package]]
 name = "saya"
