@@ -5,7 +5,10 @@ pub enum TypeId {
     U8,
     U16,
     U32,
+    U64,
 
+    I8,
+    I16,
     I32,
     I64,
 
@@ -44,7 +47,22 @@ impl Type {
         size: 4,
         align: 4,
     };
+    pub const U64: Self = Type {
+        kind: TypeKind::U64,
+        size: 8,
+        align: 8,
+    };
 
+    pub const I8: Self = Type {
+        kind: TypeKind::I8,
+        size: 1,
+        align: 1,
+    };
+    pub const I16: Self = Type {
+        kind: TypeKind::I16,
+        size: 2,
+        align: 2,
+    };
     pub const I32: Self = Type {
         kind: TypeKind::I32,
         size: 4,
@@ -135,7 +153,10 @@ pub enum TypeKind {
     U8,
     U16,
     U32,
+    U64,
 
+    I8,
+    I16,
     I32,
     I64,
 
@@ -207,6 +228,9 @@ impl TypeContext {
             TypeId::U8 => &Type::U8,
             TypeId::U16 => &Type::U16,
             TypeId::U32 => &Type::U32,
+            TypeId::U64 => &Type::U64,
+            TypeId::I8 => &Type::I8,
+            TypeId::I16 => &Type::I16,
             TypeId::I32 => &Type::I32,
             TypeId::I64 => &Type::I64,
             TypeId::F32 => &Type::F32,
@@ -261,7 +285,12 @@ impl TypeContext {
         };
     }
 
-    pub fn mk_fn(&mut self, params_type: Vec<TypeId>, return_type: TypeId, is_variadic: bool) -> TypeId {
+    pub fn mk_fn(
+        &mut self,
+        params_type: Vec<TypeId>,
+        return_type: TypeId,
+        is_variadic: bool,
+    ) -> TypeId {
         self.intern(Type::func(params_type, return_type, is_variadic))
     }
 
@@ -270,6 +299,9 @@ impl TypeContext {
             TypeKind::U8 => "u8".into(),
             TypeKind::U16 => "u16".into(),
             TypeKind::U32 => "u32".into(),
+            TypeKind::U64 => "u64".into(),
+            TypeKind::I8 => "i8".into(),
+            TypeKind::I16 => "i16".into(),
             TypeKind::I32 => "i32".into(),
             TypeKind::I64 => "i64".into(),
             TypeKind::F32 => "f32".into(),

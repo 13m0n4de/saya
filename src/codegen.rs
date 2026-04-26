@@ -139,9 +139,14 @@ impl<'a> CodeGen<'a> {
     fn qbe_type(&mut self, type_id: TypeId) -> qbe::Type {
         let ty = self.types.get(type_id);
         match &ty.kind {
-            TypeKind::U8 | TypeKind::U16 | TypeKind::U32 | TypeKind::I32 => qbe::Type::Word,
+            TypeKind::U8
+            | TypeKind::U16
+            | TypeKind::U32
+            | TypeKind::I8
+            | TypeKind::I16
+            | TypeKind::I32 => qbe::Type::Word,
 
-            TypeKind::I64 => qbe::Type::Long,
+            TypeKind::U64 | TypeKind::I64 => qbe::Type::Long,
 
             TypeKind::F32 => qbe::Type::Single,
             TypeKind::F64 => qbe::Type::Double,
@@ -165,7 +170,10 @@ impl<'a> CodeGen<'a> {
             TypeKind::U8 => qbe::Type::UnsignedByte,
             TypeKind::U16 => qbe::Type::UnsignedHalfword,
             TypeKind::U32 => qbe::Type::Word,
+            TypeKind::U64 => qbe::Type::Long,
 
+            TypeKind::I8 => qbe::Type::Byte,
+            TypeKind::I16 => qbe::Type::Halfword,
             TypeKind::I32 => qbe::Type::Word,
             TypeKind::I64 => qbe::Type::Long,
 
@@ -188,7 +196,10 @@ impl<'a> CodeGen<'a> {
             TypeKind::U8 => qbe::Type::Byte,
             TypeKind::U16 => qbe::Type::Halfword,
             TypeKind::U32 => qbe::Type::Word,
+            TypeKind::U64 => qbe::Type::Long,
 
+            TypeKind::I8 => qbe::Type::Byte,
+            TypeKind::I16 => qbe::Type::Halfword,
             TypeKind::I32 => qbe::Type::Word,
             TypeKind::I64 => qbe::Type::Long,
 

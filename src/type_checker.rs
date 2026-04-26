@@ -261,13 +261,14 @@ impl<'a> TypeChecker<'a> {
 
     fn type_dimensions(&mut self, type_ann: &ast::TypeAnn) -> Result<(usize, usize), TypeError> {
         match &type_ann.kind {
-            ast::TypeAnnKind::U8 | ast::TypeAnnKind::Bool => Ok((1, 1)),
+            ast::TypeAnnKind::U8 | ast::TypeAnnKind::I8 | ast::TypeAnnKind::Bool => Ok((1, 1)),
 
-            ast::TypeAnnKind::U16 => Ok((2, 2)),
+            ast::TypeAnnKind::U16 | ast::TypeAnnKind::I16 => Ok((2, 2)),
 
             ast::TypeAnnKind::U32 | ast::TypeAnnKind::I32 | ast::TypeAnnKind::F32 => Ok((4, 4)),
 
-            ast::TypeAnnKind::I64
+            ast::TypeAnnKind::U64
+            | ast::TypeAnnKind::I64
             | ast::TypeAnnKind::F64
             | ast::TypeAnnKind::Pointer(_)
             | ast::TypeAnnKind::Fn(_, _, _) => Ok((8, 8)),
@@ -341,7 +342,10 @@ impl<'a> TypeChecker<'a> {
             ast::TypeAnnKind::U8 => Ok(TypeId::U8),
             ast::TypeAnnKind::U16 => Ok(TypeId::U16),
             ast::TypeAnnKind::U32 => Ok(TypeId::U32),
+            ast::TypeAnnKind::U64 => Ok(TypeId::U64),
 
+            ast::TypeAnnKind::I8 => Ok(TypeId::I8),
+            ast::TypeAnnKind::I16 => Ok(TypeId::I16),
             ast::TypeAnnKind::I32 => Ok(TypeId::I32),
             ast::TypeAnnKind::I64 => Ok(TypeId::I64),
 

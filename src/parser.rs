@@ -110,7 +110,10 @@ impl<'a> Parser<'a> {
                     "u8" => TypeAnnKind::U8,
                     "u16" => TypeAnnKind::U16,
                     "u32" => TypeAnnKind::U32,
+                    "u64" => TypeAnnKind::U64,
 
+                    "i8" => TypeAnnKind::I8,
+                    "i16" => TypeAnnKind::I16,
                     "i32" => TypeAnnKind::I32,
                     "i64" => TypeAnnKind::I64,
 
