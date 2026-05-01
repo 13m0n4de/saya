@@ -247,6 +247,8 @@ impl<'a> Parser<'a> {
         loop {
             let span = self.current.span;
 
+            let attrs = self.parse_attrs()?;
+
             let vis = if self.eat(TokenKind::Pub)? {
                 Visibility::Public
             } else {
@@ -270,10 +272,51 @@ impl<'a> Parser<'a> {
                 }
             };
 
-            items.push(Item { vis, kind, span });
+            items.push(Item {
+                attrs,
+                vis,
+                kind,
+                span,
+            });
         }
 
         Ok(items)
+    }
+
+    fn parse_attrs(&mut self) -> Result<Vec<Attr>, ParseError> {
+        let mut attrs = Vec::new();
+
+        while self.current.kind == TokenKind::At {
+            let span = self.current.span;
+            self.advance()?;
+
+            let name = self.expect_identifier()?;
+
+            let kind = match name.as_str() {
+                "symbol" => {
+                    self.expect(TokenKind::OpenParen)?;
+                    let sym = match self.current.kind.clone() {
+                        TokenKind::String(s) => {
+                            self.advance()?;
+                            s
+                        }
+                        _ => {
+                            return Err(ParseError::new(
+                                "expected string in @symbol".to_string(),
+                                self.current.span,
+                            ));
+                        }
+                    };
+                    self.expect(TokenKind::CloseParen)?;
+                    AttrKind::Symbol(sym)
+                }
+                _ => return Err(ParseError::new(format!("unknown attribute: {name}"), span)),
+            };
+
+            attrs.push(Attr { kind, span });
+        }
+
+        Ok(attrs)
     }
 
     fn parse_use(&mut self) -> Result<Use, ParseError> {
@@ -323,7 +366,7 @@ impl<'a> Parser<'a> {
 
         self.expect(TokenKind::Static)?;
 
-        let name = self.expect_identifier()?;
+        let path = self.parse_path()?;
 
         self.expect(TokenKind::Colon)?;
 
@@ -332,7 +375,7 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::Semi)?;
 
         Ok(ExternStaticDecl {
-            name,
+            path,
             type_ann,
             span: start_span,
         })
@@ -343,7 +386,7 @@ impl<'a> Parser<'a> {
 
         self.expect(TokenKind::Fn)?;
 
-        let name = self.expect_identifier()?;
+        let path = self.parse_path()?;
 
         self.expect(TokenKind::OpenParen)?;
 
@@ -367,7 +410,7 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::Semi)?;
 
         Ok(ExternFunctionDecl {
-            name,
+            path,
             params,
             is_variadic,
             return_type_ann,
