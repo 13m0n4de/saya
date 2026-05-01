@@ -111,7 +111,7 @@ fn test_string_literal() {
 
 #[test]
 fn test_cstring_literal() {
-    let code = r#"fn main() -> *u8 { c"hello C FFI" }"#;
+    let code = r#"fn main() -> *i8 { c"hello C FFI" }"#;
     let lexer = Lexer::new(&code);
     let mut parser = Parser::new(lexer).unwrap();
     let program = parser.parse().unwrap();
@@ -124,7 +124,7 @@ fn test_cstring_literal() {
         ItemKind::Function(func) => {
             let body = func.body.as_ref().expect("Expected function body");
             let ty = type_context.get(body.type_id);
-            assert!(matches!(ty.kind, TypeKind::Pointer(TypeId::U8)));
+            assert!(matches!(ty.kind, TypeKind::Pointer(TypeId::I8)));
         }
         _ => panic!("Expected function"),
     }
@@ -373,12 +373,12 @@ fn test_external_function() {
 
 #[test]
 fn test_variadic_function() {
-    let result = typecheck!("extern fn printf(fmt: *u8, ...) -> i64;");
+    let result = typecheck!("extern fn printf(fmt: *i8, ...) -> i64;");
     assert!(result.is_ok());
 
     let result = typecheck!(
         r#"
-        extern fn printf(fmt: *u8, ...) -> i64;
+        extern fn printf(fmt: *i8, ...) -> i64;
         fn main() -> i64 { printf(c"hello") }
         "#
     );
@@ -386,7 +386,7 @@ fn test_variadic_function() {
 
     let program = typecheck!(
         r#"
-        extern fn printf(fmt: *u8, ...) -> i64;
+        extern fn printf(fmt: *i8, ...) -> i64;
         fn main() -> i64 { printf(c"%d", 42) }
         "#
     )
@@ -778,7 +778,7 @@ fn test_type_alias() {
     assert!(typecheck!("type A = i64; type B = A; fn test() -> B { 42 }").is_ok());
 
     assert!(typecheck!("type Handle = *opaque; extern fn get() -> Handle;").is_ok());
-    assert!(typecheck!("type Bytes = *u8; fn test() -> Bytes { c\"hello\" }").is_ok());
+    assert!(typecheck!("type Bytes = *i8; fn test() -> Bytes { c\"hello\" }").is_ok());
 
     assert!(typecheck!("type MyInt = i64; struct Point { x: MyInt, y: MyInt }").is_ok());
 
@@ -875,9 +875,9 @@ fn test_fn_type() {
     // variadic fn type via type alias
     let result = typecheck!(
         r#"
-        extern fn printf(fmt: *u8, ...) -> i64;
+        extern fn printf(fmt: *i8, ...) -> i64;
         fn main() -> i64 {
-            let f: fn(*u8, ...) -> i64 = printf;
+            let f: fn(*i8, ...) -> i64 = printf;
             f(c"hello %d", 42)
         }
         "#
