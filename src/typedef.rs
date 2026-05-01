@@ -121,13 +121,14 @@ fn emit_extern(ext: &ExternItem, types: &TypeContext, out: &mut impl io::Write) 
         ExternItem::Static(def) => {
             writeln!(
                 out,
-                "extern static {}: {};",
-                def.name,
+                "@symbol(\"{}\") extern static {}: {};",
+                def.symbol,
+                def.ident,
                 types.type_name(def.type_id)
             )
         }
         ExternItem::Function(def) => {
-            write!(out, "extern fn {}(", def.name)?;
+            write!(out, "@symbol(\"{}\") extern fn {}(", def.symbol, def.ident)?;
             emit_params(&def.params, types, out)?;
             writeln!(out, ") -> {};", types.type_name(def.return_type_id))
         }

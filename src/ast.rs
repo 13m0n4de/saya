@@ -54,9 +54,21 @@ pub struct Program {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Item {
+    pub attrs: Vec<Attr>,
     pub vis: Visibility,
     pub kind: ItemKind,
     pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Attr {
+    pub kind: AttrKind,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AttrKind {
+    Symbol(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -91,14 +103,14 @@ pub enum ExternItem {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExternStaticDecl {
-    pub name: String,
+    pub path: Path,
     pub type_ann: TypeAnn,
     pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExternFunctionDecl {
-    pub name: String,
+    pub path: Path,
     pub params: Vec<Param>,
     pub is_variadic: bool,
     pub return_type_ann: TypeAnn,

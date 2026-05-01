@@ -548,7 +548,7 @@ fn test_extern_declarations() {
 
     match &program.items[0].kind {
         ItemKind::Extern(ExternItem::Static(static_decl)) => {
-            assert_eq!(static_decl.name, "stderr");
+            assert_eq!(static_decl.path.to_string(), "stderr");
             assert_eq!(static_decl.type_ann.kind, TypeAnnKind::I64);
         }
         _ => panic!("Expected extern static"),
@@ -556,7 +556,7 @@ fn test_extern_declarations() {
 
     match &program.items[1].kind {
         ItemKind::Extern(ExternItem::Function(func)) => {
-            assert_eq!(func.name, "puts");
+            assert_eq!(func.path.to_string(), "puts");
             assert_eq!(func.params.len(), 1);
             assert_eq!(func.params[0].name, "s");
             assert_eq!(func.return_type_ann.kind, TypeAnnKind::I64);
@@ -607,7 +607,7 @@ fn test_variadic_function() {
 
     match &program.items[0].kind {
         ItemKind::Extern(ExternItem::Function(func)) => {
-            assert_eq!(func.name, "printf");
+            assert_eq!(func.path.to_string(), "printf");
             assert_eq!(func.params.len(), 1);
             assert_eq!(func.params[0].name, "fmt");
             assert!(matches!(
@@ -630,7 +630,10 @@ fn test_fn_type_annotation() {
             let body = func.body.as_ref().unwrap();
             match &body.stmts[0].kind {
                 StmtKind::Let(let_stmt) => {
-                    assert!(matches!(let_stmt.type_ann.kind, TypeAnnKind::Fn(_, _, false)));
+                    assert!(matches!(
+                        let_stmt.type_ann.kind,
+                        TypeAnnKind::Fn(_, _, false)
+                    ));
                 }
                 _ => panic!("Expected let statement"),
             }
@@ -684,7 +687,10 @@ fn test_fn_type_annotation() {
     match &program.items[0].kind {
         ItemKind::Function(func) => {
             assert_eq!(func.params.len(), 2);
-            assert!(matches!(func.params[0].type_ann.kind, TypeAnnKind::Fn(_, _, false)));
+            assert!(matches!(
+                func.params[0].type_ann.kind,
+                TypeAnnKind::Fn(_, _, false)
+            ));
         }
         _ => panic!("Expected function"),
     }

@@ -115,16 +115,20 @@ pub enum Const {
 
 #[derive(Debug, Clone)]
 pub enum Static {
-    Unresolved(Rc<ast::StaticDef>),
-    Resolving(Rc<ast::StaticDef>),
-    Resolved(hir::ConstVal),
+    Unresolved(Rc<ast::Item>),
+    Resolving(Rc<ast::Item>),
+    Resolved { value: hir::ConstVal, symbol: String },
 }
 
 #[derive(Debug, Clone)]
 pub enum Function {
-    Unresolved(Rc<ast::FunctionDef>),
-    Resolving(Rc<ast::FunctionDef>),
-    Resolved(Vec<TypeId>, TypeId),
+    Unresolved(Rc<ast::Item>),
+    Resolving(Rc<ast::Item>),
+    Resolved {
+        params: Vec<TypeId>,
+        ret: TypeId,
+        symbol: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -143,12 +147,17 @@ pub enum TypeAlias {
 
 #[derive(Debug, Clone)]
 pub enum ExternStatic {
-    Unresolved(Rc<ast::ExternStaticDecl>),
-    Resolved(TypeId),
+    Unresolved(Rc<ast::Item>),
+    Resolved { type_id: TypeId, symbol: String },
 }
 
 #[derive(Debug, Clone)]
 pub enum ExternFunction {
-    Unresolved(Rc<ast::ExternFunctionDecl>),
-    Resolved(Vec<TypeId>, TypeId, bool),
+    Unresolved(Rc<ast::Item>),
+    Resolved {
+        params: Vec<TypeId>,
+        ret: TypeId,
+        is_variadic: bool,
+        symbol: String,
+    },
 }

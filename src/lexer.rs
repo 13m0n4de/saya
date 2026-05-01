@@ -65,6 +65,7 @@ pub enum TokenKind {
     Colon,        // :
     PathSep,      // ::
     Arrow,        // ->
+    At,           // @
 
     Eof,
 }
@@ -228,6 +229,10 @@ impl<'a> Lexer<'a> {
             Some('%') => {
                 self.advance();
                 TokenKind::Percent
+            }
+            Some('@') => {
+                self.advance();
+                TokenKind::At
             }
 
             Some('<') => {

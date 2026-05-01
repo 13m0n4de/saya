@@ -254,7 +254,7 @@ fn test_complete_function() {
 
 #[test]
 fn test_invalid_character() {
-    let input = "let x = @";
+    let input = "let x = ^";
     let result = tokenize(input);
 
     assert!(result.is_err(), "should fail on invalid character");
