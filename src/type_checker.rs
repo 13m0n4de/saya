@@ -1335,7 +1335,7 @@ impl<'a> TypeChecker<'a> {
                 hir::ExprKind::Literal(hir::Literal::String(s.clone())),
             ),
             ast::Literal::CString(s) => (
-                self.types.mk_pointer(TypeId::U8),
+                self.types.mk_pointer(TypeId::I8), // char* is signed in GCC and chibicc
                 hir::ExprKind::Literal(hir::Literal::CString(s.clone())),
             ),
             ast::Literal::Bool(b) => (TypeId::Bool, hir::ExprKind::Literal(hir::Literal::Bool(*b))),
