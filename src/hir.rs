@@ -86,6 +86,7 @@ pub struct ConstDef {
 #[derive(Debug, Clone, PartialEq)]
 pub struct StaticDef {
     pub ident: String,
+    pub symbol: String,
     pub init: ConstVal,
     pub span: Span,
 }
@@ -93,6 +94,7 @@ pub struct StaticDef {
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionDef {
     pub ident: String,
+    pub symbol: String,
     pub params: Vec<Param>,
     pub return_type_id: TypeId,
     pub body: Option<Block>,

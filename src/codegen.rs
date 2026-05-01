@@ -132,10 +132,6 @@ impl<'a> CodeGen<'a> {
         Ok(module.to_string())
     }
 
-    fn ident_to_symbol(ident: &str) -> String {
-        ident.replace("::", ".")
-    }
-
     fn qbe_type(&mut self, type_id: TypeId) -> qbe::Type {
         let ty = self.types.get(type_id);
         match &ty.kind {
@@ -489,15 +485,9 @@ impl<'a> CodeGen<'a> {
         match &expr.kind {
             ExprKind::Place(place) => match place {
                 // x -> %x
-                Place::Local(ident) => {
-                    let symbol = Self::ident_to_symbol(ident);
-                    Ok(qbe::Value::Temporary(symbol))
-                }
+                Place::Local(symbol) => Ok(qbe::Value::Temporary(symbol.clone())),
                 // x -> $x
-                Place::Global(ident) => {
-                    let symbol = Self::ident_to_symbol(ident);
-                    Ok(qbe::Value::Global(symbol))
-                }
+                Place::Global(symbol) => Ok(qbe::Value::Global(symbol.clone())),
             },
             // *ptr -> value_of(ptr)
             ExprKind::Unary(UnaryOp::Deref, ptr_expr) => {
@@ -695,7 +685,7 @@ impl<'a> CodeGen<'a> {
     }
 
     fn generate_static(&mut self, static_def: &StaticDef, vis: &Visibility) {
-        let symbol = Self::ident_to_symbol(&static_def.ident);
+        let symbol = static_def.symbol.clone();
         let data_items = self.const_to_data_items(&static_def.init);
         let linkage = match vis {
             Visibility::Public => qbe::Linkage::public(),
@@ -731,7 +721,7 @@ impl<'a> CodeGen<'a> {
             Some(self.qbe_type(func.return_type_id))
         };
 
-        let symbol = Self::ident_to_symbol(&func.ident);
+        let symbol = func.symbol.clone();
         let linkage = match vis {
             Visibility::Public => qbe::Linkage::public(),
             Visibility::Private => qbe::Linkage::private(),
@@ -900,17 +890,14 @@ impl<'a> CodeGen<'a> {
         };
 
         match place {
-            Place::Local(ident) => {
-                let symbol = Self::ident_to_symbol(ident);
-                let addr = qbe::Value::Temporary(symbol);
-                self.load_value(qfunc, addr, expr.type_id)
+            Place::Local(symbol) => {
+                self.load_value(qfunc, qbe::Value::Temporary(symbol.clone()), expr.type_id)
             }
-            Place::Global(ident) => {
-                let symbol = Self::ident_to_symbol(ident);
+            Place::Global(symbol) => {
                 if matches!(self.types.get(expr.type_id).kind, TypeKind::Fn(..)) {
-                    GenValue::Global(symbol, expr.type_id)
+                    GenValue::Global(symbol.clone(), expr.type_id)
                 } else {
-                    self.load_value(qfunc, qbe::Value::Global(symbol), expr.type_id)
+                    self.load_value(qfunc, qbe::Value::Global(symbol.clone()), expr.type_id)
                 }
             }
         }
@@ -1373,9 +1360,7 @@ impl<'a> CodeGen<'a> {
         };
 
         let symbol = match &call.callee.kind {
-            ExprKind::Place(Place::Global(ident)) => {
-                qbe::Value::Global(Self::ident_to_symbol(ident))
-            }
+            ExprKind::Place(Place::Global(symbol)) => qbe::Value::Global(symbol.clone()),
             _ => self.generate_expression(qfunc, &call.callee)?.into(),
         };
 

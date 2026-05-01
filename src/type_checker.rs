@@ -522,12 +522,12 @@ impl<'a> TypeChecker<'a> {
                 ),
                 ast::ItemKind::Static(def) => (
                     def.path.to_string(),
-                    ScopeObject::Static(Static::Unresolved(Rc::new(def.clone()))),
+                    ScopeObject::Static(Static::Unresolved(Rc::new(item.clone()))),
                     def.span,
                 ),
                 ast::ItemKind::Function(def) => (
                     def.path.to_string(),
-                    ScopeObject::Function(Function::Unresolved(Rc::new(def.clone()))),
+                    ScopeObject::Function(Function::Unresolved(Rc::new(item.clone()))),
                     def.span,
                 ),
                 ast::ItemKind::Struct(def) => (
@@ -627,11 +627,15 @@ impl<'a> TypeChecker<'a> {
         };
 
         match decl {
-            Static::Unresolved(def) => {
+            Static::Unresolved(item) => {
                 self.scopes.first_mut().insert(
                     name.to_string(),
-                    ScopeObject::Static(Static::Resolving(def.clone())),
+                    ScopeObject::Static(Static::Resolving(item.clone())),
                 );
+
+                let ast::ItemKind::Static(def) = &item.kind else {
+                    unreachable!()
+                };
 
                 let type_id = self.lower_type(&def.type_ann)?;
                 let typed_init = self.check_expression(&def.init)?;
@@ -648,19 +652,36 @@ impl<'a> TypeChecker<'a> {
                 }
 
                 let value = self.eval_const_expr(&typed_init)?;
+                let ident = self.make_ident(&def.path);
+                let mut symbol_override = None;
+                for attr in &item.attrs {
+                    match &attr.kind {
+                        ast::AttrKind::Symbol(s) => {
+                            if symbol_override.replace(s.clone()).is_some() {
+                                return Err(TypeError::new("duplicate @symbol".into(), attr.span));
+                            }
+                        }
+                    }
+                }
+                let symbol = symbol_override.unwrap_or_else(|| ident.replace("::", "."));
 
                 self.scopes.first_mut().insert(
                     name.to_string(),
-                    ScopeObject::Static(Static::Resolved(value)),
+                    ScopeObject::Static(Static::Resolved { value, symbol }),
                 );
 
                 Ok(())
             }
-            Static::Resolving(def) => Err(TypeError::new(
-                format!("circular dependency for static `{name}`"),
-                def.span,
-            )),
-            Static::Resolved(_) => Ok(()),
+            Static::Resolving(item) => {
+                let ast::ItemKind::Static(def) = &item.kind else {
+                    unreachable!()
+                };
+                Err(TypeError::new(
+                    format!("circular dependency for static `{name}`"),
+                    def.span,
+                ))
+            }
+            Static::Resolved { .. } => Ok(()),
         }
     }
 
@@ -670,11 +691,15 @@ impl<'a> TypeChecker<'a> {
         };
 
         match decl {
-            Function::Unresolved(def) => {
+            Function::Unresolved(item) => {
                 self.scopes.first_mut().insert(
                     name.to_string(),
-                    ScopeObject::Function(Function::Resolving(def.clone())),
+                    ScopeObject::Function(Function::Resolving(item.clone())),
                 );
+
+                let ast::ItemKind::Function(def) = &item.kind else {
+                    unreachable!()
+                };
 
                 let params = def
                     .params
@@ -683,18 +708,40 @@ impl<'a> TypeChecker<'a> {
                     .collect::<Result<Vec<_>, _>>()?;
                 let return_ty = self.lower_type(&def.return_type_ann)?;
 
+                let ident = self.make_ident(&def.path);
+                let mut symbol_override = None;
+                for attr in &item.attrs {
+                    match &attr.kind {
+                        ast::AttrKind::Symbol(s) => {
+                            if symbol_override.replace(s.clone()).is_some() {
+                                return Err(TypeError::new("duplicate @symbol".into(), attr.span));
+                            }
+                        }
+                    }
+                }
+                let symbol = symbol_override.unwrap_or_else(|| ident.replace("::", "."));
+
                 self.scopes.first_mut().insert(
                     name.to_string(),
-                    ScopeObject::Function(Function::Resolved(params, return_ty)),
+                    ScopeObject::Function(Function::Resolved {
+                        params,
+                        ret: return_ty,
+                        symbol,
+                    }),
                 );
 
                 Ok(())
             }
-            Function::Resolving(def) => Err(TypeError::new(
-                format!("circular dependency for function `{name}`"),
-                def.span,
-            )),
-            Function::Resolved(_, _) => Ok(()),
+            Function::Resolving(item) => {
+                let ast::ItemKind::Function(def) = &item.kind else {
+                    unreachable!()
+                };
+                Err(TypeError::new(
+                    format!("circular dependency for function `{name}`"),
+                    def.span,
+                ))
+            }
+            Function::Resolved { .. } => Ok(()),
         }
     }
 
@@ -907,13 +954,16 @@ impl<'a> TypeChecker<'a> {
                 ast::ItemKind::Static(def) => {
                     let name = def.path.to_string();
                     self.resolve_declaration(&name)?;
-                    let value = match self.scopes.lookup(&name) {
-                        Some(ScopeObject::Static(Static::Resolved(value))) => value.clone(),
+                    let (value, symbol) = match self.scopes.lookup(&name) {
+                        Some(ScopeObject::Static(Static::Resolved { value, symbol })) => {
+                            (value.clone(), symbol.clone())
+                        }
                         _ => unreachable!(),
                     };
 
                     hir::ItemKind::Static(hir::StaticDef {
                         ident: self.make_ident(&def.path),
+                        symbol,
                         init: value,
                         span: def.span,
                     })
@@ -978,15 +1028,13 @@ impl<'a> TypeChecker<'a> {
             unreachable!()
         };
 
-        if let Some(attr) = item.attrs.first() {
-            return Err(TypeError::new(
-                "attributes are not valid on fn".into(),
-                attr.span,
-            ));
-        }
-
         self.resolve_declaration(&func.path.to_string())?;
+
         let ident = self.make_ident(&func.path);
+        let symbol = match self.scopes.lookup(&func.path.to_string()) {
+            Some(ScopeObject::Function(Function::Resolved { symbol, .. })) => symbol.clone(),
+            _ => unreachable!(),
+        };
         let return_type_id = self.lower_type(&func.return_type_ann)?;
         self.scopes.push(Scope {
             kind: ScopeKind::Function { return_type_id },
@@ -1037,6 +1085,7 @@ impl<'a> TypeChecker<'a> {
 
         Ok(hir::FunctionDef {
             ident,
+            symbol,
             params: hir_params,
             return_type_id,
             body: typed_body,
@@ -1053,6 +1102,7 @@ impl<'a> TypeChecker<'a> {
         };
 
         self.resolve_declaration(&decl.path.to_string())?;
+
         let (param_types, return_type_id, is_variadic, symbol) =
             match self.scopes.lookup(&decl.path.to_string()) {
                 Some(ScopeObject::ExternFunction(ExternFunction::Resolved {
@@ -1093,6 +1143,7 @@ impl<'a> TypeChecker<'a> {
         };
 
         self.resolve_declaration(&decl.path.to_string())?;
+
         let (type_id, symbol) = match self.scopes.lookup(&decl.path.to_string()) {
             Some(ScopeObject::ExternStatic(ExternStatic::Resolved { type_id, symbol })) => {
                 (*type_id, symbol.clone())
@@ -1454,13 +1505,11 @@ impl<'a> TypeChecker<'a> {
                 type_id: *type_id,
                 span: expr.span,
             }),
-            Some(ScopeObject::Static(Static::Resolved(hir::ConstVal { type_id, .. }))) => {
-                Ok(hir::Expr {
-                    kind: hir::ExprKind::Place(hir::Place::Global(self.make_ident(path))),
-                    type_id: *type_id,
-                    span: expr.span,
-                })
-            }
+            Some(ScopeObject::Static(Static::Resolved { value, symbol })) => Ok(hir::Expr {
+                kind: hir::ExprKind::Place(hir::Place::Global(symbol.clone())),
+                type_id: value.type_id,
+                span: expr.span,
+            }),
             Some(ScopeObject::ExternStatic(ExternStatic::Resolved { type_id, symbol })) => {
                 Ok(hir::Expr {
                     kind: hir::ExprKind::Place(hir::Place::Global(symbol.clone())),
@@ -1473,10 +1522,14 @@ impl<'a> TypeChecker<'a> {
                 type_id: val.type_id,
                 span: expr.span,
             }),
-            Some(ScopeObject::Function(Function::Resolved(params, ret))) => {
+            Some(ScopeObject::Function(Function::Resolved {
+                params,
+                ret,
+                symbol,
+            })) => {
                 let fn_type_id = self.types.mk_fn(params.clone(), *ret, false);
                 Ok(hir::Expr {
-                    kind: hir::ExprKind::Place(hir::Place::Global(self.make_ident(path))),
+                    kind: hir::ExprKind::Place(hir::Place::Global(symbol.clone())),
                     type_id: fn_type_id,
                     span: expr.span,
                 })
