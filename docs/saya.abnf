@@ -1,6 +1,9 @@
 program = *item
 
-item = ["pub"] (use-item / extern-item / const-def / static-def / struct-def / type-alias-def / function-def)
+item = *item-attr ["pub"] (use-item / extern-item / const-def / static-def / struct-def / type-alias-def / function-def)
+
+item-attr = "@" identifier ["(" [attr-arg-list] ")"]
+attr-arg-list = expression *("," expression) [","]
 
 use-item = "use" path ";"
 
