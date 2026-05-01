@@ -541,13 +541,13 @@ impl<'a> TypeChecker<'a> {
                     def.span,
                 ),
                 ast::ItemKind::Extern(ast::ExternItem::Static(decl)) => (
-                    decl.name.clone(),
-                    ScopeObject::ExternStatic(ExternStatic::Unresolved(Rc::new(decl.clone()))),
+                    decl.path.to_string(),
+                    ScopeObject::ExternStatic(ExternStatic::Unresolved(Rc::new(item.clone()))),
                     decl.span,
                 ),
                 ast::ItemKind::Extern(ast::ExternItem::Function(decl)) => (
-                    decl.name.clone(),
-                    ScopeObject::ExternFunction(ExternFunction::Unresolved(Rc::new(decl.clone()))),
+                    decl.path.to_string(),
+                    ScopeObject::ExternFunction(ExternFunction::Unresolved(Rc::new(item.clone()))),
                     decl.span,
                 ),
                 ast::ItemKind::Use(_) => continue,
@@ -800,15 +800,32 @@ impl<'a> TypeChecker<'a> {
         };
 
         match decl {
-            ExternStatic::Unresolved(decl) => {
+            ExternStatic::Unresolved(item) => {
+                let ast::ItemKind::Extern(ast::ExternItem::Static(decl)) = &item.kind else {
+                    unreachable!()
+                };
+                let mut symbol_override = None;
+                for attr in &item.attrs {
+                    match &attr.kind {
+                        ast::AttrKind::Symbol(s) => {
+                            if symbol_override.replace(s.clone()).is_some() {
+                                return Err(TypeError::new("duplicate @symbol".into(), attr.span));
+                            }
+                        }
+                    }
+                }
+                let symbol = symbol_override
+                    .unwrap_or_else(|| self.make_ident(&decl.path).replace("::", "."));
+
                 let type_id = self.lower_type(&decl.type_ann)?;
+
                 self.scopes.first_mut().insert(
                     name.to_string(),
-                    ScopeObject::ExternStatic(ExternStatic::Resolved(type_id)),
+                    ScopeObject::ExternStatic(ExternStatic::Resolved { type_id, symbol }),
                 );
                 Ok(())
             }
-            ExternStatic::Resolved(_) => Ok(()),
+            ExternStatic::Resolved { .. } => Ok(()),
         }
     }
 
@@ -822,7 +839,24 @@ impl<'a> TypeChecker<'a> {
         };
 
         match decl {
-            ExternFunction::Unresolved(decl) => {
+            ExternFunction::Unresolved(item) => {
+                let ast::ItemKind::Extern(ast::ExternItem::Function(decl)) = &item.kind else {
+                    unreachable!()
+                };
+
+                let mut symbol_override = None;
+                for attr in &item.attrs {
+                    match &attr.kind {
+                        ast::AttrKind::Symbol(s) => {
+                            if symbol_override.replace(s.clone()).is_some() {
+                                return Err(TypeError::new("duplicate @symbol".into(), attr.span));
+                            }
+                        }
+                    }
+                }
+                let symbol = symbol_override
+                    .unwrap_or_else(|| self.make_ident(&decl.path).replace("::", "."));
+
                 let params = decl
                     .params
                     .iter()
@@ -833,15 +867,16 @@ impl<'a> TypeChecker<'a> {
 
                 self.scopes.first_mut().insert(
                     name.to_string(),
-                    ScopeObject::ExternFunction(ExternFunction::Resolved(
+                    ScopeObject::ExternFunction(ExternFunction::Resolved {
                         params,
-                        return_ty,
-                        decl.is_variadic,
-                    )),
+                        ret: return_ty,
+                        is_variadic: decl.is_variadic,
+                        symbol,
+                    }),
                 );
                 Ok(())
             }
-            ExternFunction::Resolved(_, _, _) => Ok(()),
+            ExternFunction::Resolved { .. } => Ok(()),
         }
     }
 
@@ -883,53 +918,14 @@ impl<'a> TypeChecker<'a> {
                         span: def.span,
                     })
                 }
-                ast::ItemKind::Function(def) => {
-                    self.resolve_declaration(&def.path.to_string())?;
-                    let typed_func = self.check_function(def)?;
-                    hir::ItemKind::Function(typed_func)
-                }
+                ast::ItemKind::Function(_) => hir::ItemKind::Function(self.check_item_fn(item)?),
                 ast::ItemKind::Extern(extern_item) => {
                     let hir_extern = match extern_item {
-                        ast::ExternItem::Static(decl) => {
-                            self.resolve_declaration(&decl.name)?;
-                            let type_id = match self.scopes.lookup(&decl.name) {
-                                Some(ScopeObject::ExternStatic(ExternStatic::Resolved(
-                                    type_id,
-                                ))) => *type_id,
-                                _ => unreachable!(),
-                            };
-                            hir::ExternItem::Static(hir::ExternStaticDecl {
-                                name: decl.name.clone(),
-                                type_id,
-                                span: decl.span,
-                            })
+                        ast::ExternItem::Static(_) => {
+                            hir::ExternItem::Static(self.check_item_extern_static(item)?)
                         }
-                        ast::ExternItem::Function(decl) => {
-                            self.resolve_declaration(&decl.name)?;
-                            let (param_types, return_type_id, is_variadic) =
-                                match self.scopes.lookup(&decl.name) {
-                                    Some(ScopeObject::ExternFunction(
-                                        ExternFunction::Resolved(params, ret, v),
-                                    )) => (params.clone(), *ret, *v),
-                                    _ => unreachable!(),
-                                };
-                            let params = decl
-                                .params
-                                .iter()
-                                .zip(param_types.iter())
-                                .map(|(p, &type_id)| hir::Param {
-                                    name: p.name.clone(),
-                                    type_id,
-                                    span: p.span,
-                                })
-                                .collect();
-                            hir::ExternItem::Function(hir::ExternFunctionDecl {
-                                name: decl.name.clone(),
-                                params,
-                                return_type_id,
-                                is_variadic,
-                                span: decl.span,
-                            })
+                        ast::ExternItem::Function(_) => {
+                            hir::ExternItem::Function(self.check_item_extern_fn(item)?)
                         }
                     };
                     hir::ItemKind::Extern(hir_extern)
@@ -977,7 +973,19 @@ impl<'a> TypeChecker<'a> {
         })
     }
 
-    fn check_function(&mut self, func: &ast::FunctionDef) -> Result<hir::FunctionDef, TypeError> {
+    fn check_item_fn(&mut self, item: &ast::Item) -> Result<hir::FunctionDef, TypeError> {
+        let ast::ItemKind::Function(func) = &item.kind else {
+            unreachable!()
+        };
+
+        if let Some(attr) = item.attrs.first() {
+            return Err(TypeError::new(
+                "attributes are not valid on fn".into(),
+                attr.span,
+            ));
+        }
+
+        self.resolve_declaration(&func.path.to_string())?;
         let ident = self.make_ident(&func.path);
         let return_type_id = self.lower_type(&func.return_type_ann)?;
         self.scopes.push(Scope {
@@ -1033,6 +1041,70 @@ impl<'a> TypeChecker<'a> {
             return_type_id,
             body: typed_body,
             span: func.span,
+        })
+    }
+
+    fn check_item_extern_fn(
+        &mut self,
+        item: &ast::Item,
+    ) -> Result<hir::ExternFunctionDecl, TypeError> {
+        let ast::ItemKind::Extern(ast::ExternItem::Function(decl)) = &item.kind else {
+            unreachable!()
+        };
+
+        self.resolve_declaration(&decl.path.to_string())?;
+        let (param_types, return_type_id, is_variadic, symbol) =
+            match self.scopes.lookup(&decl.path.to_string()) {
+                Some(ScopeObject::ExternFunction(ExternFunction::Resolved {
+                    params,
+                    ret,
+                    is_variadic,
+                    symbol,
+                })) => (params.clone(), *ret, *is_variadic, symbol.clone()),
+                _ => unreachable!(),
+            };
+        let params = decl
+            .params
+            .iter()
+            .zip(param_types.iter())
+            .map(|(p, &type_id)| hir::Param {
+                name: p.name.clone(),
+                type_id,
+                span: p.span,
+            })
+            .collect();
+
+        Ok(hir::ExternFunctionDecl {
+            ident: self.make_ident(&decl.path),
+            symbol,
+            params,
+            return_type_id,
+            is_variadic,
+            span: decl.span,
+        })
+    }
+
+    fn check_item_extern_static(
+        &mut self,
+        item: &ast::Item,
+    ) -> Result<hir::ExternStaticDecl, TypeError> {
+        let ast::ItemKind::Extern(ast::ExternItem::Static(decl)) = &item.kind else {
+            unreachable!()
+        };
+
+        self.resolve_declaration(&decl.path.to_string())?;
+        let (type_id, symbol) = match self.scopes.lookup(&decl.path.to_string()) {
+            Some(ScopeObject::ExternStatic(ExternStatic::Resolved { type_id, symbol })) => {
+                (*type_id, symbol.clone())
+            }
+            _ => unreachable!(),
+        };
+
+        Ok(hir::ExternStaticDecl {
+            ident: self.make_ident(&decl.path),
+            symbol,
+            type_id,
+            span: decl.span,
         })
     }
 
@@ -1382,14 +1454,20 @@ impl<'a> TypeChecker<'a> {
                 type_id: *type_id,
                 span: expr.span,
             }),
-            Some(
-                ScopeObject::Static(Static::Resolved(hir::ConstVal { type_id, .. }))
-                | ScopeObject::ExternStatic(ExternStatic::Resolved(type_id)),
-            ) => Ok(hir::Expr {
-                kind: hir::ExprKind::Place(hir::Place::Global(self.make_ident(path))),
-                type_id: *type_id,
-                span: expr.span,
-            }),
+            Some(ScopeObject::Static(Static::Resolved(hir::ConstVal { type_id, .. }))) => {
+                Ok(hir::Expr {
+                    kind: hir::ExprKind::Place(hir::Place::Global(self.make_ident(path))),
+                    type_id: *type_id,
+                    span: expr.span,
+                })
+            }
+            Some(ScopeObject::ExternStatic(ExternStatic::Resolved { type_id, symbol })) => {
+                Ok(hir::Expr {
+                    kind: hir::ExprKind::Place(hir::Place::Global(symbol.clone())),
+                    type_id: *type_id,
+                    span: expr.span,
+                })
+            }
             Some(ScopeObject::Const(Const::Resolved(val))) => Ok(hir::Expr {
                 kind: hir::ExprKind::Const(val.clone()),
                 type_id: val.type_id,
@@ -1403,14 +1481,15 @@ impl<'a> TypeChecker<'a> {
                     span: expr.span,
                 })
             }
-            Some(ScopeObject::ExternFunction(ExternFunction::Resolved(
+            Some(ScopeObject::ExternFunction(ExternFunction::Resolved {
                 params,
                 ret,
                 is_variadic,
-            ))) => {
+                symbol,
+            })) => {
                 let fn_type_id = self.types.mk_fn(params.clone(), *ret, *is_variadic);
                 Ok(hir::Expr {
-                    kind: hir::ExprKind::Place(hir::Place::Global(self.make_ident(path))),
+                    kind: hir::ExprKind::Place(hir::Place::Global(symbol.clone())),
                     type_id: fn_type_id,
                     span: expr.span,
                 })

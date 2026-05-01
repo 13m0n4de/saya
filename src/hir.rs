@@ -60,14 +60,16 @@ pub enum ExternItem {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExternStaticDecl {
-    pub name: String,
+    pub ident: String,
+    pub symbol: String,
     pub type_id: TypeId,
     pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExternFunctionDecl {
-    pub name: String,
+    pub ident: String,
+    pub symbol: String,
     pub params: Vec<Param>,
     pub is_variadic: bool,
     pub return_type_id: TypeId,

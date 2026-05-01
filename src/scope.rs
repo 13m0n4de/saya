@@ -143,12 +143,17 @@ pub enum TypeAlias {
 
 #[derive(Debug, Clone)]
 pub enum ExternStatic {
-    Unresolved(Rc<ast::ExternStaticDecl>),
-    Resolved(TypeId),
+    Unresolved(Rc<ast::Item>),
+    Resolved { type_id: TypeId, symbol: String },
 }
 
 #[derive(Debug, Clone)]
 pub enum ExternFunction {
-    Unresolved(Rc<ast::ExternFunctionDecl>),
-    Resolved(Vec<TypeId>, TypeId, bool),
+    Unresolved(Rc<ast::Item>),
+    Resolved {
+        params: Vec<TypeId>,
+        ret: TypeId,
+        is_variadic: bool,
+        symbol: String,
+    },
 }
