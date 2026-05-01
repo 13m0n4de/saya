@@ -98,7 +98,7 @@ array-repeat = expression ";" expression
 literal = float / integer / cstring / string / bool
 
 integer = 1*DIGIT [int-suffix]
-int-suffix = "u8" / "u16" / "u32" / "i32" / "i64"
+int-suffix = "u8" / "u16" / "u32" / "u64" / "i8" / "i16" / "i32" / "i64"
 
 float = 1*DIGIT "." 1*DIGIT [float-suffix]
 float-suffix = "f32" / "f64"
