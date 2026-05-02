@@ -76,6 +76,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
+    // identifier = (ALPHA / "_") *(ALPHA / "_" / DIGIT)
     fn expect_identifier(&mut self) -> Result<String, ParseError> {
         if let TokenKind::Ident(name) = &self.current.kind {
             let name = name.clone();
@@ -98,6 +99,14 @@ impl<'a> Parser<'a> {
         }
     }
 
+    // type-name = slice-type / array-type / pointer-type / fn-type / base-type / custom-type
+    // base-type = "u8" / "u16" / "u32" / "i32" / "i64" / "f32" / "f64"  / "bool" / "()" / "!"
+    // pointer-type = "*" type-name
+    // array-type = "[" type-name ";" integer "]"
+    // slice-type = "[" type-name "]"
+    // fn-type = "fn" "(" [fn-type-params] ")" ["->" type-name]
+    // fn-type-params = type-name *("," type-name) ["," "..."]
+    // custom-type = path
     fn parse_type_ann(&mut self) -> Result<TypeAnn, ParseError> {
         let start_span = self.current.span;
 
@@ -230,6 +239,7 @@ impl<'a> Parser<'a> {
         })
     }
 
+    // path = identifier *( "::" identifier)
     fn parse_path(&mut self) -> Result<Path, ParseError> {
         let span = self.current.span;
 
@@ -241,6 +251,7 @@ impl<'a> Parser<'a> {
         Ok(Path { segments, span })
     }
 
+    // item = *item-attr ["pub"] (use-item / extern-item / const-def / static-def / struct-def / type-alias-def / function-def)
     fn parse_items(&mut self) -> Result<Vec<Item>, ParseError> {
         let mut items = Vec::new();
 
@@ -283,6 +294,8 @@ impl<'a> Parser<'a> {
         Ok(items)
     }
 
+    // item-attr = "@" identifier ["(" [attr-arg-list] ")"]
+    // attr-arg-list = expression *("," expression) [","]
     fn parse_attrs(&mut self) -> Result<Vec<Attr>, ParseError> {
         let mut attrs = Vec::new();
 
@@ -319,6 +332,7 @@ impl<'a> Parser<'a> {
         Ok(attrs)
     }
 
+    // use-item = "use" path ";"
     fn parse_use(&mut self) -> Result<Use, ParseError> {
         let start_span = self.current.span;
 
@@ -348,6 +362,7 @@ impl<'a> Parser<'a> {
         })
     }
 
+    // extern-item = "extern" (extern-static / extern-fn)
     fn parse_extern_item(&mut self) -> Result<ExternItem, ParseError> {
         self.expect(TokenKind::Extern)?;
 
@@ -361,6 +376,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    // extern-static = "static" identifier ":" type-name ";"
     fn parse_extern_static(&mut self) -> Result<ExternStaticDecl, ParseError> {
         let start_span = self.current.span;
 
@@ -381,6 +397,7 @@ impl<'a> Parser<'a> {
         })
     }
 
+    // extern-fn = "fn" identifier "(" [param-list ["," "..."]] ")" ["->" type-name] ";"
     fn parse_extern_function(&mut self) -> Result<ExternFunctionDecl, ParseError> {
         let start_span = self.current.span;
 
@@ -418,6 +435,7 @@ impl<'a> Parser<'a> {
         })
     }
 
+    // const-def = "const" path ":" type-name "=" expression ";"
     fn parse_const(&mut self) -> Result<ConstDef, ParseError> {
         let start_span = self.current.span;
 
@@ -443,6 +461,7 @@ impl<'a> Parser<'a> {
         })
     }
 
+    // static-def = "static" path ":" type-name "=" expression ";"
     fn parse_static(&mut self) -> Result<StaticDef, ParseError> {
         let start_span = self.current.span;
 
@@ -468,6 +487,7 @@ impl<'a> Parser<'a> {
         })
     }
 
+    // struct-def = "struct" path "{" [field-list] "}"
     fn parse_struct(&mut self) -> Result<StructDef, ParseError> {
         let start_span = self.current.span;
 
@@ -492,6 +512,7 @@ impl<'a> Parser<'a> {
         })
     }
 
+    // field-list = field *("," field) [","]
     fn parse_field_list(&mut self) -> Result<Vec<Field>, ParseError> {
         let mut fields = Vec::new();
 
@@ -507,6 +528,7 @@ impl<'a> Parser<'a> {
         Ok(fields)
     }
 
+    // field = identifier ":" type-name
     fn parse_field(&mut self) -> Result<Field, ParseError> {
         let start_span = self.current.span;
 
@@ -521,6 +543,7 @@ impl<'a> Parser<'a> {
         })
     }
 
+    // field-init-list = field-init *("," field-init) [","]
     fn parse_field_init_list(&mut self) -> Result<Vec<FieldInit>, ParseError> {
         let mut fields = Vec::new();
 
@@ -536,6 +559,7 @@ impl<'a> Parser<'a> {
         Ok(fields)
     }
 
+    // field-init = identifier ":" expression
     fn parse_field_init(&mut self) -> Result<FieldInit, ParseError> {
         let start_span = self.current.span;
 
@@ -550,6 +574,7 @@ impl<'a> Parser<'a> {
         })
     }
 
+    // type-alias-def = "type" path "=" type-name ";"
     fn parse_type_alias(&mut self) -> Result<TypeAliasDef, ParseError> {
         let start_span = self.current.span;
 
@@ -570,6 +595,7 @@ impl<'a> Parser<'a> {
         })
     }
 
+    // function-def = "fn" path "(" [param-list] ")" ["->" type-name] block
     fn parse_function(&mut self) -> Result<FunctionDef, ParseError> {
         let start_span = self.current.span;
 
@@ -611,6 +637,7 @@ impl<'a> Parser<'a> {
         })
     }
 
+    // param-list = param *("," param) [","]
     fn parse_param_list(&mut self) -> Result<(Vec<Param>, bool), ParseError> {
         let mut params = Vec::new();
         let mut is_variadic = false;
@@ -635,6 +662,7 @@ impl<'a> Parser<'a> {
         Ok((params, is_variadic))
     }
 
+    // param = identifier ":" type-name
     fn parse_param(&mut self) -> Result<Param, ParseError> {
         let start_span = self.current.span;
 
@@ -649,6 +677,7 @@ impl<'a> Parser<'a> {
         })
     }
 
+    // block = "{" *statement [expression] "}"
     fn parse_block(&mut self) -> Result<Block, ParseError> {
         let start_span = self.current.span;
 
@@ -668,6 +697,7 @@ impl<'a> Parser<'a> {
         })
     }
 
+    // statement = expr-stmt / let-stmt
     fn parse_statement(&mut self) -> Result<Stmt, ParseError> {
         if self.current.kind == TokenKind::Let {
             self.parse_stmt_let()
@@ -709,6 +739,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    // let-stmt = "let" identifier ":" type-name "=" expression ";"
     fn parse_stmt_let(&mut self) -> Result<Stmt, ParseError> {
         let start_span = self.current.span;
 
@@ -737,6 +768,7 @@ impl<'a> Parser<'a> {
         })
     }
 
+    // expr-stmt = expression ";"
     pub fn parse_expression(&mut self) -> Result<Expr, ParseError> {
         let start_span = self.current.span;
 
@@ -760,6 +792,8 @@ impl<'a> Parser<'a> {
         self.parse_expr_assign()
     }
 
+    // assign-expr = logical-or-expr [assign-op assign-expr]
+    // assign-op = "="
     fn parse_expr_assign(&mut self) -> Result<Expr, ParseError> {
         let lhs = self.parse_expr_bp(0)?;
         let start_span = lhs.span;
@@ -896,40 +930,52 @@ impl<'a> Parser<'a> {
         Ok(lhs)
     }
 
+    // primary-expr = literal / struct-expr / path / array-expr
+    //              / if-expr / while-expr / loop-expr / break-expr / continue-expr
+    //              / block / "(" expression ")"
     fn parse_expr_primary(&mut self) -> Result<Expr, ParseError> {
         let start_span = self.current.span;
 
         let kind = match &self.current.kind {
+            // integer = 1*DIGIT [int-suffix]
+            // int-suffix = "u8" / "u16" / "u32" / "u64" / "i8" / "i16" / "i32" / "i64"
             TokenKind::Integer(val, suffix) => {
                 let val = *val;
                 let suffix = suffix.clone();
                 self.advance()?;
                 ExprKind::Literal(Literal::Integer(val, suffix))
             }
+            // float = 1*DIGIT "." 1*DIGIT [float-suffix]
+            // float-suffix = "f32" / "f64"
             TokenKind::Float(val, suffix) => {
                 let val = *val;
                 let suffix = suffix.clone();
                 self.advance()?;
                 ExprKind::Literal(Literal::Float(val, suffix))
             }
+            // string = DQUOTE *string-char DQUOTE
             TokenKind::String(str) => {
                 let val = str.to_owned();
                 self.advance()?;
                 ExprKind::Literal(Literal::String(val))
             }
+            // cstring = "c" DQUOTE *string-char DQUOTE
             TokenKind::CString(str) => {
                 let val = str.to_owned();
                 self.advance()?;
                 ExprKind::Literal(Literal::CString(val))
             }
+            // bool = "true" / "false"
             TokenKind::True => {
                 self.advance()?;
                 ExprKind::Literal(Literal::Bool(true))
             }
+            // bool = "true" / "false"
             TokenKind::False => {
                 self.advance()?;
                 ExprKind::Literal(Literal::Bool(false))
             }
+            // identifier = (ALPHA / "_") *(ALPHA / "_" / DIGIT)
             TokenKind::Ident(name) => {
                 let name = name.clone();
                 self.advance()?;
@@ -944,6 +990,7 @@ impl<'a> Parser<'a> {
                     span: path_span,
                 };
 
+                // struct-expr = path "{" [field-init-list] "}"
                 if !self.no_struct_literal && self.current.kind == TokenKind::OpenBrace {
                     self.advance()?;
                     let fields = if self.current.kind == TokenKind::CloseBrace {
@@ -993,6 +1040,9 @@ impl<'a> Parser<'a> {
                 ExprKind::Continue
             }
 
+            // array-expr = "[" [array-list / array-repeat] "]"
+            // array-list = expression *("," expression) [","]
+            // array-repeat = expression ";" expression
             TokenKind::OpenBracket => {
                 self.advance()?;
 
@@ -1035,6 +1085,7 @@ impl<'a> Parser<'a> {
         })
     }
 
+    // call-op = "(" [expression *("," expression) [","]] ")"
     fn parse_call(&mut self, callee: Expr) -> Result<Call, ParseError> {
         let start_span = callee.span;
 
@@ -1072,6 +1123,7 @@ impl<'a> Parser<'a> {
         result
     }
 
+    // if-expr = "if" expression block ["else" (if-expr / block)]
     fn parse_if(&mut self) -> Result<If, ParseError> {
         let if_span = self.current.span;
         self.expect(TokenKind::If)?;
@@ -1106,6 +1158,7 @@ impl<'a> Parser<'a> {
         })
     }
 
+    // while-expr = "while" expression block
     fn parse_while(&mut self) -> Result<While, ParseError> {
         let while_span = self.current.span;
         self.expect(TokenKind::While)?;
@@ -1120,6 +1173,7 @@ impl<'a> Parser<'a> {
         })
     }
 
+    // loop-expr = "loop" block
     fn parse_loop(&mut self) -> Result<Loop, ParseError> {
         let span = self.current.span;
         self.expect(TokenKind::Loop)?;
