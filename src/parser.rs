@@ -76,20 +76,6 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    // identifier = (ALPHA / "_") *(ALPHA / "_" / DIGIT)
-    fn expect_identifier(&mut self) -> Result<String, ParseError> {
-        if let TokenKind::Ident(name) = &self.current.kind {
-            let name = name.clone();
-            self.advance()?;
-            Ok(name)
-        } else {
-            Err(ParseError::new(
-                format!("Expected identifier, found {:?}", self.current.kind),
-                self.current.span,
-            ))
-        }
-    }
-
     fn eat(&mut self, token: TokenKind) -> Result<bool, ParseError> {
         if self.current.kind == token {
             self.advance()?;
@@ -97,158 +83,6 @@ impl<'a> Parser<'a> {
         } else {
             Ok(false)
         }
-    }
-
-    // type-name = slice-type / array-type / pointer-type / fn-type / base-type / custom-type
-    // base-type = "u8" / "u16" / "u32" / "i32" / "i64" / "f32" / "f64"  / "bool" / "()" / "!"
-    // pointer-type = "*" type-name
-    // array-type = "[" type-name ";" integer "]"
-    // slice-type = "[" type-name "]"
-    // fn-type = "fn" "(" [fn-type-params] ")" ["->" type-name]
-    // fn-type-params = type-name *("," type-name) ["," "..."]
-    // custom-type = path
-    fn parse_type_ann(&mut self) -> Result<TypeAnn, ParseError> {
-        let start_span = self.current.span;
-
-        let kind = match self.current.kind.clone() {
-            // Base types: i64, u8, bool, or Path (module::Type or Type)
-            TokenKind::Ident(name) => {
-                let name = name.clone();
-                self.advance()?;
-                match name.as_str() {
-                    "u8" => TypeAnnKind::U8,
-                    "u16" => TypeAnnKind::U16,
-                    "u32" => TypeAnnKind::U32,
-                    "u64" => TypeAnnKind::U64,
-
-                    "i8" => TypeAnnKind::I8,
-                    "i16" => TypeAnnKind::I16,
-                    "i32" => TypeAnnKind::I32,
-                    "i64" => TypeAnnKind::I64,
-
-                    "f32" => TypeAnnKind::F32,
-                    "f64" => TypeAnnKind::F64,
-
-                    "bool" => TypeAnnKind::Bool,
-                    "opaque" => TypeAnnKind::Opaque,
-                    _ => {
-                        let path_span = self.current.span;
-                        let mut segments = vec![name];
-                        while self.eat(TokenKind::PathSep)? {
-                            segments.push(self.expect_identifier()?);
-                        }
-                        TypeAnnKind::Path(Path {
-                            segments,
-                            span: path_span,
-                        })
-                    }
-                }
-            }
-            // Slice: [T] or Array: [T; N]
-            TokenKind::OpenBracket => {
-                self.advance()?;
-                let elem_type_ann = self.parse_type_ann()?;
-
-                match self.current.kind {
-                    // Slice: [T]
-                    TokenKind::CloseBracket => {
-                        self.advance()?;
-                        TypeAnnKind::Slice(Box::new(elem_type_ann))
-                    }
-                    // Array: [T; N]
-                    TokenKind::Semi => {
-                        self.advance()?;
-                        let count_expr = self.parse_expression()?;
-                        self.expect(TokenKind::CloseBracket)?;
-                        TypeAnnKind::Array(Box::new(elem_type_ann), Box::new(count_expr))
-                    }
-                    _ => {
-                        return Err(ParseError::new(
-                            format!(
-                                "Expected `]` or `;` after type in brackets, found {:?}",
-                                self.current.kind
-                            ),
-                            self.current.span,
-                        ));
-                    }
-                }
-            }
-            // Pointer: *T
-            TokenKind::Star => {
-                self.advance()?;
-                let inner_type = self.parse_type_ann()?;
-                TypeAnnKind::Pointer(Box::new(inner_type))
-            }
-            // Fn: fn(T1, T2) -> R  or  fn(T1, ...) -> R
-            TokenKind::Fn => {
-                self.advance()?;
-
-                self.expect(TokenKind::OpenParen)?;
-
-                let mut params_type = Vec::new();
-                let mut is_variadic = false;
-
-                while !self.eat(TokenKind::CloseParen)? {
-                    if self.eat(TokenKind::DotDotDot)? {
-                        is_variadic = true;
-                        self.expect(TokenKind::CloseParen)?;
-                        break;
-                    }
-
-                    params_type.push(self.parse_type_ann()?);
-
-                    if !self.eat(TokenKind::Comma)? {
-                        self.expect(TokenKind::CloseParen)?;
-                        break;
-                    }
-                }
-
-                let return_type_ann = if self.eat(TokenKind::Arrow)? {
-                    self.parse_type_ann()?
-                } else {
-                    TypeAnn {
-                        kind: TypeAnnKind::Unit,
-                        span: self.current.span,
-                    }
-                };
-
-                TypeAnnKind::Fn(params_type, Box::new(return_type_ann), is_variadic)
-            }
-            // Unit: ()
-            TokenKind::OpenParen => {
-                self.advance()?;
-                self.expect(TokenKind::CloseParen)?;
-                TypeAnnKind::Unit
-            }
-            // Never: !
-            TokenKind::Bang => {
-                self.advance()?;
-                TypeAnnKind::Never
-            }
-            _ => {
-                return Err(ParseError::new(
-                    format!("Unknown type: {:?}", self.current.kind),
-                    self.current.span,
-                ));
-            }
-        };
-
-        Ok(TypeAnn {
-            kind,
-            span: start_span,
-        })
-    }
-
-    // path = identifier *( "::" identifier)
-    fn parse_path(&mut self) -> Result<Path, ParseError> {
-        let span = self.current.span;
-
-        let mut segments = vec![self.expect_identifier()?];
-        while self.eat(TokenKind::PathSep)? {
-            segments.push(self.expect_identifier()?);
-        }
-
-        Ok(Path { segments, span })
     }
 
     // item = *item-attr ["pub"] (use-item / extern-item / const-def / static-def / struct-def / type-alias-def / function-def)
@@ -303,7 +137,7 @@ impl<'a> Parser<'a> {
             let span = self.current.span;
             self.advance()?;
 
-            let name = self.expect_identifier()?;
+            let name = self.parse_identifier()?;
 
             let kind = match name.as_str() {
                 "symbol" => {
@@ -339,13 +173,13 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::Use)?;
 
         let path_span = self.current.span;
-        let mut segments = vec![self.expect_identifier()?];
+        let mut segments = vec![self.parse_identifier()?];
         while self.eat(TokenKind::PathSep)? {
-            segments.push(self.expect_identifier()?);
+            segments.push(self.parse_identifier()?);
         }
 
         let name = if self.eat(TokenKind::As)? {
-            self.expect_identifier()?
+            self.parse_identifier()?
         } else {
             segments.last().expect("use path is non-empty").clone()
         };
@@ -532,44 +366,13 @@ impl<'a> Parser<'a> {
     fn parse_field(&mut self) -> Result<Field, ParseError> {
         let start_span = self.current.span;
 
-        let name = self.expect_identifier()?;
+        let name = self.parse_identifier()?;
         self.expect(TokenKind::Colon)?;
         let type_ann = self.parse_type_ann()?;
 
         Ok(Field {
             name,
             type_ann,
-            span: start_span,
-        })
-    }
-
-    // field-init-list = field-init *("," field-init) [","]
-    fn parse_field_init_list(&mut self) -> Result<Vec<FieldInit>, ParseError> {
-        let mut fields = Vec::new();
-
-        fields.push(self.parse_field_init()?);
-
-        while self.eat(TokenKind::Comma)? {
-            if self.current.kind == TokenKind::CloseBrace {
-                break;
-            }
-            fields.push(self.parse_field_init()?);
-        }
-
-        Ok(fields)
-    }
-
-    // field-init = identifier ":" expression
-    fn parse_field_init(&mut self) -> Result<FieldInit, ParseError> {
-        let start_span = self.current.span;
-
-        let name = self.expect_identifier()?;
-        self.expect(TokenKind::Colon)?;
-        let value = Box::new(self.parse_expression()?);
-
-        Ok(FieldInit {
-            name,
-            value,
             span: start_span,
         })
     }
@@ -666,13 +469,153 @@ impl<'a> Parser<'a> {
     fn parse_param(&mut self) -> Result<Param, ParseError> {
         let start_span = self.current.span;
 
-        let name = self.expect_identifier()?;
+        let name = self.parse_identifier()?;
         self.expect(TokenKind::Colon)?;
         let type_ann = self.parse_type_ann()?;
 
         Ok(Param {
             name,
             type_ann,
+            span: start_span,
+        })
+    }
+
+    // type-name = slice-type / array-type / pointer-type / fn-type / base-type / custom-type
+    // base-type = "u8" / "u16" / "u32" / "i32" / "i64" / "f32" / "f64"  / "bool" / "()" / "!"
+    // pointer-type = "*" type-name
+    // array-type = "[" type-name ";" integer "]"
+    // slice-type = "[" type-name "]"
+    // fn-type = "fn" "(" [fn-type-params] ")" ["->" type-name]
+    // fn-type-params = type-name *("," type-name) ["," "..."]
+    // custom-type = path
+    fn parse_type_ann(&mut self) -> Result<TypeAnn, ParseError> {
+        let start_span = self.current.span;
+
+        let kind = match self.current.kind.clone() {
+            // Base types: i64, u8, bool, or Path (module::Type or Type)
+            TokenKind::Ident(name) => {
+                let name = name.clone();
+                self.advance()?;
+                match name.as_str() {
+                    "u8" => TypeAnnKind::U8,
+                    "u16" => TypeAnnKind::U16,
+                    "u32" => TypeAnnKind::U32,
+                    "u64" => TypeAnnKind::U64,
+
+                    "i8" => TypeAnnKind::I8,
+                    "i16" => TypeAnnKind::I16,
+                    "i32" => TypeAnnKind::I32,
+                    "i64" => TypeAnnKind::I64,
+
+                    "f32" => TypeAnnKind::F32,
+                    "f64" => TypeAnnKind::F64,
+
+                    "bool" => TypeAnnKind::Bool,
+                    "opaque" => TypeAnnKind::Opaque,
+                    _ => {
+                        let path_span = self.current.span;
+                        let mut segments = vec![name];
+                        while self.eat(TokenKind::PathSep)? {
+                            segments.push(self.parse_identifier()?);
+                        }
+                        TypeAnnKind::Path(Path {
+                            segments,
+                            span: path_span,
+                        })
+                    }
+                }
+            }
+            // Slice: [T] or Array: [T; N]
+            TokenKind::OpenBracket => {
+                self.advance()?;
+                let elem_type_ann = self.parse_type_ann()?;
+
+                match self.current.kind {
+                    // Slice: [T]
+                    TokenKind::CloseBracket => {
+                        self.advance()?;
+                        TypeAnnKind::Slice(Box::new(elem_type_ann))
+                    }
+                    // Array: [T; N]
+                    TokenKind::Semi => {
+                        self.advance()?;
+                        let count_expr = self.parse_expression()?;
+                        self.expect(TokenKind::CloseBracket)?;
+                        TypeAnnKind::Array(Box::new(elem_type_ann), Box::new(count_expr))
+                    }
+                    _ => {
+                        return Err(ParseError::new(
+                            format!(
+                                "Expected `]` or `;` after type in brackets, found {:?}",
+                                self.current.kind
+                            ),
+                            self.current.span,
+                        ));
+                    }
+                }
+            }
+            // Pointer: *T
+            TokenKind::Star => {
+                self.advance()?;
+                let inner_type = self.parse_type_ann()?;
+                TypeAnnKind::Pointer(Box::new(inner_type))
+            }
+            // Fn: fn(T1, T2) -> R  or  fn(T1, ...) -> R
+            TokenKind::Fn => {
+                self.advance()?;
+
+                self.expect(TokenKind::OpenParen)?;
+
+                let mut params_type = Vec::new();
+                let mut is_variadic = false;
+
+                while !self.eat(TokenKind::CloseParen)? {
+                    if self.eat(TokenKind::DotDotDot)? {
+                        is_variadic = true;
+                        self.expect(TokenKind::CloseParen)?;
+                        break;
+                    }
+
+                    params_type.push(self.parse_type_ann()?);
+
+                    if !self.eat(TokenKind::Comma)? {
+                        self.expect(TokenKind::CloseParen)?;
+                        break;
+                    }
+                }
+
+                let return_type_ann = if self.eat(TokenKind::Arrow)? {
+                    self.parse_type_ann()?
+                } else {
+                    TypeAnn {
+                        kind: TypeAnnKind::Unit,
+                        span: self.current.span,
+                    }
+                };
+
+                TypeAnnKind::Fn(params_type, Box::new(return_type_ann), is_variadic)
+            }
+            // Unit: ()
+            TokenKind::OpenParen => {
+                self.advance()?;
+                self.expect(TokenKind::CloseParen)?;
+                TypeAnnKind::Unit
+            }
+            // Never: !
+            TokenKind::Bang => {
+                self.advance()?;
+                TypeAnnKind::Never
+            }
+            _ => {
+                return Err(ParseError::new(
+                    format!("Unknown type: {:?}", self.current.kind),
+                    self.current.span,
+                ));
+            }
+        };
+
+        Ok(TypeAnn {
+            kind,
             span: start_span,
         })
     }
@@ -745,7 +688,7 @@ impl<'a> Parser<'a> {
 
         self.expect(TokenKind::Let)?;
 
-        let name = self.expect_identifier()?;
+        let name = self.parse_identifier()?;
 
         self.expect(TokenKind::Colon)?;
 
@@ -874,7 +817,7 @@ impl<'a> Parser<'a> {
                     TokenKind::Dot => {
                         let span = lhs.span;
                         self.advance()?;
-                        let field_name = self.expect_identifier()?;
+                        let field_name = self.parse_identifier()?;
                         lhs = Expr {
                             kind: ExprKind::Field(Box::new(lhs), field_name),
                             span,
@@ -983,7 +926,7 @@ impl<'a> Parser<'a> {
                 let path_span = self.current.span;
                 let mut segments = vec![name];
                 while self.eat(TokenKind::PathSep)? {
-                    segments.push(self.expect_identifier()?);
+                    segments.push(self.parse_identifier()?);
                 }
                 let path = Path {
                     segments,
@@ -1085,6 +1028,37 @@ impl<'a> Parser<'a> {
         })
     }
 
+    // field-init-list = field-init *("," field-init) [","]
+    fn parse_field_init_list(&mut self) -> Result<Vec<FieldInit>, ParseError> {
+        let mut fields = Vec::new();
+
+        fields.push(self.parse_field_init()?);
+
+        while self.eat(TokenKind::Comma)? {
+            if self.current.kind == TokenKind::CloseBrace {
+                break;
+            }
+            fields.push(self.parse_field_init()?);
+        }
+
+        Ok(fields)
+    }
+
+    // field-init = identifier ":" expression
+    fn parse_field_init(&mut self) -> Result<FieldInit, ParseError> {
+        let start_span = self.current.span;
+
+        let name = self.parse_identifier()?;
+        self.expect(TokenKind::Colon)?;
+        let value = Box::new(self.parse_expression()?);
+
+        Ok(FieldInit {
+            name,
+            value,
+            span: start_span,
+        })
+    }
+
     // call-op = "(" [expression *("," expression) [","]] ")"
     fn parse_call(&mut self, callee: Expr) -> Result<Call, ParseError> {
         let start_span = callee.span;
@@ -1181,6 +1155,32 @@ impl<'a> Parser<'a> {
         let body = Box::new(self.parse_block()?);
 
         Ok(Loop { body, span })
+    }
+
+    // path = identifier *( "::" identifier)
+    fn parse_path(&mut self) -> Result<Path, ParseError> {
+        let span = self.current.span;
+
+        let mut segments = vec![self.parse_identifier()?];
+        while self.eat(TokenKind::PathSep)? {
+            segments.push(self.parse_identifier()?);
+        }
+
+        Ok(Path { segments, span })
+    }
+
+    // identifier = (ALPHA / "_") *(ALPHA / "_" / DIGIT)
+    fn parse_identifier(&mut self) -> Result<String, ParseError> {
+        if let TokenKind::Ident(name) = &self.current.kind {
+            let name = name.clone();
+            self.advance()?;
+            Ok(name)
+        } else {
+            Err(ParseError::new(
+                format!("Expected identifier, found {:?}", self.current.kind),
+                self.current.span,
+            ))
+        }
     }
 
     fn prefix_binding_power(token: &TokenKind) -> Option<u8> {
