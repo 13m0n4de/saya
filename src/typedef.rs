@@ -137,8 +137,8 @@ fn emit_extern(ext: &ExternItem, types: &TypeContext, out: &mut impl io::Write) 
 
 fn emit_const_val(val: &ConstVal, types: &TypeContext, out: &mut impl io::Write) -> io::Result<()> {
     match &val.kind {
-        ConstValKind::Integer(n) => write!(out, "{n}"),
-        ConstValKind::Float(n) => write!(out, "{n}"),
+        ConstValKind::Integer(n) => write!(out, "{n}{}", types.type_name(val.type_id)),
+        ConstValKind::Float(n) => write!(out, "{n}{}", types.type_name(val.type_id)),
         ConstValKind::Bool(b) => write!(out, "{b}"),
         ConstValKind::String(s) => write!(out, "\"{}\"", s.escape_default()),
         ConstValKind::CString(s) => write!(out, "c\"{}\"", s.escape_default()),
