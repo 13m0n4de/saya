@@ -1827,7 +1827,8 @@ impl<'a> TypeChecker<'a> {
 
         let ty = match typed_op {
             hir::UnaryOp::Neg => {
-                if typed_operand.type_id != TypeId::I64 {
+                let kind = &self.types.get(typed_operand.type_id).kind;
+                if !kind.is_signed() && !kind.is_float() {
                     return Err(TypeError::new(
                         format!(
                             "cannot apply `-` to type `{}`",
@@ -1836,12 +1837,11 @@ impl<'a> TypeChecker<'a> {
                         operand.span,
                     ));
                 }
-                TypeId::I64
+                typed_operand.type_id
             }
-            hir::UnaryOp::Not => match typed_operand.type_id {
-                TypeId::Bool => TypeId::Bool,
-                TypeId::I64 => TypeId::I64,
-                _ => {
+            hir::UnaryOp::Not => {
+                let kind = &self.types.get(typed_operand.type_id).kind;
+                if !matches!(kind, TypeKind::Bool) && !kind.is_integer() {
                     return Err(TypeError::new(
                         format!(
                             "cannot apply `!` to type `{}`",
@@ -1850,7 +1850,8 @@ impl<'a> TypeChecker<'a> {
                         operand.span,
                     ));
                 }
-            },
+                typed_operand.type_id
+            }
             hir::UnaryOp::Ref => {
                 match &typed_operand.kind {
                     hir::ExprKind::Literal(lit) => {

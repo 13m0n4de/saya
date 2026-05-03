@@ -180,8 +180,18 @@ impl TypeKind {
     pub fn is_integer(&self) -> bool {
         matches!(
             self,
-            TypeKind::U8 | TypeKind::U16 | TypeKind::U32 | TypeKind::I32 | TypeKind::I64
+            TypeKind::U8
+                | TypeKind::U16
+                | TypeKind::U32
+                | TypeKind::U64
+                | TypeKind::I8
+                | TypeKind::I16
+                | TypeKind::I32
+                | TypeKind::I64
         )
+    }
+    pub fn is_signed(&self) -> bool {
+        matches!(self, TypeKind::I8 | TypeKind::I16 | TypeKind::I32 | TypeKind::I64)
     }
     pub fn is_float(&self) -> bool {
         matches!(self, TypeKind::F32 | TypeKind::F64)
