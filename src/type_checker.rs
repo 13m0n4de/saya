@@ -2121,6 +2121,7 @@ impl<'a> TypeChecker<'a> {
             ast::ExprKind::Block(..) => self.check_expr_block(expr, expected),
             ast::ExprKind::If(..) => self.check_expr_if(expr, expected),
             ast::ExprKind::Binary(..) => self.check_expr_binary(expr, expected),
+            ast::ExprKind::Unary(..) => self.check_expr_unary(expr, expected),
             _ => {
                 let inferred = self.infer_expression(expr)?;
                 if !self.types.is_assignable(inferred.type_id, expected) {
@@ -2488,6 +2489,53 @@ impl<'a> TypeChecker<'a> {
 
         Ok(hir::Expr {
             kind: hir::ExprKind::Binary(typed_op, Box::new(typed_left), Box::new(typed_right)),
+            type_id: expected,
+            span: expr.span,
+        })
+    }
+
+    fn check_expr_unary(
+        &mut self,
+        expr: &ast::Expr,
+        expected: TypeId,
+    ) -> Result<hir::Expr, TypeError> {
+        let ast::ExprKind::Unary(op, operand) = &expr.kind else {
+            unreachable!()
+        };
+
+        let typed_op = hir::UnaryOp::from(op);
+
+        let propagate = match typed_op {
+            hir::UnaryOp::Neg => {
+                let kind = &self.types.get(expected).kind;
+                kind.is_signed() || kind.is_float()
+            }
+            hir::UnaryOp::Not => {
+                let kind = &self.types.get(expected).kind;
+                matches!(kind, TypeKind::Bool) || kind.is_integer()
+            }
+            hir::UnaryOp::Ref | hir::UnaryOp::Deref => false,
+        };
+
+        if !propagate {
+            let inferred = self.infer_expr_unary(expr)?;
+            if !self.types.is_assignable(inferred.type_id, expected) {
+                return Err(TypeError::new(
+                    format!(
+                        "expected `{}`, found `{}`",
+                        self.types.type_name(expected),
+                        self.types.type_name(inferred.type_id),
+                    ),
+                    expr.span,
+                ));
+            }
+            return Ok(inferred);
+        }
+
+        let typed_operand = self.check_expression(operand, expected)?;
+
+        Ok(hir::Expr {
+            kind: hir::ExprKind::Unary(typed_op, Box::new(typed_operand)),
             type_id: expected,
             span: expr.span,
         })
