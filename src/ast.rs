@@ -192,7 +192,7 @@ pub enum StmtKind {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Let {
     pub name: String,
-    pub type_ann: TypeAnn,
+    pub type_ann: Option<TypeAnn>,
     pub init: Expr,
     pub span: Span,
 }

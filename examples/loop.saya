@@ -1,6 +1,6 @@
 pub fn main() -> i64 {
-    let sum: i64 = 0;
-    let i: i64 = 1;
+    let sum = 0;
+    let i = 1;
 
     while i <= 10 {
         sum = sum + i;

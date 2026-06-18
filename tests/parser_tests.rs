@@ -283,7 +283,7 @@ fn test_let_binding() {
             match &body.stmts[0].kind {
                 StmtKind::Let(let_stmt) => {
                     assert_eq!(let_stmt.name, "x");
-                    assert_eq!(let_stmt.type_ann.kind, TypeAnnKind::I64);
+                    assert_eq!(let_stmt.type_ann.as_ref().unwrap().kind, TypeAnnKind::I64);
                 }
                 _ => panic!("Expected let statement"),
             }
@@ -495,7 +495,10 @@ fn test_array_type() {
             let body = func.body.as_ref().expect("Expected function body");
             match &body.stmts[0].kind {
                 StmtKind::Let(let_stmt) => {
-                    assert!(matches!(let_stmt.type_ann.kind, TypeAnnKind::Array(..)));
+                    assert!(matches!(
+                        let_stmt.type_ann.as_ref().unwrap().kind,
+                        TypeAnnKind::Array(..)
+                    ));
                 }
                 _ => panic!("Expected let statement"),
             }
@@ -631,7 +634,7 @@ fn test_fn_type_annotation() {
             match &body.stmts[0].kind {
                 StmtKind::Let(let_stmt) => {
                     assert!(matches!(
-                        let_stmt.type_ann.kind,
+                        let_stmt.type_ann.as_ref().unwrap().kind,
                         TypeAnnKind::Fn(_, _, false)
                     ));
                 }
@@ -647,15 +650,18 @@ fn test_fn_type_annotation() {
         ItemKind::Function(func) => {
             let body = func.body.as_ref().unwrap();
             match &body.stmts[0].kind {
-                StmtKind::Let(let_stmt) => match &let_stmt.type_ann.kind {
-                    TypeAnnKind::Fn(params, ret, false) => {
-                        assert_eq!(params.len(), 2);
-                        assert_eq!(params[0].kind, TypeAnnKind::I64);
-                        assert_eq!(params[1].kind, TypeAnnKind::I64);
-                        assert_eq!(ret.kind, TypeAnnKind::I64);
+                StmtKind::Let(let_stmt) => {
+                    let type_ann = let_stmt.type_ann.as_ref().unwrap();
+                    match &type_ann.kind {
+                        TypeAnnKind::Fn(params, ret, false) => {
+                            assert_eq!(params.len(), 2);
+                            assert_eq!(params[0].kind, TypeAnnKind::I64);
+                            assert_eq!(params[1].kind, TypeAnnKind::I64);
+                            assert_eq!(ret.kind, TypeAnnKind::I64);
+                        }
+                        _ => panic!("Expected fn type annotation"),
                     }
-                    _ => panic!("Expected fn type annotation"),
-                },
+                }
                 _ => panic!("Expected let statement"),
             }
         }
@@ -668,14 +674,17 @@ fn test_fn_type_annotation() {
         ItemKind::Function(func) => {
             let body = func.body.as_ref().unwrap();
             match &body.stmts[0].kind {
-                StmtKind::Let(let_stmt) => match &let_stmt.type_ann.kind {
-                    TypeAnnKind::Fn(params, ret, true) => {
-                        assert_eq!(params.len(), 1);
-                        assert!(matches!(params[0].kind, TypeAnnKind::Pointer(_)));
-                        assert_eq!(ret.kind, TypeAnnKind::I64);
+                StmtKind::Let(let_stmt) => {
+                    let type_ann = let_stmt.type_ann.as_ref().unwrap();
+                    match &type_ann.kind {
+                        TypeAnnKind::Fn(params, ret, true) => {
+                            assert_eq!(params.len(), 1);
+                            assert!(matches!(params[0].kind, TypeAnnKind::Pointer(_)));
+                            assert_eq!(ret.kind, TypeAnnKind::I64);
+                        }
+                        _ => panic!("Expected variadic fn type annotation"),
                     }
-                    _ => panic!("Expected variadic fn type annotation"),
-                },
+                }
                 _ => panic!("Expected let statement"),
             }
         }

@@ -41,7 +41,7 @@ block = "{" *statement [expression] "}"
 
 statement = expr-stmt / let-stmt
 expr-stmt = expression ";"
-let-stmt = "let" identifier ":" type-name "=" expression ";"
+let-stmt = "let" identifier [":" type-name] "=" expression ";"
 
 expression = return-expr / assign-expr
 

@@ -74,7 +74,7 @@ impl<'a> TypeChecker<'a> {
     pub fn check(&mut self, prog: &ast::Program) -> Result<hir::Program, TypeError> {
         self.load_uses(prog)?;
         self.scan_declarations(prog)?;
-        self.check_items(prog)
+        self.lower_items(prog)
     }
 
     fn make_ident(&self, path: &ast::Path) -> String {
@@ -280,17 +280,7 @@ impl<'a> TypeChecker<'a> {
             ast::TypeAnnKind::Array(elem, len_expr) => {
                 let (elem_size, elem_align) = self.type_dimensions(elem)?;
 
-                let typed_len = self.check_expression(len_expr)?;
-
-                if typed_len.type_id != TypeId::I64 {
-                    return Err(TypeError::new(
-                        format!(
-                            "Array length must be `i64`, found `{}`",
-                            self.types.type_name(typed_len.type_id)
-                        ),
-                        len_expr.span,
-                    ));
-                }
+                let typed_len = self.check_expression(len_expr, TypeId::I64)?;
 
                 let evaluated_len = self.eval_const_expr(&typed_len)?;
 
@@ -366,7 +356,7 @@ impl<'a> TypeChecker<'a> {
             ast::TypeAnnKind::Array(elem, len_expr) => {
                 let elem_type_id = self.lower_type(elem)?;
 
-                let typed_len = self.check_expression(len_expr)?;
+                let typed_len = self.infer_expression(len_expr)?;
 
                 if typed_len.type_id != TypeId::I64 {
                     return Err(TypeError::new(
@@ -592,18 +582,7 @@ impl<'a> TypeChecker<'a> {
                 );
 
                 let type_id = self.lower_type(&def.type_ann)?;
-                let typed_init = self.check_expression(&def.init)?;
-
-                if !self.types.is_assignable(typed_init.type_id, type_id) {
-                    return Err(TypeError::new(
-                        format!(
-                            "type mismatch in const `{name}`: expected `{}`, found `{}`",
-                            self.types.type_name(type_id),
-                            self.types.type_name(typed_init.type_id)
-                        ),
-                        def.init.span,
-                    ));
-                }
+                let typed_init = self.check_expression(&def.init, type_id)?;
 
                 let value = self.eval_const_expr(&typed_init)?;
 
@@ -638,18 +617,7 @@ impl<'a> TypeChecker<'a> {
                 };
 
                 let type_id = self.lower_type(&def.type_ann)?;
-                let typed_init = self.check_expression(&def.init)?;
-
-                if !self.types.is_assignable(typed_init.type_id, type_id) {
-                    return Err(TypeError::new(
-                        format!(
-                            "type mismatch in static `{name}`: expected `{}`, found `{}`",
-                            self.types.type_name(type_id),
-                            self.types.type_name(typed_init.type_id)
-                        ),
-                        def.init.span,
-                    ));
-                }
+                let typed_init = self.check_expression(&def.init, type_id)?;
 
                 let value = self.eval_const_expr(&typed_init)?;
                 let ident = self.make_ident(&def.path);
@@ -927,7 +895,7 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    fn check_items(&mut self, prog: &ast::Program) -> Result<hir::Program, TypeError> {
+    fn lower_items(&mut self, prog: &ast::Program) -> Result<hir::Program, TypeError> {
         let mut uses = Vec::new();
         let mut typed_items = Vec::new();
 
@@ -968,14 +936,14 @@ impl<'a> TypeChecker<'a> {
                         span: def.span,
                     })
                 }
-                ast::ItemKind::Function(_) => hir::ItemKind::Function(self.check_item_fn(item)?),
+                ast::ItemKind::Function(_) => hir::ItemKind::Function(self.lower_item_fn(item)?),
                 ast::ItemKind::Extern(extern_item) => {
                     let hir_extern = match extern_item {
                         ast::ExternItem::Static(_) => {
-                            hir::ExternItem::Static(self.check_item_extern_static(item)?)
+                            hir::ExternItem::Static(self.lower_item_extern_static(item)?)
                         }
                         ast::ExternItem::Function(_) => {
-                            hir::ExternItem::Function(self.check_item_extern_fn(item)?)
+                            hir::ExternItem::Function(self.lower_item_extern_fn(item)?)
                         }
                     };
                     hir::ItemKind::Extern(hir_extern)
@@ -1023,7 +991,7 @@ impl<'a> TypeChecker<'a> {
         })
     }
 
-    fn check_item_fn(&mut self, item: &ast::Item) -> Result<hir::FunctionDef, TypeError> {
+    fn lower_item_fn(&mut self, item: &ast::Item) -> Result<hir::FunctionDef, TypeError> {
         let ast::ItemKind::Function(func) = &item.kind else {
             unreachable!()
         };
@@ -1065,17 +1033,7 @@ impl<'a> TypeChecker<'a> {
 
         let typed_body = match &func.body {
             Some(block) => {
-                let block = self.check_block(block)?;
-                if block.type_id != return_type_id && block.type_id != TypeId::Never {
-                    return Err(TypeError::new(
-                        format!(
-                            "mismatched return type in function `{ident}`: expected `{}`, found `{}`",
-                            self.types.type_name(return_type_id),
-                            self.types.type_name(block.type_id)
-                        ),
-                        block.span,
-                    ));
-                }
+                let block = self.check_block(block, return_type_id)?;
                 Some(block)
             }
             None => None,
@@ -1093,7 +1051,7 @@ impl<'a> TypeChecker<'a> {
         })
     }
 
-    fn check_item_extern_fn(
+    fn lower_item_extern_fn(
         &mut self,
         item: &ast::Item,
     ) -> Result<hir::ExternFunctionDecl, TypeError> {
@@ -1134,7 +1092,7 @@ impl<'a> TypeChecker<'a> {
         })
     }
 
-    fn check_item_extern_static(
+    fn lower_item_extern_static(
         &mut self,
         item: &ast::Item,
     ) -> Result<hir::ExternStaticDecl, TypeError> {
@@ -1159,7 +1117,7 @@ impl<'a> TypeChecker<'a> {
         })
     }
 
-    fn check_block(&mut self, block: &ast::Block) -> Result<hir::Block, TypeError> {
+    fn infer_block(&mut self, block: &ast::Block) -> Result<hir::Block, TypeError> {
         self.scopes.push(Scope {
             kind: ScopeKind::Block,
             objects: HashMap::new(),
@@ -1167,6 +1125,7 @@ impl<'a> TypeChecker<'a> {
 
         let mut typed_stmts = Vec::new();
         let mut has_never = false;
+        let last_idx = block.stmts.len().checked_sub(1);
 
         for (idx, stmt) in block.stmts.iter().enumerate() {
             if has_never {
@@ -1176,8 +1135,9 @@ impl<'a> TypeChecker<'a> {
                 ));
             }
 
-            let typed_stmt = self.check_statement(stmt)?;
-            let is_last = idx == block.stmts.len() - 1;
+            let is_last = Some(idx) == last_idx;
+
+            let typed_stmt = self.infer_statement(stmt)?;
 
             match &typed_stmt.kind {
                 hir::StmtKind::Expr(expr)
@@ -1225,27 +1185,19 @@ impl<'a> TypeChecker<'a> {
         })
     }
 
-    fn check_statement(&mut self, stmt: &ast::Stmt) -> Result<hir::Stmt, TypeError> {
+    fn infer_statement(&mut self, stmt: &ast::Stmt) -> Result<hir::Stmt, TypeError> {
         let kind = match &stmt.kind {
             ast::StmtKind::Let(let_stmt) => {
-                let declared_type_id = self.lower_type(&let_stmt.type_ann)?;
-                let typed_init = self.check_expression(&let_stmt.init)?;
+                let (type_id, typed_init) = if let Some(type_ann) = &let_stmt.type_ann {
+                    let declared_type_id = self.lower_type(type_ann)?;
+                    let typed_init = self.check_expression(&let_stmt.init, declared_type_id)?;
+                    (declared_type_id, typed_init)
+                } else {
+                    let typed_init = self.infer_expression(&let_stmt.init)?;
+                    (typed_init.type_id, typed_init)
+                };
 
-                if !self
-                    .types
-                    .is_assignable(typed_init.type_id, declared_type_id)
-                {
-                    return Err(TypeError::new(
-                        format!(
-                            "type mismatch in let binding: expected `{}`, found `{}`",
-                            self.types.type_name(declared_type_id),
-                            self.types.type_name(typed_init.type_id)
-                        ),
-                        let_stmt.init.span,
-                    ));
-                }
-
-                let obj = ScopeObject::Var(declared_type_id);
+                let obj = ScopeObject::Var(type_id);
                 if self
                     .scopes
                     .last_mut()
@@ -1260,17 +1212,17 @@ impl<'a> TypeChecker<'a> {
 
                 hir::StmtKind::Let(hir::Let {
                     name: let_stmt.name.clone(),
-                    type_id: declared_type_id,
+                    type_id,
                     init: typed_init,
                     span: let_stmt.span,
                 })
             }
             ast::StmtKind::Semi(expr) => {
-                let typed_expr = self.check_expression(expr)?;
+                let typed_expr = self.infer_expression(expr)?;
                 hir::StmtKind::Semi(typed_expr)
             }
             ast::StmtKind::Expr(expr) => {
-                let typed_expr = self.check_expression(expr)?;
+                let typed_expr = self.infer_expression(expr)?;
                 hir::StmtKind::Expr(typed_expr)
             }
         };
@@ -1281,84 +1233,45 @@ impl<'a> TypeChecker<'a> {
         })
     }
 
-    fn check_expression(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
+    fn infer_expression(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
         match &expr.kind {
-            ast::ExprKind::Literal(..) => self.check_expr_literal(expr),
-            ast::ExprKind::Struct(..) => self.check_expr_struct(expr),
-            ast::ExprKind::Path(..) => self.check_expr_path(expr),
-            ast::ExprKind::Array(..) => self.check_expr_array(expr),
-            ast::ExprKind::Repeat(..) => self.check_expr_repeat(expr),
-            ast::ExprKind::Field(..) => self.check_expr_field(expr),
-            ast::ExprKind::Index(..) => self.check_expr_index(expr),
-            ast::ExprKind::Call(..) => self.check_expr_call(expr),
-            ast::ExprKind::Unary(..) => self.check_expr_unary(expr),
-            ast::ExprKind::Binary(..) => self.check_expr_binary(expr),
-            ast::ExprKind::Assign(..) => self.check_expr_assign(expr),
-            ast::ExprKind::Return(..) => self.check_expr_return(expr),
-            ast::ExprKind::Block(..) => self.check_expr_block(expr),
-            ast::ExprKind::If(..) => self.check_expr_if(expr),
-            ast::ExprKind::While(..) => self.check_expr_while(expr),
-            ast::ExprKind::Loop(..) => self.check_expr_loop(expr),
-            ast::ExprKind::Break(..) => self.check_expr_break(expr),
-            ast::ExprKind::Continue => self.check_expr_continue(expr),
+            ast::ExprKind::Literal(..) => self.infer_expr_literal(expr),
+            ast::ExprKind::Struct(..) => self.infer_expr_struct(expr),
+            ast::ExprKind::Path(..) => self.infer_expr_path(expr),
+            ast::ExprKind::Array(..) => self.infer_expr_array(expr),
+            ast::ExprKind::Repeat(..) => self.infer_expr_repeat(expr),
+            ast::ExprKind::Field(..) => self.infer_expr_field(expr),
+            ast::ExprKind::Index(..) => self.infer_expr_index(expr),
+            ast::ExprKind::Call(..) => self.infer_expr_call(expr),
+            ast::ExprKind::Unary(..) => self.infer_expr_unary(expr),
+            ast::ExprKind::Binary(..) => self.infer_expr_binary(expr),
+            ast::ExprKind::Assign(..) => self.infer_expr_assign(expr),
+            ast::ExprKind::Return(..) => self.infer_expr_return(expr),
+            ast::ExprKind::Block(..) => self.infer_expr_block(expr),
+            ast::ExprKind::If(..) => self.infer_expr_if(expr),
+            ast::ExprKind::While(..) => self.infer_expr_while(expr),
+            ast::ExprKind::Loop(..) => self.infer_expr_loop(expr),
+            ast::ExprKind::Break(..) => self.infer_expr_break(expr),
+            ast::ExprKind::Continue => self.infer_expr_continue(expr),
         }
     }
 
-    fn check_expr_literal(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
+    fn infer_expr_literal(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
         let ast::ExprKind::Literal(lit) = &expr.kind else {
             unreachable!()
         };
 
         let (ty, kind) = match lit {
             ast::Literal::Integer(n, suffix) => {
-                let type_id = match suffix.as_deref() {
-                    Some("u8") => {
-                        if *n < 0 || *n > i64::from(u8::MAX) {
-                            return Err(TypeError::new(
-                                format!(
-                                    "Integer literal `{n}` is out of range for type u8 (0..=255)"
-                                ),
-                                expr.span,
-                            ));
-                        }
-                        TypeId::U8
-                    }
-                    Some("u16") => {
-                        if *n < 0 || *n > i64::from(u16::MAX) {
-                            return Err(TypeError::new(
-                                format!(
-                                    "Integer literal `{n}` is out of range for type u16 (0..=65535)"
-                                ),
-                                expr.span,
-                            ));
-                        }
-                        TypeId::U16
-                    }
-                    Some("u32") => {
-                        if *n < 0 || *n > i64::from(u32::MAX) {
-                            return Err(TypeError::new(
-                                format!(
-                                    "Integer literal `{n}` is out of range for type u32 (0..=4294967295)"
-                                ),
-                                expr.span,
-                            ));
-                        }
-                        TypeId::U32
-                    }
-
-                    Some("i32") => {
-                        if *n < i64::from(i32::MIN) || *n > i64::from(i32::MAX) {
-                            return Err(TypeError::new(
-                                format!(
-                                    "Integer literal `{n}` is out of range for type i32 (-2147483648..=2147483647)"
-                                ),
-                                expr.span,
-                            ));
-                        }
-                        TypeId::I32
-                    }
-                    Some("i64") | None => TypeId::I64,
-
+                let (min, max, type_id) = match suffix.as_deref() {
+                    Some("u8") => (0i64, i64::from(u8::MAX), TypeId::U8),
+                    Some("u16") => (0i64, i64::from(u16::MAX), TypeId::U16),
+                    Some("u32") => (0i64, i64::from(u32::MAX), TypeId::U32),
+                    Some("u64") => (0i64, u64::MAX.cast_signed(), TypeId::U64),
+                    Some("i8") => (0i64, i64::from(i8::MAX), TypeId::I8),
+                    Some("i16") => (0i64, i64::from(i16::MAX), TypeId::I16),
+                    Some("i32") => (0i64, i64::from(i32::MAX), TypeId::I32),
+                    Some("i64") | None => (0i64, i64::MAX, TypeId::I64),
                     Some(unknown) => {
                         return Err(TypeError::new(
                             format!("Unknown integer suffix `{unknown}`"),
@@ -1366,6 +1279,16 @@ impl<'a> TypeChecker<'a> {
                         ));
                     }
                 };
+                if *n < min || *n > max {
+                    return Err(TypeError::new(
+                        format!(
+                            "integer literal `{n}` is out of range for type `{}` ({min}..={max})",
+                            self.types.type_name(type_id)
+                        ),
+                        expr.span,
+                    ));
+                }
+
                 (type_id, hir::ExprKind::Literal(hir::Literal::Integer(*n)))
             }
             ast::Literal::Float(n, suffix) => {
@@ -1399,7 +1322,7 @@ impl<'a> TypeChecker<'a> {
         })
     }
 
-    fn check_expr_struct(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
+    fn infer_expr_struct(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
         let ast::ExprKind::Struct(struct_expr) = &expr.kind else {
             unreachable!()
         };
@@ -1450,19 +1373,7 @@ impl<'a> TypeChecker<'a> {
                 )
             })?;
 
-            let typed_value = self.check_expression(&field_init.value)?;
-
-            if !self.types.is_assignable(typed_value.type_id, field.type_id) {
-                return Err(TypeError::new(
-                    format!(
-                        "field `{}` has wrong type: expected `{}`, found `{}`",
-                        field.name,
-                        self.types.type_name(field.type_id),
-                        self.types.type_name(typed_value.type_id)
-                    ),
-                    field_init.value.span,
-                ));
-            }
+            let typed_value = self.check_expression(&field_init.value, field.type_id)?;
 
             typed_fields.push(hir::FieldInit {
                 name: field.name.clone(),
@@ -1491,7 +1402,7 @@ impl<'a> TypeChecker<'a> {
         })
     }
 
-    fn check_expr_path(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
+    fn infer_expr_path(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
         let ast::ExprKind::Path(path) = &expr.kind else {
             unreachable!()
         };
@@ -1554,7 +1465,7 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    fn check_expr_array(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
+    fn infer_expr_array(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
         let ast::ExprKind::Array(elems) = &expr.kind else {
             unreachable!()
         };
@@ -1567,22 +1478,12 @@ impl<'a> TypeChecker<'a> {
         }
 
         let mut typed_elems = Vec::new();
-        let first_elem = self.check_expression(&elems[0])?;
+        let first_elem = self.infer_expression(&elems[0])?;
         let elem_type_id = first_elem.type_id;
         typed_elems.push(first_elem);
 
         for elem in &elems[1..] {
-            let typed_elem = self.check_expression(elem)?;
-            if !self.types.is_assignable(typed_elem.type_id, elem_type_id) {
-                return Err(TypeError::new(
-                    format!(
-                        "array element type mismatch: expected `{}`, found `{}`",
-                        self.types.type_name(elem_type_id),
-                        self.types.type_name(typed_elem.type_id)
-                    ),
-                    elem.span,
-                ));
-            }
+            let typed_elem = self.check_expression(elem, elem_type_id)?;
             typed_elems.push(typed_elem);
         }
 
@@ -1594,23 +1495,13 @@ impl<'a> TypeChecker<'a> {
         })
     }
 
-    fn check_expr_repeat(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
+    fn infer_expr_repeat(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
         let ast::ExprKind::Repeat(elem, count) = &expr.kind else {
             unreachable!()
         };
 
-        let typed_elem = self.check_expression(elem)?;
-        let typed_count = self.check_expression(count)?;
-
-        if typed_count.type_id != TypeId::I64 {
-            return Err(TypeError::new(
-                format!(
-                    "repeat count must be `i64`, found `{}`",
-                    self.types.type_name(typed_count.type_id)
-                ),
-                count.span,
-            ));
-        }
+        let typed_elem = self.infer_expression(elem)?;
+        let typed_count = self.check_expression(count, TypeId::I64)?;
 
         let evaluated_count = self.eval_const_expr(&typed_count)?;
 
@@ -1628,12 +1519,12 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    fn check_expr_field(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
+    fn infer_expr_field(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
         let ast::ExprKind::Field(base, field_name) = &expr.kind else {
             unreachable!()
         };
 
-        let typed_base = self.check_expression(base)?;
+        let typed_base = self.infer_expression(base)?;
 
         let (final_base, struct_type_id) = match self.types.get(typed_base.type_id).kind {
             TypeKind::Pointer(inner_type_id) => {
@@ -1688,23 +1579,13 @@ impl<'a> TypeChecker<'a> {
         })
     }
 
-    fn check_expr_index(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
+    fn infer_expr_index(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
         let ast::ExprKind::Index(array, index) = &expr.kind else {
             unreachable!()
         };
 
-        let typed_array = self.check_expression(array)?;
-        let typed_index = self.check_expression(index)?;
-
-        if typed_index.type_id != TypeId::I64 {
-            return Err(TypeError::new(
-                format!(
-                    "array index must be `i64`, found `{}`",
-                    self.types.type_name(typed_index.type_id)
-                ),
-                index.span,
-            ));
-        }
+        let typed_array = self.infer_expression(array)?;
+        let typed_index = self.check_expression(index, TypeId::I64)?;
 
         let (final_array, elem_type_id) = match self.types.get(typed_array.type_id).kind {
             TypeKind::Pointer(inner_type_id) => match self.types.get(inner_type_id).kind {
@@ -1747,12 +1628,12 @@ impl<'a> TypeChecker<'a> {
         })
     }
 
-    fn check_expr_call(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
+    fn infer_expr_call(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
         let ast::ExprKind::Call(call) = &expr.kind else {
             unreachable!()
         };
 
-        let typed_callee = self.check_expression(&call.callee)?;
+        let typed_callee = self.infer_expression(&call.callee)?;
 
         let TypeKind::Fn(params, return_ty, is_variadic) =
             self.types.get(typed_callee.type_id).kind.clone()
@@ -1786,21 +1667,11 @@ impl<'a> TypeChecker<'a> {
 
         let mut typed_args = Vec::new();
         for (arg, &param_type_id) in call.args.iter().zip(&params) {
-            let typed_arg = self.check_expression(arg)?;
-            if !self.types.is_assignable(typed_arg.type_id, param_type_id) {
-                return Err(TypeError::new(
-                    format!(
-                        "argument type mismatch: expected `{}`, found `{}`",
-                        self.types.type_name(param_type_id),
-                        self.types.type_name(typed_arg.type_id)
-                    ),
-                    arg.span,
-                ));
-            }
+            let typed_arg = self.check_expression(arg, param_type_id)?;
             typed_args.push(typed_arg);
         }
         for arg in call.args.iter().skip(min_args) {
-            typed_args.push(self.check_expression(arg)?);
+            typed_args.push(self.infer_expression(arg)?);
         }
 
         let variadic_start = is_variadic.then_some(min_args as u64);
@@ -1817,13 +1688,13 @@ impl<'a> TypeChecker<'a> {
         })
     }
 
-    fn check_expr_unary(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
+    fn infer_expr_unary(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
         let ast::ExprKind::Unary(op, operand) = &expr.kind else {
             unreachable!()
         };
 
         let typed_op = hir::UnaryOp::from(op);
-        let typed_operand = self.check_expression(operand)?;
+        let typed_operand = self.infer_expression(operand)?;
 
         let ty = match typed_op {
             hir::UnaryOp::Neg => {
@@ -1892,14 +1763,14 @@ impl<'a> TypeChecker<'a> {
         })
     }
 
-    fn check_expr_binary(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
+    fn infer_expr_binary(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
         let ast::ExprKind::Binary(op, left, right) = &expr.kind else {
             unreachable!()
         };
 
         let typed_op = hir::BinaryOp::from(op);
-        let typed_left = self.check_expression(left)?;
-        let typed_right = self.check_expression(right)?;
+        let typed_left = self.infer_expression(left)?;
+        let typed_right = self.infer_expression(right)?;
 
         let ty = match typed_op {
             hir::BinaryOp::Add | hir::BinaryOp::Sub | hir::BinaryOp::Mul | hir::BinaryOp::Div => {
@@ -1979,27 +1850,13 @@ impl<'a> TypeChecker<'a> {
         })
     }
 
-    fn check_expr_assign(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
+    fn infer_expr_assign(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
         let ast::ExprKind::Assign(lhs, rhs) = &expr.kind else {
             unreachable!()
         };
 
-        let typed_lhs = self.check_expression(lhs)?;
-        let typed_rhs = self.check_expression(rhs)?;
-
-        if !self
-            .types
-            .is_assignable(typed_lhs.type_id, typed_rhs.type_id)
-        {
-            return Err(TypeError::new(
-                format!(
-                    "assignment type mismatch: expected `{}`, found `{}`",
-                    self.types.type_name(typed_lhs.type_id),
-                    self.types.type_name(typed_rhs.type_id)
-                ),
-                expr.span,
-            ));
-        }
+        let typed_lhs = self.infer_expression(lhs)?;
+        let typed_rhs = self.check_expression(rhs, typed_lhs.type_id)?;
 
         Ok(hir::Expr {
             kind: hir::ExprKind::Assign(Box::new(typed_lhs), Box::new(typed_rhs)),
@@ -2008,7 +1865,7 @@ impl<'a> TypeChecker<'a> {
         })
     }
 
-    fn check_expr_return(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
+    fn infer_expr_return(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
         let ast::ExprKind::Return(val) = &expr.kind else {
             unreachable!()
         };
@@ -2022,17 +1879,7 @@ impl<'a> TypeChecker<'a> {
             .ok_or_else(|| TypeError::new("return outside of function".to_string(), expr.span))?;
 
         let kind = if let Some(v) = val {
-            let typed_val = self.check_expression(v)?;
-            if !self.types.is_assignable(typed_val.type_id, return_type_id) {
-                return Err(TypeError::new(
-                    format!(
-                        "return type mismatch: expected `{}`, found `{}`",
-                        self.types.type_name(return_type_id),
-                        self.types.type_name(typed_val.type_id)
-                    ),
-                    v.span,
-                ));
-            }
+            let typed_val = self.check_expression(v, return_type_id)?;
             hir::ExprKind::Return(Some(Box::new(typed_val)))
         } else {
             if return_type_id != TypeId::Unit {
@@ -2054,12 +1901,12 @@ impl<'a> TypeChecker<'a> {
         })
     }
 
-    fn check_expr_block(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
+    fn infer_expr_block(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
         let ast::ExprKind::Block(block) = &expr.kind else {
             unreachable!()
         };
 
-        let typed_block = self.check_block(block)?;
+        let typed_block = self.infer_block(block)?;
         let type_id = typed_block.type_id;
 
         Ok(hir::Expr {
@@ -2069,27 +1916,17 @@ impl<'a> TypeChecker<'a> {
         })
     }
 
-    fn check_expr_if(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
+    fn infer_expr_if(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
         let ast::ExprKind::If(if_expr) = &expr.kind else {
             unreachable!()
         };
 
-        let typed_cond = self.check_expression(&if_expr.cond)?;
+        let typed_cond = self.check_expression(&if_expr.cond, TypeId::Bool)?;
 
-        if typed_cond.type_id != TypeId::Bool {
-            return Err(TypeError::new(
-                format!(
-                    "if condition must be `bool`, found `{}`",
-                    self.types.type_name(typed_cond.type_id)
-                ),
-                if_expr.cond.span,
-            ));
-        }
-
-        let typed_then = self.check_block(&if_expr.then_body)?;
+        let typed_then = self.infer_block(&if_expr.then_body)?;
 
         let (ty, typed_else) = if let Some(else_expr) = &if_expr.else_body {
-            let typed_else = self.check_expression(else_expr)?;
+            let typed_else = self.infer_expression(else_expr)?;
 
             let result_ty = match (typed_then.type_id, typed_else.type_id) {
                 (TypeId::Never, TypeId::Never) => TypeId::Never,
@@ -2128,7 +1965,7 @@ impl<'a> TypeChecker<'a> {
         })
     }
 
-    fn check_expr_while(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
+    fn infer_expr_while(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
         let ast::ExprKind::While(while_expr) = &expr.kind else {
             unreachable!()
         };
@@ -2141,19 +1978,9 @@ impl<'a> TypeChecker<'a> {
             objects: HashMap::new(),
         });
 
-        let typed_cond = self.check_expression(&while_expr.cond)?;
+        let typed_cond = self.check_expression(&while_expr.cond, TypeId::Bool)?;
 
-        if typed_cond.type_id != TypeId::Bool {
-            return Err(TypeError::new(
-                format!(
-                    "while condition must be `bool`, found `{}`",
-                    self.types.type_name(typed_cond.type_id)
-                ),
-                while_expr.cond.span,
-            ));
-        }
-
-        let typed_body = self.check_block(&while_expr.body)?;
+        let typed_body = self.infer_block(&while_expr.body)?;
 
         self.scopes.pop();
 
@@ -2168,7 +1995,7 @@ impl<'a> TypeChecker<'a> {
         })
     }
 
-    fn check_expr_loop(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
+    fn infer_expr_loop(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
         let ast::ExprKind::Loop(loop_expr) = &expr.kind else {
             unreachable!()
         };
@@ -2181,7 +2008,7 @@ impl<'a> TypeChecker<'a> {
             objects: HashMap::new(),
         });
 
-        let typed_body = self.check_block(&loop_expr.body)?;
+        let typed_body = self.infer_block(&loop_expr.body)?;
 
         let break_type = match &self.scopes.last_mut().kind {
             ScopeKind::Loop { break_type, .. } => *break_type,
@@ -2199,7 +2026,7 @@ impl<'a> TypeChecker<'a> {
         })
     }
 
-    fn check_expr_break(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
+    fn infer_expr_break(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
         let ast::ExprKind::Break(val_expr) = &expr.kind else {
             unreachable!()
         };
@@ -2223,7 +2050,7 @@ impl<'a> TypeChecker<'a> {
 
         let (kind, val_type) = match val_expr {
             Some(val_expr) => {
-                let typed = self.check_expression(val_expr)?;
+                let typed = self.infer_expression(val_expr)?;
                 let ty = typed.type_id;
                 (hir::ExprKind::Break(Some(Box::new(typed))), ty)
             }
@@ -2262,7 +2089,7 @@ impl<'a> TypeChecker<'a> {
         })
     }
 
-    fn check_expr_continue(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
+    fn infer_expr_continue(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
         let ast::ExprKind::Continue = &expr.kind else {
             unreachable!()
         };
@@ -2278,6 +2105,390 @@ impl<'a> TypeChecker<'a> {
         Ok(hir::Expr {
             kind: hir::ExprKind::Continue,
             type_id: TypeId::Never,
+            span: expr.span,
+        })
+    }
+
+    fn check_expression(
+        &mut self,
+        expr: &ast::Expr,
+        expected: TypeId,
+    ) -> Result<hir::Expr, TypeError> {
+        match &expr.kind {
+            ast::ExprKind::Literal(..) => self.check_expr_literal(expr, expected),
+            ast::ExprKind::Array(..) => self.check_expr_array(expr, expected),
+            ast::ExprKind::Repeat(..) => self.check_expr_repeat(expr, expected),
+            ast::ExprKind::Block(..) => self.check_expr_block(expr, expected),
+            ast::ExprKind::If(..) => self.check_expr_if(expr, expected),
+            ast::ExprKind::Binary(..) => self.check_expr_binary(expr, expected),
+            _ => {
+                let inferred = self.infer_expression(expr)?;
+                if !self.types.is_assignable(inferred.type_id, expected) {
+                    return Err(TypeError::new(
+                        format!(
+                            "expected `{}`, found `{}`",
+                            self.types.type_name(expected),
+                            self.types.type_name(inferred.type_id),
+                        ),
+                        expr.span,
+                    ));
+                }
+                Ok(inferred)
+            }
+        }
+    }
+
+    fn check_expr_literal(
+        &mut self,
+        expr: &ast::Expr,
+        expected: TypeId,
+    ) -> Result<hir::Expr, TypeError> {
+        let ast::ExprKind::Literal(lit) = &expr.kind else {
+            unreachable!()
+        };
+
+        match lit {
+            ast::Literal::Integer(n, None) if self.types.get(expected).kind.is_integer() => {
+                let (min, max, name) = match expected {
+                    TypeId::U8 => (0i64, i64::from(u8::MAX), "u8"),
+                    TypeId::U16 => (0i64, i64::from(u16::MAX), "u16"),
+                    TypeId::U32 => (0i64, i64::from(u32::MAX), "u32"),
+                    TypeId::U64 => (0i64, u64::MAX.cast_signed(), "u64"),
+                    TypeId::I8 => (i64::from(i8::MIN), i64::from(i8::MAX), "i8"),
+                    TypeId::I16 => (i64::from(i16::MIN), i64::from(i16::MAX), "i16"),
+                    TypeId::I32 => (i64::from(i32::MIN), i64::from(i32::MAX), "i32"),
+                    TypeId::I64 => (i64::MIN, i64::MAX, "i64"),
+                    _ => unreachable!(),
+                };
+                if *n < min || *n > max {
+                    return Err(TypeError::new(
+                        format!(
+                            "integer literal `{n}` is out of range for type `{name}` ({min}..={max})"
+                        ),
+                        expr.span,
+                    ));
+                }
+                Ok(hir::Expr {
+                    kind: hir::ExprKind::Literal(hir::Literal::Integer(*n)),
+                    type_id: expected,
+                    span: expr.span,
+                })
+            }
+            ast::Literal::Float(n, None) if self.types.get(expected).kind.is_float() => {
+                Ok(hir::Expr {
+                    kind: hir::ExprKind::Literal(hir::Literal::Float(*n)),
+                    type_id: expected,
+                    span: expr.span,
+                })
+            }
+            _ => {
+                let inferred = self.infer_expr_literal(expr)?;
+                if !self.types.is_assignable(inferred.type_id, expected) {
+                    return Err(TypeError::new(
+                        format!(
+                            "expected `{}`, found `{}`",
+                            self.types.type_name(expected),
+                            self.types.type_name(inferred.type_id),
+                        ),
+                        expr.span,
+                    ));
+                }
+                Ok(inferred)
+            }
+        }
+    }
+
+    fn check_expr_array(
+        &mut self,
+        expr: &ast::Expr,
+        expected: TypeId,
+    ) -> Result<hir::Expr, TypeError> {
+        let ast::ExprKind::Array(elems) = &expr.kind else {
+            unreachable!()
+        };
+
+        let TypeKind::Array(elem_type_id, expected_len) = self.types.get(expected).kind else {
+            let inferred = self.infer_expr_repeat(expr)?;
+            if !self.types.is_assignable(inferred.type_id, expected) {
+                return Err(TypeError::new(
+                    format!(
+                        "expected `{}`, found `{}`",
+                        self.types.type_name(expected),
+                        self.types.type_name(inferred.type_id),
+                    ),
+                    expr.span,
+                ));
+            }
+            return Ok(inferred);
+        };
+
+        let mut typed_elems = Vec::new();
+        for elem in elems {
+            let typed_elem = self.check_expression(elem, elem_type_id)?;
+            typed_elems.push(typed_elem);
+        }
+
+        if elems.len() != expected_len {
+            return Err(TypeError::new(
+                format!(
+                    "array length mismatch: expected {} elements, found {}",
+                    expected_len,
+                    elems.len(),
+                ),
+                expr.span,
+            ));
+        }
+
+        Ok(hir::Expr {
+            kind: hir::ExprKind::Array(typed_elems),
+            type_id: expected,
+            span: expr.span,
+        })
+    }
+
+    fn check_expr_repeat(
+        &mut self,
+        expr: &ast::Expr,
+        expected: TypeId,
+    ) -> Result<hir::Expr, TypeError> {
+        let ast::ExprKind::Repeat(elem, count) = &expr.kind else {
+            unreachable!()
+        };
+
+        let TypeKind::Array(elem_type_id, expected_len) = self.types.get(expected).kind else {
+            let inferred = self.infer_expr_repeat(expr)?;
+            if !self.types.is_assignable(inferred.type_id, expected) {
+                return Err(TypeError::new(
+                    format!(
+                        "expected `{}`, found `{}`",
+                        self.types.type_name(expected),
+                        self.types.type_name(inferred.type_id),
+                    ),
+                    expr.span,
+                ));
+            }
+            return Ok(inferred);
+        };
+
+        let typed_elem = self.check_expression(elem, elem_type_id)?;
+        let typed_count = self.check_expression(count, TypeId::I64)?;
+        let evaluated_count = self.eval_const_expr(&typed_count)?;
+
+        let hir::ConstValKind::Integer(n) = evaluated_count.kind else {
+            return Err(TypeError::new(
+                "repeat count must be a constant integer".to_string(),
+                count.span,
+            ));
+        };
+
+        if n as usize != expected_len {
+            return Err(TypeError::new(
+                format!("array length mismatch: expected {expected_len} elements, found {n}",),
+                count.span,
+            ));
+        }
+
+        Ok(hir::Expr {
+            kind: hir::ExprKind::Repeat(Box::new(typed_elem), n as usize),
+            type_id: expected,
+            span: expr.span,
+        })
+    }
+
+    fn check_expr_block(
+        &mut self,
+        expr: &ast::Expr,
+        expected: TypeId,
+    ) -> Result<hir::Expr, TypeError> {
+        let ast::ExprKind::Block(block) = &expr.kind else {
+            unreachable!()
+        };
+
+        let typed_block = self.check_block(block, expected)?;
+
+        Ok(hir::Expr {
+            kind: hir::ExprKind::Block(typed_block),
+            type_id: expected,
+            span: expr.span,
+        })
+    }
+    fn check_expr_if(
+        &mut self,
+        expr: &ast::Expr,
+        expected: TypeId,
+    ) -> Result<hir::Expr, TypeError> {
+        let ast::ExprKind::If(if_expr) = &expr.kind else {
+            unreachable!()
+        };
+
+        let typed_cond = self.check_expression(&if_expr.cond, TypeId::Bool)?;
+
+        let typed_then = self.check_block(&if_expr.then_body, expected)?;
+
+        let typed_else = if let Some(else_expr) = &if_expr.else_body {
+            Some(Box::new(self.check_expression(else_expr, expected)?))
+        } else {
+            // An else-less if expression always has type ()
+            if expected != TypeId::Unit {
+                return Err(TypeError::new(
+                    format!(
+                        "`if` without `else` has type `()`, but expected `{}`",
+                        self.types.type_name(expected),
+                    ),
+                    expr.span,
+                ));
+            }
+            None
+        };
+
+        Ok(hir::Expr {
+            kind: hir::ExprKind::If(hir::If {
+                cond: Box::new(typed_cond),
+                then_body: Box::new(typed_then),
+                else_body: typed_else,
+                span: if_expr.span,
+            }),
+            type_id: expected,
+            span: expr.span,
+        })
+    }
+
+    fn check_block(
+        &mut self,
+        block: &ast::Block,
+        expected: TypeId,
+    ) -> Result<hir::Block, TypeError> {
+        self.scopes.push(Scope {
+            kind: ScopeKind::Block,
+            objects: HashMap::new(),
+        });
+
+        let mut typed_stmts = Vec::new();
+        let mut has_never = false;
+        let last_idx = block.stmts.len().checked_sub(1);
+
+        for (idx, stmt) in block.stmts.iter().enumerate() {
+            if has_never {
+                return Err(TypeError::new(
+                    "unreachable code after diverging expression".to_string(),
+                    stmt.span,
+                ));
+            }
+
+            let is_last = Some(idx) == last_idx;
+
+            // only the trailing expression is in checking
+            // all other statements are synthesized
+            let typed_stmt = match (is_last, &stmt.kind) {
+                (true, ast::StmtKind::Expr(expr)) => {
+                    let typed_expr = self.check_expression(expr, expected)?;
+                    hir::Stmt {
+                        kind: hir::StmtKind::Expr(typed_expr),
+                        span: stmt.span,
+                    }
+                }
+                _ => self.infer_statement(stmt)?,
+            };
+
+            match &typed_stmt.kind {
+                hir::StmtKind::Expr(expr)
+                    if !is_last
+                        && expr.type_id != TypeId::Unit
+                        && expr.type_id != TypeId::Never =>
+                {
+                    return Err(TypeError::new(
+                        format!(
+                            "expected `;` after expression: expected `()`, found `{}`",
+                            self.types.type_name(expr.type_id)
+                        ),
+                        expr.span,
+                    ));
+                }
+                hir::StmtKind::Expr(expr) | hir::StmtKind::Semi(expr)
+                    if expr.type_id == TypeId::Never =>
+                {
+                    has_never = true;
+                }
+                _ => {}
+            }
+
+            typed_stmts.push(typed_stmt);
+        }
+
+        let block_type_id = match typed_stmts.last() {
+            Some(hir::Stmt {
+                kind: hir::StmtKind::Expr(expr),
+                ..
+            }) => expr.type_id,
+            Some(hir::Stmt {
+                kind: hir::StmtKind::Semi(expr),
+                ..
+            }) if expr.type_id == TypeId::Never => TypeId::Never,
+            _ => TypeId::Unit,
+        };
+
+        if !self.types.is_assignable(block_type_id, expected) {
+            return Err(TypeError::new(
+                format!(
+                    "expected `{}`, found `{}`",
+                    self.types.type_name(expected),
+                    self.types.type_name(block_type_id),
+                ),
+                block.span,
+            ));
+        }
+
+        self.scopes.pop();
+
+        Ok(hir::Block {
+            stmts: typed_stmts,
+            type_id: block_type_id,
+            span: block.span,
+        })
+    }
+
+    fn check_expr_binary(
+        &mut self,
+        expr: &ast::Expr,
+        expected: TypeId,
+    ) -> Result<hir::Expr, TypeError> {
+        let ast::ExprKind::Binary(op, left, right) = &expr.kind else {
+            unreachable!()
+        };
+
+        let typed_op = hir::BinaryOp::from(op);
+
+        let propagate = match typed_op {
+            hir::BinaryOp::Add | hir::BinaryOp::Sub | hir::BinaryOp::Mul | hir::BinaryOp::Div => {
+                self.types.get(expected).kind.is_numeric()
+            }
+            hir::BinaryOp::Rem | hir::BinaryOp::BitAnd | hir::BinaryOp::BitOr => {
+                self.types.get(expected).kind.is_integer()
+            }
+            _ => false,
+        };
+
+        if !propagate {
+            let inferred = self.infer_expr_binary(expr)?;
+            if !self.types.is_assignable(inferred.type_id, expected) {
+                return Err(TypeError::new(
+                    format!(
+                        "expected `{}`, found `{}`",
+                        self.types.type_name(expected),
+                        self.types.type_name(inferred.type_id),
+                    ),
+                    expr.span,
+                ));
+            }
+            return Ok(inferred);
+        }
+
+        let typed_left = self.check_expression(left, expected)?;
+        let typed_right = self.check_expression(right, expected)?;
+
+        Ok(hir::Expr {
+            kind: hir::ExprKind::Binary(typed_op, Box::new(typed_left), Box::new(typed_right)),
+            type_id: expected,
             span: expr.span,
         })
     }

@@ -690,9 +690,11 @@ impl<'a> Parser<'a> {
 
         let name = self.parse_identifier()?;
 
-        self.expect(TokenKind::Colon)?;
-
-        let type_ann = self.parse_type_ann()?;
+        let type_ann = if self.eat(TokenKind::Colon)? {
+            Some(self.parse_type_ann()?)
+        } else {
+            None
+        };
 
         self.expect(TokenKind::Eq)?;
 

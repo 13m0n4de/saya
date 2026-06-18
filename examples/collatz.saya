@@ -1,6 +1,6 @@
 fn collatz(n: i64) -> i64 {
-    let steps: i64 = 0;
-    let current: i64 = n;
+    let steps = 0;
+    let current = n;
 
     while current != 1 {
         if current % 2 == 0 {

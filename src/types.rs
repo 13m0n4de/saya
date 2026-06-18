@@ -341,6 +341,10 @@ impl TypeContext {
     }
 
     pub fn is_assignable(&self, from: TypeId, to: TypeId) -> bool {
+        if from == TypeId::Never {
+            return true;
+        }
+
         // from any pointer to *opaque
         if matches!(
             self.get(to).kind,

@@ -1,5 +1,7 @@
+extern fn puts(s: *i8) -> i32;
+
 pub fn main() -> u8 {
-    let s: [u8] = "Hello, world!";
-    let ptr: *[u8] = &s;
-    (*ptr)[-10]
+    let s = c"Hello, world!";
+    puts(s);
+    0
 }

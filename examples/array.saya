@@ -1,18 +1,18 @@
 pub fn main() -> i64 {
-    let matrix: [[i64; 3]; 2] = [
+    let matrix = [
         [1, 2, 3],
         [4, 5, 6]
     ];
 
-    let a: i64 = matrix[0][1];
-    let b: i64 = matrix[1][2];
+    let a = matrix[0][1];
+    let b = matrix[1][2];
 
     matrix[1][0] = 100;
 
-    let repeated: [i64; 5] = [42; 5];
-    let sum: i64 = repeated[0] + repeated[1] + repeated[2] + repeated[3] + repeated[4];
+    let repeated = [42; 5];
+    let sum = repeated[0] + repeated[1] + repeated[2] + repeated[3] + repeated[4];
 
-    let result: i64 = a + b + matrix[1][0] + sum;
+    let result = a + b + matrix[1][0] + sum;
 
     result
 }

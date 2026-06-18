@@ -1,14 +1,14 @@
-extern fn getchar() -> i64;
-extern fn putchar(c: i64) -> i64;
+extern fn getchar() -> i32;
+extern fn putchar(c: i32) -> i32;
 
 pub fn main() -> i64 {
-    let c: i64 = getchar();
+    let c = getchar();
 
-    while c != 10 {
-        if c >= 97 && c <= 122 {
+    while c != 10i32 {
+        if c >= 97i32 && c <= 122i32 {
             putchar(c - 32);
         } else {
-            if c >= 65 && c <= 90 {
+            if c >= 65i32 && c <= 90i32 {
                 putchar(c + 32);
             } else {
                 putchar(c);

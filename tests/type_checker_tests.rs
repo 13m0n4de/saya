@@ -884,3 +884,66 @@ fn test_fn_type() {
     );
     assert!(result.is_ok());
 }
+
+#[test]
+fn test_bidirectional_typing() {
+    // integer literal gets type from let annotation, no suffix needed
+    let program = typecheck!("fn f() -> u8 { let x: u8 = 42; x }").unwrap();
+    let ItemKind::Function(func) = &program.items[0].kind else {
+        panic!("Expected function");
+    };
+    let StmtKind::Let(let_stmt) = &func.body.as_ref().unwrap().stmts[0].kind else {
+        panic!("Expected let");
+    };
+    assert_eq!(let_stmt.init.type_id, TypeId::U8);
+
+    // integer literal gets type from function return type
+    let program = typecheck!("fn f() -> u8 { 42 }").unwrap();
+    let ItemKind::Function(func) = &program.items[0].kind else {
+        panic!("Expected function");
+    };
+    assert_eq!(func.body.as_ref().unwrap().type_id, TypeId::U8);
+
+    // float literal gets type from context
+    let program = typecheck!("fn f() -> f32 { 1.5 }").unwrap();
+    let ItemKind::Function(func) = &program.items[0].kind else {
+        panic!("Expected function");
+    };
+    assert_eq!(func.body.as_ref().unwrap().type_id, TypeId::F32);
+
+    // array elements get elem type from array annotation
+    let program = typecheck!("fn f() -> [u8; 3] { let arr: [u8; 3] = [1, 2, 3]; arr }").unwrap();
+    let ItemKind::Function(func) = &program.items[0].kind else {
+        panic!("Expected function");
+    };
+    let StmtKind::Let(let_stmt) = &func.body.as_ref().unwrap().stmts[0].kind else {
+        panic!("Expected let");
+    };
+    let ExprKind::Array(elems) = &let_stmt.init.kind else {
+        panic!("Expected array");
+    };
+    assert!(elems.iter().all(|e| e.type_id == TypeId::U8));
+
+    // block expression gets expected type
+    let program = typecheck!("fn f() -> u8 { let x: u8 = { 200 }; x }").unwrap();
+    let ItemKind::Function(func) = &program.items[0].kind else {
+        panic!("Expected function");
+    };
+    let StmtKind::Let(let_stmt) = &func.body.as_ref().unwrap().stmts[0].kind else {
+        panic!("Expected let");
+    };
+    assert_eq!(let_stmt.init.type_id, TypeId::U8);
+
+    // let without type annotation infers from init
+    let program = typecheck!("fn f() -> i64 { let x = 42; x }").unwrap();
+    let ItemKind::Function(func) = &program.items[0].kind else {
+        panic!("Expected function");
+    };
+    let StmtKind::Let(let_stmt) = &func.body.as_ref().unwrap().stmts[0].kind else {
+        panic!("Expected let");
+    };
+    assert_eq!(let_stmt.init.type_id, TypeId::I64);
+
+    // out of range under expected type
+    assert!(typecheck!("fn f() -> u8 { 256 }").is_err());
+}

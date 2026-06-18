@@ -1,9 +1,9 @@
 pub fn main() -> i64 {
-    let a: i64 = 12;
-    let b: i64 = 10;
+    let a = 12;
+    let b = 10;
 
-    let and: i64 = a & b;
-    let or: i64 = a | b;
+    let and = a & b;
+    let or = a | b;
 
     and + or
 }
