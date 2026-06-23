@@ -649,6 +649,32 @@ impl<'a> CodeGen<'a> {
                 .iter()
                 .flat_map(|e| self.const_to_data_items(e))
                 .collect(),
+            ConstValKind::Repeat(elem, count) => {
+                fn is_zero(val: &ConstVal) -> bool {
+                    match &val.kind {
+                        ConstValKind::Integer(n) => *n == 0,
+                        ConstValKind::Float(n) => *n == 0.0,
+                        ConstValKind::Bool(b) => !b,
+                        ConstValKind::Struct(fields) => fields.iter().all(is_zero),
+                        ConstValKind::Array(elems) => elems.iter().all(is_zero),
+                        _ => false,
+                    }
+                }
+
+                let elem_size = self.types.get(elem.type_id).size;
+                let count = *count;
+                let elem = elem.clone();
+
+                if is_zero(&elem) {
+                    vec![(
+                        qbe::Type::Byte,
+                        qbe::DataItem::Zero((count * elem_size) as u64),
+                    )]
+                } else {
+                    let single_items = self.const_to_data_items(&elem);
+                    (0..count).flat_map(|_| single_items.clone()).collect()
+                }
+            }
         }
     }
 
@@ -1344,6 +1370,28 @@ impl<'a> CodeGen<'a> {
                         gv.into(),
                         elem_val.type_id,
                     );
+                }
+                GenValue::Temp(array_name, val.type_id)
+            }
+            ConstValKind::Repeat(elem, count) => {
+                let elem_size = {
+                    let TypeKind::Array(elem_type_id, _) = self.types.get(val.type_id).kind else {
+                        unreachable!()
+                    };
+                    self.types.get(elem_type_id).size as u64
+                };
+                let array_size = *count as u64 * elem_size;
+                let array_name = self.new_temp();
+                let array_ptr = qbe::Value::Temporary(array_name.clone());
+                qfunc.assign_instr(
+                    array_ptr.clone(),
+                    qbe::Type::Long,
+                    qbe::Instr::Alloc8(array_size),
+                );
+                for i in 0..*count {
+                    let offset = i as u64 * elem_size;
+                    let gv = self.generate_const_val(qfunc, elem);
+                    self.store_field(qfunc, array_ptr.clone(), offset, gv.into(), elem.type_id);
                 }
                 GenValue::Temp(array_name, val.type_id)
             }

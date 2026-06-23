@@ -196,6 +196,7 @@ pub enum ConstValKind {
     CString(String),
     Struct(Vec<ConstVal>),
     Array(Vec<ConstVal>),
+    Repeat(Box<ConstVal>, usize),
 }
 
 impl ConstVal {

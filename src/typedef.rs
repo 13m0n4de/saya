@@ -167,5 +167,10 @@ fn emit_const_val(val: &ConstVal, types: &TypeContext, out: &mut impl io::Write)
             }
             write!(out, "]")
         }
+        ConstValKind::Repeat(elem, count) => {
+            write!(out, "[")?;
+            emit_const_val(elem, types, out)?;
+            write!(out, "; {count}]")
+        }
     }
 }

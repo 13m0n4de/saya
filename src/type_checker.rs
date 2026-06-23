@@ -154,7 +154,7 @@ impl<'a> TypeChecker<'a> {
             hir::ExprKind::Repeat(elem, count) => {
                 let elem_val = self.eval_const_expr(elem)?;
                 Ok(hir::ConstVal::new(
-                    hir::ConstValKind::Array(vec![elem_val; *count]),
+                    hir::ConstValKind::Repeat(Box::new(elem_val), *count),
                     expr.type_id,
                 ))
             }
