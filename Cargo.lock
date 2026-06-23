@@ -10,9 +10,9 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
 name = "hashbrown"
-version = "0.17.0"
+version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4f467dd6dccf739c208452f8014c75c18bb8301b050ad1cfb27153803edb0f51"
+checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 
 [[package]]
 name = "indexmap"
@@ -27,7 +27,7 @@ dependencies = [
 [[package]]
 name = "qbe"
 version = "4.0.0"
-source = "git+https://github.com/13m0n4de/qbe-rs?branch=feature%2Findirect-call#c6b706a481e7b5c13b226d791c33486f7f3bbc5e"
+source = "git+https://github.com/13m0n4de/qbe-rs#40c83988207b6f2113d087ebb308b49cb1bfb822"
 
 [[package]]
 name = "saya"

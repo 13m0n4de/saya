@@ -5,4 +5,4 @@ edition = "2024"
 
 [dependencies]
 indexmap = "2.13.0"
-qbe = { git = "https://github.com/13m0n4de/qbe-rs", branch = "feature/indirect-call" }
+qbe = { git = "https://github.com/13m0n4de/qbe-rs" }
