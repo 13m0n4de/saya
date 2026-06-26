@@ -130,6 +130,9 @@ fn emit_extern(ext: &ExternItem, types: &TypeContext, out: &mut impl io::Write) 
         ExternItem::Function(def) => {
             write!(out, "@symbol(\"{}\") extern fn {}(", def.symbol, def.ident)?;
             emit_params(&def.params, types, out)?;
+            if def.is_variadic {
+                write!(out, ", ...")?;
+            }
             writeln!(out, ") -> {};", types.type_name(def.return_type_id))
         }
     }
