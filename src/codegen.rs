@@ -414,14 +414,100 @@ impl<'a> CodeGen<'a> {
             }
             TypeKind::Array(elem, len) => {
                 // Array: copy each element
-                let elem_ty = self.types.get(elem);
-                let elem_size = elem_ty.size;
+                let elem_size = self.types.get(elem).size;
 
-                for i in 0..len {
-                    let offset = i as u64 * elem_size as u64;
-                    let elem_val = self.load_field(qfunc, src.clone(), offset, elem);
-                    self.store_field(qfunc, dest.clone(), offset, elem_val, elem);
-                }
+                let label_id = self.new_label();
+                let cond_label = format!("copy.{label_id}.cond");
+                let body_label = format!("copy.{label_id}.body");
+                let end_label = format!("copy.{label_id}.end");
+
+                // %i_slot =l alloc8 8
+                // storel 0, %i_slot
+                let i_slot = qbe::Value::Temporary(self.new_temp());
+                qfunc.assign_instr(i_slot.clone(), qbe::Type::Long, qbe::Instr::Alloc8(8));
+                qfunc.add_instr(qbe::Instr::Store(
+                    qbe::Type::Long,
+                    i_slot.clone(),
+                    qbe::Value::Const(0),
+                ));
+
+                // jmp @copy.{label_id}.cond
+                qfunc.add_instr(qbe::Instr::Jmp(cond_label.clone()));
+
+                // @copy.{label_id}.cond
+                qfunc.add_block(cond_label.clone());
+
+                // %i =l loadl %i_slot
+                // %cond =w csltl %i, {len}
+                let i = qbe::Value::Temporary(self.new_temp());
+                qfunc.assign_instr(
+                    i.clone(),
+                    qbe::Type::Long,
+                    qbe::Instr::Load(qbe::Type::Long, i_slot.clone()),
+                );
+                let cond_val = qbe::Value::Temporary(self.new_temp());
+                qfunc.assign_instr(
+                    cond_val.clone(),
+                    qbe::Type::Word,
+                    qbe::Instr::Cmp(
+                        qbe::Type::Long,
+                        qbe::Cmp::Slt,
+                        i.clone(),
+                        qbe::Value::Const(len as u64),
+                    ),
+                );
+
+                // jnz %cond_val, @copy.{label_id}.body, @copy.{label_id}.end
+                qfunc.add_instr(qbe::Instr::Jnz(
+                    cond_val,
+                    body_label.clone(),
+                    end_label.clone(),
+                ));
+
+                // @copy.{label_id}.body
+                qfunc.add_block(body_label);
+
+                // %offset =l mul %i, {elem_size}
+                // %src_ptr =l add %src, %offset
+                // %elem_val =l loadl %src_ptr
+                // %dest_ptr =l add %dest, %offset
+                // storel %elem_val, %dest_ptr
+                let offset = qbe::Value::Temporary(self.new_temp());
+                qfunc.assign_instr(
+                    offset.clone(),
+                    qbe::Type::Long,
+                    qbe::Instr::Mul(i.clone(), qbe::Value::Const(elem_size as u64)),
+                );
+                let src_ptr = qbe::Value::Temporary(self.new_temp());
+                qfunc.assign_instr(
+                    src_ptr.clone(),
+                    qbe::Type::Long,
+                    qbe::Instr::Add(src.clone(), offset.clone()),
+                );
+                let elem_val = self.load_field(qfunc, src_ptr, 0, elem);
+                let dest_ptr = qbe::Value::Temporary(self.new_temp());
+                qfunc.assign_instr(
+                    dest_ptr.clone(),
+                    qbe::Type::Long,
+                    qbe::Instr::Add(dest.clone(), offset),
+                );
+                self.store_field(qfunc, dest_ptr, 0, elem_val, elem);
+
+                // %next_i = %i + 1
+                // storel %next_i, %i_slot
+                let next_i = qbe::Value::Temporary(self.new_temp());
+                qfunc.assign_instr(
+                    next_i.clone(),
+                    qbe::Type::Long,
+                    qbe::Instr::Add(i, qbe::Value::Const(1)),
+                );
+                qfunc.add_instr(qbe::Instr::Store(qbe::Type::Long, i_slot, next_i));
+
+                // jmp @copy.{label_id}.cond
+                qfunc.add_instr(qbe::Instr::Jmp(cond_label));
+
+                // @copy.{label_id}.end
+                qfunc.add_block(end_label);
             }
             TypeKind::Struct(_, fields) => {
                 // Struct: copy each field
@@ -650,22 +736,11 @@ impl<'a> CodeGen<'a> {
                 .flat_map(|e| self.const_to_data_items(e))
                 .collect(),
             ConstValKind::Repeat(elem, count) => {
-                fn is_zero(val: &ConstVal) -> bool {
-                    match &val.kind {
-                        ConstValKind::Integer(n) => *n == 0,
-                        ConstValKind::Float(n) => *n == 0.0,
-                        ConstValKind::Bool(b) => !b,
-                        ConstValKind::Struct(fields) => fields.iter().all(is_zero),
-                        ConstValKind::Array(elems) => elems.iter().all(is_zero),
-                        _ => false,
-                    }
-                }
-
                 let elem_size = self.types.get(elem.type_id).size;
                 let count = *count;
                 let elem = elem.clone();
 
-                if is_zero(&elem) {
+                if elem.is_zero() {
                     vec![(
                         qbe::Type::Byte,
                         qbe::DataItem::Zero((count * elem_size) as u64),
@@ -1159,23 +1234,104 @@ impl<'a> CodeGen<'a> {
             ));
         };
 
-        let elem_type = self.types.get(elem_ty);
-        let elem_size = elem_type.size;
+        let elem_size = self.types.get(elem_ty).size;
         let array_size = (*count * elem_size) as u64;
         let array_name = self.new_temp();
-        let array_ptr = qbe::Value::Temporary(array_name.clone());
+        let array_base = qbe::Value::Temporary(array_name.clone());
+
+        // %array_base =l alloc8 {array_size}
         qfunc.assign_instr(
-            array_ptr.clone(),
+            array_base.clone(),
             qbe::Type::Long,
             qbe::Instr::Alloc8(array_size),
         );
 
+        let label_id = self.new_label();
+        let cond_label = format!("fill.{label_id}.cond");
+        let body_label = format!("fill.{label_id}.body");
+        let end_label = format!("fill.{label_id}.end");
+
         let elem_val: qbe::Value = self.generate_expression(qfunc, elem)?.into();
 
-        for i in 0..*count {
-            let offset = (i * elem_size) as u64;
-            self.store_field(qfunc, array_ptr.clone(), offset, elem_val.clone(), elem_ty);
-        }
+        // %i_slot =l alloc8 8
+        // storel 0, %i_slot
+        let i_slot = qbe::Value::Temporary(self.new_temp());
+        qfunc.assign_instr(i_slot.clone(), qbe::Type::Long, qbe::Instr::Alloc8(8));
+        qfunc.add_instr(qbe::Instr::Store(
+            qbe::Type::Long,
+            i_slot.clone(),
+            qbe::Value::Const(0),
+        ));
+
+        // jmp @fill.{label_id}.cond
+        qfunc.add_instr(qbe::Instr::Jmp(cond_label.clone()));
+
+        // @fill.{label_id}.cond
+        qfunc.add_block(cond_label.clone());
+
+        // %i =l loadl %i_slot
+        // %cond =w csltl %i, {count}
+        let i = qbe::Value::Temporary(self.new_temp());
+        qfunc.assign_instr(
+            i.clone(),
+            qbe::Type::Long,
+            qbe::Instr::Load(qbe::Type::Long, i_slot.clone()),
+        );
+        let cond_val = qbe::Value::Temporary(self.new_temp());
+        qfunc.assign_instr(
+            cond_val.clone(),
+            qbe::Type::Word,
+            qbe::Instr::Cmp(
+                qbe::Type::Long,
+                qbe::Cmp::Slt,
+                i.clone(),
+                qbe::Value::Const(*count as u64),
+            ),
+        );
+
+        // jnz %cond_val, @fill.{label_id}.body, @fill.{label_id}.end
+        qfunc.add_instr(qbe::Instr::Jnz(
+            cond_val,
+            body_label.clone(),
+            end_label.clone(),
+        ));
+
+        // @fill.{label_id}.body
+        qfunc.add_block(body_label);
+
+        // %offset =l mul %i, {elem_size}
+        // %elem_ptr =l add %array_base, %offset
+        // store{ty} %elem_val, %elem_ptr
+        let offset = qbe::Value::Temporary(self.new_temp());
+        qfunc.assign_instr(
+            offset.clone(),
+            qbe::Type::Long,
+            qbe::Instr::Mul(i.clone(), qbe::Value::Const(elem_size as u64)),
+        );
+        let elem_ptr = qbe::Value::Temporary(self.new_temp());
+        qfunc.assign_instr(
+            elem_ptr.clone(),
+            qbe::Type::Long,
+            qbe::Instr::Add(array_base.clone(), offset),
+        );
+        let store_ty = self.qbe_store_type(elem_ty);
+        qfunc.add_instr(qbe::Instr::Store(store_ty, elem_ptr, elem_val));
+
+        // %next_i =l add %i, 1
+        // storel %next_i, %i_slot
+        let next_i = qbe::Value::Temporary(self.new_temp());
+        qfunc.assign_instr(
+            next_i.clone(),
+            qbe::Type::Long,
+            qbe::Instr::Add(i, qbe::Value::Const(1)),
+        );
+        qfunc.add_instr(qbe::Instr::Store(qbe::Type::Long, i_slot, next_i));
+
+        // jmp @fill.{label_id}.cond
+        qfunc.add_instr(qbe::Instr::Jmp(cond_label));
+
+        // @fill.{label_id}.end
+        qfunc.add_block(end_label);
 
         Ok(GenValue::Temp(array_name, expr.type_id))
     }

@@ -187,6 +187,19 @@ pub struct ConstVal {
     pub type_id: TypeId,
 }
 
+impl ConstVal {
+    pub fn is_zero(&self) -> bool {
+        match &self.kind {
+            ConstValKind::Integer(n) => *n == 0,
+            ConstValKind::Float(n) => *n == 0.0,
+            ConstValKind::Bool(b) => !b,
+            ConstValKind::Struct(fields) => fields.iter().all(Self::is_zero),
+            ConstValKind::Array(elems) => elems.iter().all(Self::is_zero),
+            _ => false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConstValKind {
     Integer(i64),
