@@ -145,6 +145,7 @@ fn emit_const_val(val: &ConstVal, types: &TypeContext, out: &mut impl io::Write)
         ConstValKind::Bool(b) => write!(out, "{b}"),
         ConstValKind::String(s) => write!(out, "\"{}\"", s.escape_default()),
         ConstValKind::CString(s) => write!(out, "c\"{}\"", s.escape_default()),
+        ConstValKind::Null => write!(out, "null"),
         ConstValKind::Struct(field_values) => {
             let TypeKind::Struct(name, fields) = &types.get(val.type_id).kind else {
                 unreachable!()

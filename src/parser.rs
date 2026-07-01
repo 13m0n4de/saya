@@ -920,6 +920,11 @@ impl<'a> Parser<'a> {
                 self.advance()?;
                 ExprKind::Literal(Literal::Bool(false))
             }
+            // null
+            TokenKind::Null => {
+                self.advance()?;
+                ExprKind::Literal(Literal::Null)
+            }
             // identifier = (ALPHA / "_") *(ALPHA / "_" / DIGIT)
             TokenKind::Ident(name) => {
                 let name = name.clone();

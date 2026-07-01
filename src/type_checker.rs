@@ -105,6 +105,7 @@ impl<'a> TypeChecker<'a> {
                 hir::Literal::CString(s) => {
                     hir::ConstVal::new(hir::ConstValKind::CString(s.clone()), expr.type_id)
                 }
+                hir::Literal::Null => hir::ConstVal::new(hir::ConstValKind::Null, expr.type_id),
             }),
 
             hir::ExprKind::Const(val) => Ok(val.clone()),
@@ -1313,6 +1314,7 @@ impl<'a> TypeChecker<'a> {
                 hir::ExprKind::Literal(hir::Literal::CString(s.clone())),
             ),
             ast::Literal::Bool(b) => (TypeId::Bool, hir::ExprKind::Literal(hir::Literal::Bool(*b))),
+            ast::Literal::Null => (TypeId::Null, hir::ExprKind::Literal(hir::Literal::Null)),
         };
 
         Ok(hir::Expr {
@@ -1816,7 +1818,18 @@ impl<'a> TypeChecker<'a> {
                 TypeId::Bool
             }
             hir::BinaryOp::Eq | hir::BinaryOp::Ne => {
-                if typed_left.type_id != typed_right.type_id {
+                let is_null = |id: TypeId| id == TypeId::Null;
+                let is_ptr = |id: TypeId| matches!(self.types.get(id).kind, TypeKind::Pointer(_));
+
+                // T == T
+                // *T == null
+                // null = *T
+                if typed_left.type_id == typed_right.type_id
+                    || (is_ptr(typed_left.type_id) && is_null(typed_right.type_id))
+                    || (is_null(typed_left.type_id) && is_ptr(typed_right.type_id))
+                {
+                    TypeId::Bool
+                } else {
                     return Err(TypeError::new(
                         format!(
                             "equality operator requires same types, found `{}` and `{}`",
@@ -1826,7 +1839,6 @@ impl<'a> TypeChecker<'a> {
                         expr.span,
                     ));
                 }
-                TypeId::Bool
             }
             hir::BinaryOp::And | hir::BinaryOp::Or => {
                 if typed_left.type_id != TypeId::Bool || typed_right.type_id != TypeId::Bool {

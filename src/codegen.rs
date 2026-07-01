@@ -149,7 +149,7 @@ impl<'a> CodeGen<'a> {
 
             TypeKind::Bool => qbe::Type::Word,
 
-            TypeKind::Pointer(_) | TypeKind::Fn(..) => qbe::Type::Long,
+            TypeKind::Pointer(_) | TypeKind::Null | TypeKind::Fn(..) => qbe::Type::Long,
 
             TypeKind::Struct(..) | TypeKind::Array(..) | TypeKind::Slice(_) => {
                 let def = self.generate_type_def(type_id);
@@ -178,7 +178,7 @@ impl<'a> CodeGen<'a> {
 
             TypeKind::Bool => qbe::Type::UnsignedByte,
 
-            TypeKind::Pointer(_) | TypeKind::Fn(..) => qbe::Type::Long,
+            TypeKind::Pointer(_) | TypeKind::Null | TypeKind::Fn(..) => qbe::Type::Long,
 
             TypeKind::Struct(..) | TypeKind::Array(..) | TypeKind::Slice(_) => qbe::Type::Long,
 
@@ -204,7 +204,7 @@ impl<'a> CodeGen<'a> {
 
             TypeKind::Bool => qbe::Type::Byte,
 
-            TypeKind::Pointer(_) | TypeKind::Fn(..) => qbe::Type::Long,
+            TypeKind::Pointer(_) | TypeKind::Null | TypeKind::Fn(..) => qbe::Type::Long,
 
             TypeKind::Struct(..) | TypeKind::Array(..) | TypeKind::Slice(_) => qbe::Type::Long,
 
@@ -701,6 +701,9 @@ impl<'a> CodeGen<'a> {
                 let label = self.emit_cstring_data(s);
                 vec![(qbe::Type::Long, qbe::DataItem::Symbol(label, None))]
             }
+            ConstValKind::Null => {
+                vec![(qbe::Type::Long, qbe::DataItem::Const(0))]
+            }
             ConstValKind::Struct(field_values) => {
                 let (fields, total_size) = {
                     let ty = self.types.get(val.type_id);
@@ -942,6 +945,7 @@ impl<'a> CodeGen<'a> {
                 let label = self.emit_cstring_data(s);
                 GenValue::Global(label, expr.type_id)
             }
+            Literal::Null => GenValue::Const(0, expr.type_id),
         }
     }
 
@@ -1475,6 +1479,7 @@ impl<'a> CodeGen<'a> {
                 let label = self.emit_cstring_data(s);
                 GenValue::Global(label, val.type_id)
             }
+            ConstValKind::Null => GenValue::Const(0, val.type_id),
             ConstValKind::String(s) => self.generate_string_slice(qfunc, s, val.type_id),
             ConstValKind::Struct(field_values) => {
                 let (fields, ty) = {

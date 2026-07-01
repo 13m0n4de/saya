@@ -20,6 +20,7 @@ pub enum TypeId {
     Unit,
     Never,
     Opaque,
+    Null,
 
     Interned(u32),
 }
@@ -105,6 +106,11 @@ impl Type {
         size: 0,
         align: 1,
     };
+    pub const NULL: Self = Type {
+        kind: TypeKind::Null,
+        size: 0,
+        align: 1,
+    };
 }
 
 impl Type {
@@ -168,6 +174,7 @@ pub enum TypeKind {
     Unit,
     Never,
     Opaque,
+    Null,
     Pointer(TypeId),
 
     Array(TypeId, usize),
@@ -191,7 +198,10 @@ impl TypeKind {
         )
     }
     pub fn is_signed(&self) -> bool {
-        matches!(self, TypeKind::I8 | TypeKind::I16 | TypeKind::I32 | TypeKind::I64)
+        matches!(
+            self,
+            TypeKind::I8 | TypeKind::I16 | TypeKind::I32 | TypeKind::I64
+        )
     }
     pub fn is_float(&self) -> bool {
         matches!(self, TypeKind::F32 | TypeKind::F64)
@@ -249,6 +259,7 @@ impl TypeContext {
             TypeId::Unit => &Type::UNIT,
             TypeId::Never => &Type::NEVER,
             TypeId::Opaque => &Type::OPAQUE,
+            TypeId::Null => &Type::NULL,
             TypeId::Interned(n) => &self.interned[n as usize],
         }
     }
@@ -320,6 +331,7 @@ impl TypeContext {
             TypeKind::Unit => "()".into(),
             TypeKind::Never => "!".into(),
             TypeKind::Opaque => "opaque".into(),
+            TypeKind::Null => "null".into(),
             TypeKind::Pointer(inner) => format!("*{}", self.type_name(*inner)),
             TypeKind::Array(elem, len) => format!("[{}; {len}]", self.type_name(*elem)),
             TypeKind::Slice(elem) => format!("[{}]", self.type_name(*elem)),
@@ -341,16 +353,22 @@ impl TypeContext {
     }
 
     pub fn is_assignable(&self, from: TypeId, to: TypeId) -> bool {
+        // from any to !
         if from == TypeId::Never {
             return true;
         }
 
-        // from any pointer to *opaque
+        // from *T to *opaque
         if matches!(
             self.get(to).kind,
             TypeKind::Pointer(inner) if matches!(self.get(inner).kind, TypeKind::Opaque)
         ) {
             return matches!(self.get(from).kind, TypeKind::Pointer(_));
+        }
+
+        // from null to *T
+        if from == TypeId::Null && matches!(self.get(to).kind, TypeKind::Pointer(_)) {
+            return true;
         }
 
         from == to

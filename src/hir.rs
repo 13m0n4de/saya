@@ -179,6 +179,7 @@ pub enum Literal {
     Bool(bool),
     String(String),
     CString(String),
+    Null,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -207,6 +208,7 @@ pub enum ConstValKind {
     Bool(bool),
     String(String),
     CString(String),
+    Null,
     Struct(Vec<ConstVal>),
     Array(Vec<ConstVal>),
     Repeat(Box<ConstVal>, usize),
