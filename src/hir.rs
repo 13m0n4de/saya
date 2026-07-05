@@ -162,6 +162,7 @@ pub enum ExprKind {
     Call(Call),
     Unary(UnaryOp, Box<Expr>),
     Binary(BinaryOp, Box<Expr>, Box<Expr>),
+    Cast(Box<Expr>, TypeId),
     Assign(Box<Expr>, Box<Expr>),
     Return(Option<Box<Expr>>),
     Block(Block),

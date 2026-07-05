@@ -974,3 +974,36 @@ fn test_null_literal() {
     assert!(typecheck!("fn test() { let x: bool = null; }").is_err());
     assert!(typecheck!("fn test() { let x: f64 = null; }").is_err());
 }
+
+#[test]
+fn test_cast() {
+    // result type
+    let program = typecheck!("fn test() -> u8 { 300u32 as u8 }").unwrap();
+    match &program.items[0].kind {
+        ItemKind::Function(func) => {
+            assert_eq!(func.body.as_ref().unwrap().type_id, TypeId::U8);
+        }
+        _ => panic!("Expected function"),
+    }
+
+    // int -> int
+    assert!(typecheck!("fn test() -> u8 { let x: i64 = 1; x as u8 }").is_ok());
+    assert!(typecheck!("fn test() -> i64 { let x: u8 = 1u8; x as i64 }").is_ok());
+    assert!(typecheck!("fn test() -> u32 { let x: i64 = 1; x as u32 }").is_ok());
+
+    // int -> float
+    assert!(typecheck!("fn test() -> f64 { let x: i64 = 1; x as f64 }").is_ok());
+    assert!(typecheck!("fn test() -> f32 { let x: u32 = 1u32; x as f32 }").is_ok());
+
+    // float -> int
+    assert!(typecheck!("fn test() -> i64 { let x: f64 = 1.0; x as i64 }").is_ok());
+    assert!(typecheck!("fn test() -> u8 { let x: f32 = 1.0; x as u8 }").is_ok());
+
+    // float -> float
+    assert!(typecheck!("fn test() -> f64 { let x: f32 = 1.0; x as f64 }").is_ok());
+    assert!(typecheck!("fn test() -> f32 { let x: f64 = 1.0; x as f32 }").is_ok());
+
+    // cannot be cast
+    assert!(typecheck!("fn test() -> i64 { true as i64 }").is_err());
+    assert!(typecheck!("fn test() -> i64 { let x: *i64 = null; x as i64 }").is_err());
+}

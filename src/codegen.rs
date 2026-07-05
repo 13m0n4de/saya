@@ -1120,6 +1120,90 @@ impl<'a> CodeGen<'a> {
         Ok(GenValue::Const(0, expr.type_id))
     }
 
+    fn generate_expr_cast(
+        &mut self,
+        qfunc: &mut qbe::Function,
+        expr: &Expr,
+    ) -> Result<GenValue, CodeGenError> {
+        let ExprKind::Cast(lhs, target_type_id) = &expr.kind else {
+            unreachable!()
+        };
+
+        let lhs_val = self.generate_expression(qfunc, lhs)?;
+        let val: qbe::Value = lhs_val.into();
+
+        let from_kind = self.types.get(lhs.type_id).kind.clone();
+        let to_kind = self.types.get(*target_type_id).kind.clone();
+
+        let instr = match (&from_kind, &to_kind) {
+            // same size
+            (
+                TypeKind::I8
+                | TypeKind::U8
+                | TypeKind::I16
+                | TypeKind::U16
+                | TypeKind::I32
+                | TypeKind::U32,
+                TypeKind::I8
+                | TypeKind::U8
+                | TypeKind::I16
+                | TypeKind::U16
+                | TypeKind::I32
+                | TypeKind::U32,
+            )
+            | (TypeKind::I64 | TypeKind::U64, TypeKind::I64 | TypeKind::U64)
+            | (
+                TypeKind::I64 | TypeKind::U64,
+                TypeKind::I8
+                | TypeKind::U8
+                | TypeKind::I16
+                | TypeKind::U16
+                | TypeKind::I32
+                | TypeKind::U32,
+            ) => qbe::Instr::Copy(val),
+
+            // word -> long
+            (TypeKind::I8 | TypeKind::I16 | TypeKind::I32, TypeKind::I64 | TypeKind::U64) => {
+                qbe::Instr::Extsw(val)
+            }
+            (TypeKind::U8 | TypeKind::U16 | TypeKind::U32, TypeKind::I64 | TypeKind::U64) => {
+                qbe::Instr::Extuw(val)
+            }
+
+            // float precision
+            (TypeKind::F32, TypeKind::F64) => qbe::Instr::Exts(val),
+            (TypeKind::F64, TypeKind::F32) => qbe::Instr::Truncd(val),
+
+            // int -> float
+            (TypeKind::I8 | TypeKind::I16 | TypeKind::I32, TypeKind::F32 | TypeKind::F64) => {
+                qbe::Instr::Swtof(val)
+            }
+            (TypeKind::U8 | TypeKind::U16 | TypeKind::U32, TypeKind::F32 | TypeKind::F64) => {
+                qbe::Instr::Uwtof(val)
+            }
+            (TypeKind::I64, TypeKind::F32 | TypeKind::F64) => qbe::Instr::Sltof(val),
+            (TypeKind::U64, TypeKind::F32 | TypeKind::F64) => qbe::Instr::Ultof(val),
+
+            // float -> int
+            (TypeKind::F32, TypeKind::I8 | TypeKind::I16 | TypeKind::I32 | TypeKind::I64) => {
+                qbe::Instr::Stosi(val)
+            }
+            (TypeKind::F32, TypeKind::U8 | TypeKind::U16 | TypeKind::U32 | TypeKind::U64) => {
+                qbe::Instr::Stoui(val)
+            }
+            (TypeKind::F64, TypeKind::I8 | TypeKind::I16 | TypeKind::I32 | TypeKind::I64) => {
+                qbe::Instr::Dtosi(val)
+            }
+            (TypeKind::F64, TypeKind::U8 | TypeKind::U16 | TypeKind::U32 | TypeKind::U64) => {
+                qbe::Instr::Dtoui(val)
+            }
+
+            _ => unreachable!(),
+        };
+
+        Ok(self.assign_to_temp(qfunc, *target_type_id, instr))
+    }
+
     fn generate_expr_return(
         &mut self,
         qfunc: &mut qbe::Function,
@@ -1380,6 +1464,7 @@ impl<'a> CodeGen<'a> {
             ExprKind::Unary(..) => self.generate_expr_unary(qfunc, expr),
             ExprKind::Binary(..) => self.generate_expr_binary(qfunc, expr),
             ExprKind::Assign(..) => self.generate_expr_assign(qfunc, expr),
+            ExprKind::Cast(..) => self.generate_expr_cast(qfunc, expr),
             ExprKind::Return(..) => self.generate_expr_return(qfunc, expr),
             ExprKind::Block(block) => self.generate_block(qfunc, block),
             ExprKind::If(..) => self.generate_expr_if(qfunc, expr),

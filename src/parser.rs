@@ -837,6 +837,18 @@ impl<'a> Parser<'a> {
                     break;
                 }
 
+                // V as T
+                if op_token == &TokenKind::As {
+                    let span = lhs.span;
+                    self.advance()?;
+                    let rhs = self.parse_type_ann()?;
+                    lhs = Expr {
+                        kind: ExprKind::Cast(Box::new(lhs), Box::new(rhs)),
+                        span,
+                    };
+                    continue;
+                }
+
                 let op = match op_token {
                     TokenKind::Plus => BinaryOp::Add,
                     TokenKind::Minus => BinaryOp::Sub,
@@ -1192,10 +1204,10 @@ impl<'a> Parser<'a> {
 
     fn prefix_binding_power(token: &TokenKind) -> Option<u8> {
         match token {
-            TokenKind::Minus => Some(90), // -
-            TokenKind::Bang => Some(90),  // !
-            TokenKind::And => Some(90),   // &
-            TokenKind::Star => Some(90),  // *
+            TokenKind::Minus => Some(100), // -
+            TokenKind::Bang => Some(100),  // !
+            TokenKind::And => Some(100),   // &
+            TokenKind::Star => Some(100),  // *
             _ => None,
         }
     }
@@ -1210,6 +1222,7 @@ impl<'a> Parser<'a> {
             TokenKind::Lt | TokenKind::Le | TokenKind::Gt | TokenKind::Ge => (60, 61), // < <= > >=
             TokenKind::Plus | TokenKind::Minus => (70, 71), // + -
             TokenKind::Star | TokenKind::Slash | TokenKind::Percent => (80, 81), // * / %
+            TokenKind::As => (90, 91),                                           // as
             _ => return None,
         };
         Some(bp)
@@ -1217,9 +1230,9 @@ impl<'a> Parser<'a> {
 
     fn postfix_binding_power(token: &TokenKind) -> Option<u8> {
         match token {
-            TokenKind::OpenParen => Some(100),   // function call
-            TokenKind::OpenBracket => Some(100), // array index
-            TokenKind::Dot => Some(100),         // field
+            TokenKind::OpenParen => Some(110),   // function call
+            TokenKind::OpenBracket => Some(110), // array index
+            TokenKind::Dot => Some(110),         // field
             _ => None,
         }
     }

@@ -71,8 +71,10 @@ relational-op = "<" / "<=" / ">" / ">="
 additive-expr = multiplicative-expr *(additive-op multiplicative-expr)
 additive-op = "+" / "-"
 
-multiplicative-expr = unary-expr *(multiplicative-op unary-expr)
+multiplicative-expr = cast-expr *(multiplicative-op cast-expr)
 multiplicative-op = "*" / "/" / "%"
+
+cast-expr = unary-expr *("as" type-name)
 
 unary-expr = unary-op unary-expr / postfix-expr
 unary-op = "-" / "!" / "&" / "*"

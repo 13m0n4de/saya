@@ -1247,6 +1247,7 @@ impl<'a> TypeChecker<'a> {
             ast::ExprKind::Unary(..) => self.infer_expr_unary(expr),
             ast::ExprKind::Binary(..) => self.infer_expr_binary(expr),
             ast::ExprKind::Assign(..) => self.infer_expr_assign(expr),
+            ast::ExprKind::Cast(..) => self.infer_expr_cast(expr),
             ast::ExprKind::Return(..) => self.infer_expr_return(expr),
             ast::ExprKind::Block(..) => self.infer_expr_block(expr),
             ast::ExprKind::If(..) => self.infer_expr_if(expr),
@@ -1873,6 +1874,41 @@ impl<'a> TypeChecker<'a> {
         Ok(hir::Expr {
             kind: hir::ExprKind::Assign(Box::new(typed_lhs), Box::new(typed_rhs)),
             type_id: TypeId::Unit,
+            span: expr.span,
+        })
+    }
+
+    fn infer_expr_cast(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
+        let ast::ExprKind::Cast(lhs, ty) = &expr.kind else {
+            unreachable!()
+        };
+
+        let typed_lhs = self.infer_expression(lhs)?;
+        let target_type_id = self.lower_type(ty)?;
+
+        let from_kind = &self.types.get(typed_lhs.type_id).kind;
+        let to_kind = &self.types.get(target_type_id).kind;
+
+        #[allow(clippy::match_like_matches_macro)]
+        let valid = match (from_kind, to_kind) {
+            _ if from_kind.is_numeric() && to_kind.is_numeric() => true,
+            _ => false,
+        };
+
+        if !valid {
+            return Err(TypeError::new(
+                format!(
+                    "cannot cast `{}` to `{}`",
+                    self.types.type_name(typed_lhs.type_id),
+                    self.types.type_name(target_type_id),
+                ),
+                expr.span,
+            ));
+        }
+
+        Ok(hir::Expr {
+            kind: hir::ExprKind::Cast(Box::new(typed_lhs), target_type_id),
+            type_id: target_type_id,
             span: expr.span,
         })
     }
