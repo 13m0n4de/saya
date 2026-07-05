@@ -819,11 +819,12 @@ impl<'a> CodeGen<'a> {
             })
             .collect();
 
-        let qbe_return_type: Option<qbe::Type> = if func.return_type_id == TypeId::Unit {
-            None
-        } else {
-            Some(self.qbe_type(func.return_type_id))
-        };
+        let qbe_return_type: Option<qbe::Type> =
+            if func.return_type_id == TypeId::Unit || func.return_type_id == TypeId::Never {
+                None
+            } else {
+                Some(self.qbe_type(func.return_type_id))
+            };
 
         let symbol = func.symbol.clone();
         let linkage = match vis {
@@ -1136,14 +1137,16 @@ impl<'a> CodeGen<'a> {
         let to_kind = self.types.get(*target_type_id).kind.clone();
 
         let instr = match (&from_kind, &to_kind) {
-            // same size
+            // any int as <=32-bit int (truncate to QBE `w`)
             (
                 TypeKind::I8
                 | TypeKind::U8
                 | TypeKind::I16
                 | TypeKind::U16
                 | TypeKind::I32
-                | TypeKind::U32,
+                | TypeKind::U32
+                | TypeKind::I64
+                | TypeKind::U64,
                 TypeKind::I8
                 | TypeKind::U8
                 | TypeKind::I16
@@ -1151,18 +1154,12 @@ impl<'a> CodeGen<'a> {
                 | TypeKind::I32
                 | TypeKind::U32,
             )
-            | (TypeKind::I64 | TypeKind::U64, TypeKind::I64 | TypeKind::U64)
-            | (
-                TypeKind::I64 | TypeKind::U64,
-                TypeKind::I8
-                | TypeKind::U8
-                | TypeKind::I16
-                | TypeKind::U16
-                | TypeKind::I32
-                | TypeKind::U32,
-            ) => qbe::Instr::Copy(val),
+            // i64/u64 as i64/u64
+            | (TypeKind::I64 | TypeKind::U64, TypeKind::I64 | TypeKind::U64) => {
+                qbe::Instr::Copy(val)
+            }
 
-            // word -> long
+            // word as long
             (TypeKind::I8 | TypeKind::I16 | TypeKind::I32, TypeKind::I64 | TypeKind::U64) => {
                 qbe::Instr::Extsw(val)
             }
@@ -1174,7 +1171,7 @@ impl<'a> CodeGen<'a> {
             (TypeKind::F32, TypeKind::F64) => qbe::Instr::Exts(val),
             (TypeKind::F64, TypeKind::F32) => qbe::Instr::Truncd(val),
 
-            // int -> float
+            // int as float
             (TypeKind::I8 | TypeKind::I16 | TypeKind::I32, TypeKind::F32 | TypeKind::F64) => {
                 qbe::Instr::Swtof(val)
             }
@@ -1184,7 +1181,7 @@ impl<'a> CodeGen<'a> {
             (TypeKind::I64, TypeKind::F32 | TypeKind::F64) => qbe::Instr::Sltof(val),
             (TypeKind::U64, TypeKind::F32 | TypeKind::F64) => qbe::Instr::Ultof(val),
 
-            // float -> int
+            // float as int
             (TypeKind::F32, TypeKind::I8 | TypeKind::I16 | TypeKind::I32 | TypeKind::I64) => {
                 qbe::Instr::Stosi(val)
             }
@@ -1665,7 +1662,7 @@ impl<'a> CodeGen<'a> {
             qbe_args.push((arg_ty, arg_val));
         }
 
-        if expr.type_id == TypeId::Unit {
+        if expr.type_id == TypeId::Unit || expr.type_id == TypeId::Never {
             qfunc.add_instr(qbe::Instr::Call(symbol, qbe_args, call.variadic_start));
             Ok(GenValue::Const(0, expr.type_id))
         } else {
