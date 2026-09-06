@@ -128,8 +128,8 @@ impl<'a> Parser<'a> {
         Ok(items)
     }
 
-    // item-attr = "@" identifier ["(" [attr-arg-list] ")"]
-    // attr-arg-list = expression *("," expression) [","]
+    // item-attr = symbol-attr
+    // symbol-attr = "@" "symbol" "(" string ")"
     fn parse_attrs(&mut self) -> Result<Vec<Attr>, ParseError> {
         let mut attrs = Vec::new();
 
@@ -166,7 +166,7 @@ impl<'a> Parser<'a> {
         Ok(attrs)
     }
 
-    // use-item = "use" path ";"
+    // use-item = "use" path ["as" identifier] ";"
     fn parse_use(&mut self) -> Result<Use, ParseError> {
         let start_span = self.current.span;
 
@@ -210,7 +210,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    // extern-static = "static" identifier ":" type-name ";"
+    // extern-static = "static" path ":" type-name ";"
     fn parse_extern_static(&mut self) -> Result<ExternStaticDecl, ParseError> {
         let start_span = self.current.span;
 
@@ -231,7 +231,8 @@ impl<'a> Parser<'a> {
         })
     }
 
-    // extern-fn = "fn" identifier "(" [param-list ["," "..."]] ")" ["->" type-name] ";"
+    // extern-fn = "fn" path "(" [variadic-param-list] ")" ["->" type-name] ";"
+    // variadic-param-list = *(param ",") (param [","] / "...")
     fn parse_extern_function(&mut self) -> Result<ExternFunctionDecl, ParseError> {
         let start_span = self.current.span;
 
@@ -398,7 +399,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    // function-def = "fn" path "(" [param-list] ")" ["->" type-name] block
+    // function-def = "fn" path "(" [param-list] ")" ["->" type-name] (block / ";")
     fn parse_function(&mut self) -> Result<FunctionDef, ParseError> {
         let start_span = self.current.span;
 
@@ -481,12 +482,15 @@ impl<'a> Parser<'a> {
     }
 
     // type-name = slice-type / array-type / pointer-type / fn-type / base-type / custom-type
-    // base-type = "u8" / "u16" / "u32" / "i32" / "i64" / "f32" / "f64"  / "bool" / "()" / "!"
+    // base-type = "u8" / "u16" / "u32" / "u64"
+    //           / "i8" / "i16" / "i32" / "i64"
+    //           / "f32" / "f64"
+    //           / "bool" / "opaque" / "()" / "!"
     // pointer-type = "*" type-name
-    // array-type = "[" type-name ";" integer "]"
+    // array-type = "[" type-name ";" expression "]"
     // slice-type = "[" type-name "]"
     // fn-type = "fn" "(" [fn-type-params] ")" ["->" type-name]
-    // fn-type-params = type-name *("," type-name) ["," "..."]
+    // fn-type-params = *(type-name ",") (type-name [","] / "...")
     // custom-type = path
     fn parse_type_ann(&mut self) -> Result<TypeAnn, ParseError> {
         let start_span = self.current.span;

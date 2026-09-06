@@ -2,14 +2,15 @@ program = *item
 
 item = *item-attr ["pub"] (use-item / extern-item / const-def / static-def / struct-def / type-alias-def / function-def)
 
-item-attr = "@" identifier ["(" [attr-arg-list] ")"]
-attr-arg-list = expression *("," expression) [","]
+item-attr = symbol-attr
+symbol-attr = "@" "symbol" "(" string ")"
 
-use-item = "use" path ";"
+use-item = "use" path ["as" identifier] ";"
 
 extern-item = "extern" (extern-static / extern-fn)
-extern-static = "static" identifier ":" type-name ";"
-extern-fn = "fn" identifier "(" [param-list ["," "..."]] ")" ["->" type-name] ";"
+extern-static = "static" path ":" type-name ";"
+extern-fn = "fn" path "(" [variadic-param-list] ")" ["->" type-name] ";"
+variadic-param-list = *(param ",") (param [","] / "...")
 
 const-def = "const" path ":" type-name "=" expression ";"
 static-def = "static" path ":" type-name "=" expression ";"
@@ -20,7 +21,7 @@ field = identifier ":" type-name
 
 type-alias-def = "type" path "=" type-name ";"
 
-function-def = "fn" path "(" [param-list] ")" ["->" type-name] block
+function-def = "fn" path "(" [param-list] ")" ["->" type-name] (block / ";")
 
 param-list = param *("," param) [","]
 param = identifier ":" type-name
@@ -31,10 +32,10 @@ base-type = "u8" / "u16" / "u32" / "u64"
           / "f32" / "f64"
           / "bool" / "opaque" / "()" / "!"
 pointer-type = "*" type-name
-array-type = "[" type-name ";" integer "]"
+array-type = "[" type-name ";" expression "]"
 slice-type = "[" type-name "]"
 fn-type = "fn" "(" [fn-type-params] ")" ["->" type-name]
-fn-type-params = type-name *("," type-name) ["," "..."]
+fn-type-params = *(type-name ",") (type-name [","] / "...")
 custom-type = path
 
 block = "{" *statement [expression] "}"
