@@ -122,6 +122,14 @@ impl Type {
         }
     }
 
+    pub fn optional(payload: TypeId, payload_size: usize, payload_align: usize) -> Self {
+        Type {
+            kind: TypeKind::Optional(payload),
+            size: payload_align + payload_size, // align(tag + padding) + size
+            align: payload_align,
+        }
+    }
+
     pub fn array(elem: TypeId, len: usize, elem_size: usize, elem_align: usize) -> Self {
         Type {
             kind: TypeKind::Array(elem, len),
@@ -149,7 +157,10 @@ impl Type {
     pub fn is_aggregate(&self) -> bool {
         matches!(
             self.kind,
-            TypeKind::Slice(_) | TypeKind::Array { .. } | TypeKind::Struct { .. }
+            TypeKind::Slice(_)
+                | TypeKind::Array { .. }
+                | TypeKind::Struct { .. }
+                | TypeKind::Optional(..)
         )
     }
 }
@@ -176,6 +187,7 @@ pub enum TypeKind {
     Opaque,
     Null,
     Pointer(TypeId),
+    Optional(TypeId),
 
     Array(TypeId, usize),
     Slice(TypeId),
@@ -268,6 +280,14 @@ impl TypeContext {
         self.intern(Type::pointer(referent))
     }
 
+    pub fn mk_optional(&mut self, payload: TypeId) -> TypeId {
+        let payload_ty = self.get(payload);
+        let payload_size = payload_ty.size;
+        let payload_align = payload_ty.align;
+
+        self.intern(Type::optional(payload, payload_size, payload_align))
+    }
+
     pub fn mk_array(&mut self, elem: TypeId, len: usize) -> TypeId {
         let elem_data = self.get(elem);
         self.intern(Type::array(elem, len, elem_data.size, elem_data.align))
@@ -333,6 +353,7 @@ impl TypeContext {
             TypeKind::Opaque => "opaque".into(),
             TypeKind::Null => "null".into(),
             TypeKind::Pointer(inner) => format!("*{}", self.type_name(*inner)),
+            TypeKind::Optional(inner) => format!("?{}", self.type_name(*inner)),
             TypeKind::Array(elem, len) => format!("[{}; {len}]", self.type_name(*elem)),
             TypeKind::Slice(elem) => format!("[{}]", self.type_name(*elem)),
             TypeKind::Struct(name, _) => name.into(),

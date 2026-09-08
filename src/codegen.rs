@@ -151,6 +151,8 @@ impl<'a> CodeGen<'a> {
 
             TypeKind::Pointer(_) | TypeKind::Null | TypeKind::Fn(..) => qbe::Type::Long,
 
+            TypeKind::Optional(..) => todo!(),
+
             TypeKind::Struct(..) | TypeKind::Array(..) | TypeKind::Slice(_) => {
                 let def = self.generate_type_def(type_id);
                 qbe::Type::aggregate(&def)
@@ -180,6 +182,8 @@ impl<'a> CodeGen<'a> {
 
             TypeKind::Pointer(_) | TypeKind::Null | TypeKind::Fn(..) => qbe::Type::Long,
 
+            TypeKind::Optional(..) => todo!(),
+
             TypeKind::Struct(..) | TypeKind::Array(..) | TypeKind::Slice(_) => qbe::Type::Long,
 
             TypeKind::Unit | TypeKind::Never | TypeKind::Opaque => unreachable!(),
@@ -205,6 +209,8 @@ impl<'a> CodeGen<'a> {
             TypeKind::Bool => qbe::Type::Byte,
 
             TypeKind::Pointer(_) | TypeKind::Null | TypeKind::Fn(..) => qbe::Type::Long,
+
+            TypeKind::Optional(..) => todo!(),
 
             TypeKind::Struct(..) | TypeKind::Array(..) | TypeKind::Slice(_) => qbe::Type::Long,
 
@@ -1454,6 +1460,7 @@ impl<'a> CodeGen<'a> {
     ) -> Result<GenValue, CodeGenError> {
         let result = match &expr.kind {
             ExprKind::Literal(..) => Ok(self.generate_expr_literal(qfunc, expr)),
+            ExprKind::Optional(..) => todo!(),
             ExprKind::Const(..) => Ok(self.generate_expr_const(qfunc, expr)),
             ExprKind::Place(..) => Ok(self.generate_expr_place(qfunc, expr)),
             ExprKind::Struct(..) => self.generate_expr_struct(qfunc, expr),

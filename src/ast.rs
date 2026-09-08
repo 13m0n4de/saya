@@ -39,6 +39,7 @@ pub enum TypeAnnKind {
     Array(Box<TypeAnn>, Box<Expr>),
     Slice(Box<TypeAnn>),
     Fn(Vec<TypeAnn>, Box<TypeAnn>, bool),
+    Optional(Box<TypeAnn>),
 
     Path(Path),
 
@@ -206,6 +207,7 @@ pub struct Expr {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExprKind {
     Literal(Literal),
+    Optional(Optional),
     Struct(StructExpr),
     Path(Path),
     Array(Vec<Expr>),
@@ -234,6 +236,12 @@ pub enum Literal {
     String(String),
     CString(String),
     Null,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Optional {
+    None,
+    Some(Box<Expr>),
 }
 
 #[derive(Debug, Clone, PartialEq)]

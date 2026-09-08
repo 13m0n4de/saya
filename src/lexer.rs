@@ -24,6 +24,8 @@ pub enum TokenKind {
     True,     // true
     False,    // false
     Null,     // null
+    Some,     // some
+    None,     // none
 
     Ident(String),
     Integer(i64, Option<String>),
@@ -42,10 +44,11 @@ pub enum TokenKind {
     Gt, // >
     Ge, // >=
 
-    And,  // &
-    Or,   // |
-    Eq,   // =
-    Bang, // !
+    And,      // &
+    Or,       // |
+    Eq,       // =
+    Bang,     // !
+    Question, // ?
 
     EqEq, // ==
     Ne,   // !=
@@ -273,6 +276,10 @@ impl<'a> Lexer<'a> {
                     TokenKind::Bang
                 }
             }
+            Some('?') => {
+                self.advance();
+                TokenKind::Question
+            }
 
             Some('&') => {
                 self.advance();
@@ -359,6 +366,8 @@ impl<'a> Lexer<'a> {
             "true" => TokenKind::True,
             "false" => TokenKind::False,
             "null" => TokenKind::Null,
+            "some" => TokenKind::Some,
+            "none" => TokenKind::None,
             _ => TokenKind::Ident(ident),
         }
     }

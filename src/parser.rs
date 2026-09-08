@@ -599,6 +599,12 @@ impl<'a> Parser<'a> {
 
                 TypeAnnKind::Fn(params_type, Box::new(return_type_ann), is_variadic)
             }
+            // Optional: ?T
+            TokenKind::Question => {
+                self.advance()?;
+                let inner_type = self.parse_type_ann()?;
+                TypeAnnKind::Optional(Box::new(inner_type))
+            }
             // Unit: ()
             TokenKind::OpenParen => {
                 self.advance()?;
@@ -764,17 +770,22 @@ impl<'a> Parser<'a> {
         let mut lhs = if let Some(prefix_bp) = Self::prefix_binding_power(&self.current.kind) {
             // Prefix operator
             let start_span = self.current.span;
-            let op = match self.current.kind {
-                TokenKind::Minus => UnaryOp::Neg,
-                TokenKind::Bang => UnaryOp::Not,
-                TokenKind::And => UnaryOp::Ref,
-                TokenKind::Star => UnaryOp::Deref,
-                _ => unreachable!(),
-            };
+            let op_token = self.current.kind.clone();
+
             self.advance()?;
             let rhs = self.parse_expr_bp(prefix_bp)?;
+
+            let kind = match op_token {
+                TokenKind::Minus => ExprKind::Unary(UnaryOp::Neg, Box::new(rhs)),
+                TokenKind::Bang => ExprKind::Unary(UnaryOp::Not, Box::new(rhs)),
+                TokenKind::And => ExprKind::Unary(UnaryOp::Ref, Box::new(rhs)),
+                TokenKind::Star => ExprKind::Unary(UnaryOp::Deref, Box::new(rhs)),
+                TokenKind::Some => ExprKind::Optional(Optional::Some(Box::new(rhs))),
+                _ => unreachable!(),
+            };
+
             Expr {
-                kind: ExprKind::Unary(op, Box::new(rhs)),
+                kind,
                 span: start_span,
             }
         } else {
@@ -891,7 +902,7 @@ impl<'a> Parser<'a> {
         Ok(lhs)
     }
 
-    // primary-expr = literal / struct-expr / path / array-expr
+    // primary-expr = literal / none-expr / struct-expr / path / array-expr
     //              / if-expr / while-expr / loop-expr / break-expr / continue-expr
     //              / block / "(" expression ")"
     fn parse_expr_primary(&mut self) -> Result<Expr, ParseError> {
@@ -940,6 +951,11 @@ impl<'a> Parser<'a> {
             TokenKind::Null => {
                 self.advance()?;
                 ExprKind::Literal(Literal::Null)
+            }
+            // none-expr = "none"
+            TokenKind::None => {
+                self.advance()?;
+                ExprKind::Optional(Optional::None)
             }
             // identifier = (ALPHA / "_") *(ALPHA / "_" / DIGIT)
             TokenKind::Ident(name) => {
@@ -1212,6 +1228,7 @@ impl<'a> Parser<'a> {
             TokenKind::Bang => Some(100),  // !
             TokenKind::And => Some(100),   // &
             TokenKind::Star => Some(100),  // *
+            TokenKind::Some => Some(100),  // some
             _ => None,
         }
     }
@@ -1226,7 +1243,7 @@ impl<'a> Parser<'a> {
             TokenKind::Lt | TokenKind::Le | TokenKind::Gt | TokenKind::Ge => (60, 61), // < <= > >=
             TokenKind::Plus | TokenKind::Minus => (70, 71), // + -
             TokenKind::Star | TokenKind::Slash | TokenKind::Percent => (80, 81), // * / %
-            TokenKind::As => (90, 91),                                           // as
+            TokenKind::As => (90, 91),                   // as
             _ => return None,
         };
         Some(bp)

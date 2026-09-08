@@ -321,10 +321,17 @@ impl<'a> TypeChecker<'a> {
                     )),
                 }
             }
+
             ast::TypeAnnKind::Opaque => Err(TypeError::new(
                 "opaque type cannot be used as a struct field".to_string(),
                 type_ann.span,
             )),
+
+            ast::TypeAnnKind::Optional(payload) => {
+                let (payload_size, payload_align) = self.type_dimensions(payload)?;
+                let size = payload_align + payload_size;
+                Ok((size, payload_align))
+            }
         }
     }
 
@@ -352,6 +359,28 @@ impl<'a> TypeChecker<'a> {
             ast::TypeAnnKind::Pointer(inner) => {
                 let inner_type_id = self.lower_type(inner)?;
                 Ok(self.types.mk_pointer(inner_type_id))
+            }
+
+            ast::TypeAnnKind::Optional(payload) => {
+                let payload_type_id = self.lower_type(payload)?;
+
+                match payload_type_id {
+                    TypeId::Never => {
+                        return Err(TypeError::new(
+                            "optional payload cannot have type `!`".into(),
+                            payload.span,
+                        ));
+                    }
+                    TypeId::Opaque => {
+                        return Err(TypeError::new(
+                            "optional payload cannot have type `opaque`".into(),
+                            payload.span,
+                        ));
+                    }
+                    _ => {}
+                }
+
+                Ok(self.types.mk_optional(payload_type_id))
             }
 
             ast::TypeAnnKind::Array(elem, len_expr) => {
@@ -1237,6 +1266,7 @@ impl<'a> TypeChecker<'a> {
     fn infer_expression(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
         match &expr.kind {
             ast::ExprKind::Literal(..) => self.infer_expr_literal(expr),
+            ast::ExprKind::Optional(..) => self.infer_expr_optional(expr),
             ast::ExprKind::Struct(..) => self.infer_expr_struct(expr),
             ast::ExprKind::Path(..) => self.infer_expr_path(expr),
             ast::ExprKind::Array(..) => self.infer_expr_array(expr),
@@ -1323,6 +1353,40 @@ impl<'a> TypeChecker<'a> {
             type_id: ty,
             span: expr.span,
         })
+    }
+
+    fn infer_expr_optional(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
+        let ast::ExprKind::Optional(optional) = &expr.kind else {
+            unreachable!()
+        };
+
+        match optional {
+            ast::Optional::Some(value) => {
+                let typed_value = self.infer_expression(value)?;
+
+                if matches!(typed_value.type_id, TypeId::Never | TypeId::Opaque) {
+                    return Err(TypeError::new(
+                        format!(
+                            "type `{}` cannot be stored in an optional",
+                            self.types.type_name(typed_value.type_id),
+                        ),
+                        value.span,
+                    ));
+                }
+
+                let optional_type_id = self.types.mk_optional(typed_value.type_id);
+
+                Ok(hir::Expr {
+                    kind: hir::ExprKind::Optional(hir::Optional::Some(Box::new(typed_value))),
+                    type_id: optional_type_id,
+                    span: expr.span,
+                })
+            }
+            ast::Optional::None => Err(TypeError::new(
+                "cannot infer the type of `none` without an expected optional type".into(),
+                expr.span,
+            )),
+        }
     }
 
     fn infer_expr_struct(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
@@ -2164,6 +2228,7 @@ impl<'a> TypeChecker<'a> {
     ) -> Result<hir::Expr, TypeError> {
         match &expr.kind {
             ast::ExprKind::Literal(..) => self.check_expr_literal(expr, expected),
+            ast::ExprKind::Optional(..) => self.check_expr_optional(expr, expected),
             ast::ExprKind::Array(..) => self.check_expr_array(expr, expected),
             ast::ExprKind::Repeat(..) => self.check_expr_repeat(expr, expected),
             ast::ExprKind::Block(..) => self.check_expr_block(expr, expected),
@@ -2242,6 +2307,62 @@ impl<'a> TypeChecker<'a> {
                         expr.span,
                     ));
                 }
+                Ok(inferred)
+            }
+        }
+    }
+
+    fn check_expr_optional(
+        &mut self,
+        expr: &ast::Expr,
+        expected: TypeId,
+    ) -> Result<hir::Expr, TypeError> {
+        let ast::ExprKind::Optional(optional) = &expr.kind else {
+            unreachable!()
+        };
+
+        match optional {
+            ast::Optional::None => {
+                if !matches!(self.types.get(expected).kind, TypeKind::Optional(_)) {
+                    return Err(TypeError::new(
+                        format!(
+                            "expected `{}`, found `none`",
+                            self.types.type_name(expected),
+                        ),
+                        expr.span,
+                    ));
+                }
+
+                Ok(hir::Expr {
+                    kind: hir::ExprKind::Optional(hir::Optional::None),
+                    type_id: expected,
+                    span: expr.span,
+                })
+            }
+            ast::Optional::Some(value) => {
+                if let TypeKind::Optional(payload_type_id) = self.types.get(expected).kind {
+                    let typed_value = self.check_expression(value, payload_type_id)?;
+
+                    return Ok(hir::Expr {
+                        kind: hir::ExprKind::Optional(hir::Optional::Some(Box::new(typed_value))),
+                        type_id: expected,
+                        span: expr.span,
+                    });
+                }
+
+                let inferred = self.infer_expr_optional(expr)?;
+
+                if !self.types.is_assignable(inferred.type_id, expected) {
+                    return Err(TypeError::new(
+                        format!(
+                            "expected `{}`, found `{}`",
+                            self.types.type_name(expected),
+                            self.types.type_name(inferred.type_id),
+                        ),
+                        expr.span,
+                    ));
+                }
+
                 Ok(inferred)
             }
         }
