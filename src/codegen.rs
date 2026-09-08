@@ -1053,10 +1053,11 @@ impl<'a> CodeGen<'a> {
             }
         }
 
-        Ok(match optional_addr {
-            qbe::Value::Temporary(name) => GenValue::Temp(name, expr.type_id),
-            _ => unreachable!(),
-        })
+        let qbe::Value::Temporary(name) = optional_addr else {
+            unreachable!()
+        };
+
+        Ok(GenValue::Temp(name, expr.type_id))
     }
 
     fn generate_expr_struct(
@@ -1093,10 +1094,11 @@ impl<'a> CodeGen<'a> {
             );
         }
 
-        Ok(match struct_addr {
-            qbe::Value::Temporary(name) => GenValue::Temp(name, expr.type_id),
-            _ => unreachable!(),
-        })
+        let qbe::Value::Temporary(name) = struct_addr else {
+            unreachable!()
+        };
+
+        Ok(GenValue::Temp(name, expr.type_id))
     }
 
     fn generate_expr_place(&mut self, qfunc: &mut qbe::Function, expr: &Expr) -> GenValue {
