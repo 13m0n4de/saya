@@ -216,6 +216,75 @@ fn test_unary_operators() {
 }
 
 #[test]
+fn test_optional_type_annotations() {
+    let program = parse!("fn f(a: ?i32, b: ??i32, c: ?*i32, d: *?i32) {}").unwrap();
+    let ItemKind::Function(func) = &program.items[0].kind else {
+        panic!("Expected function");
+    };
+
+    assert!(matches!(
+        &func.params[0].type_ann.kind,
+        TypeAnnKind::Optional(inner) if inner.kind == TypeAnnKind::I32
+    ));
+    assert!(matches!(
+        &func.params[1].type_ann.kind,
+        TypeAnnKind::Optional(inner)
+            if matches!(&inner.kind, TypeAnnKind::Optional(inner) if inner.kind == TypeAnnKind::I32)
+    ));
+    assert!(matches!(
+        &func.params[2].type_ann.kind,
+        TypeAnnKind::Optional(inner)
+            if matches!(&inner.kind, TypeAnnKind::Pointer(inner) if inner.kind == TypeAnnKind::I32)
+    ));
+    assert!(matches!(
+        &func.params[3].type_ann.kind,
+        TypeAnnKind::Pointer(inner)
+            if matches!(&inner.kind, TypeAnnKind::Optional(inner) if inner.kind == TypeAnnKind::I32)
+    ));
+}
+
+#[test]
+fn test_optional_expressions() {
+    assert!(matches!(
+        parse_expr!("none").unwrap().kind,
+        ExprKind::Optional(Optional::None)
+    ));
+    assert!(matches!(
+        parse_expr!("some 1").unwrap().kind,
+        ExprKind::Optional(Optional::Some(value))
+            if matches!(value.kind, ExprKind::Literal(Literal::Integer(1, None)))
+    ));
+    assert!(matches!(
+        parse_expr!("some some 1").unwrap().kind,
+        ExprKind::Optional(Optional::Some(value))
+            if matches!(value.kind, ExprKind::Optional(Optional::Some(_)))
+    ));
+    assert!(matches!(
+        parse_expr!("some f()").unwrap().kind,
+        ExprKind::Optional(Optional::Some(value))
+            if matches!(value.kind, ExprKind::Call(_))
+    ));
+    assert!(matches!(
+        parse_expr!("some x.field").unwrap().kind,
+        ExprKind::Optional(Optional::Some(value))
+            if matches!(value.kind, ExprKind::Field(_, ref field) if field == "field")
+    ));
+    assert!(matches!(
+        parse_expr!("some -x").unwrap().kind,
+        ExprKind::Optional(Optional::Some(value))
+            if matches!(value.kind, ExprKind::Unary(UnaryOp::Neg, _))
+    ));
+
+    let cast = parse_expr!("some x as ?i64").unwrap();
+    assert!(matches!(
+        cast.kind,
+        ExprKind::Cast(value, ty)
+            if matches!(value.kind, ExprKind::Optional(Optional::Some(_)))
+                && matches!(&ty.kind, TypeAnnKind::Optional(inner) if inner.kind == TypeAnnKind::I64)
+    ));
+}
+
+#[test]
 fn test_array_literal() {
     let expr = parse_expr!("[1, 2, 3]").unwrap();
 
