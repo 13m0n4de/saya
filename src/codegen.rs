@@ -151,9 +151,10 @@ impl<'a> CodeGen<'a> {
 
             TypeKind::Pointer(_) | TypeKind::Null | TypeKind::Fn(..) => qbe::Type::Long,
 
-            TypeKind::Optional(..) => todo!(),
-
-            TypeKind::Struct(..) | TypeKind::Array(..) | TypeKind::Slice(_) => {
+            TypeKind::Struct(..)
+            | TypeKind::Array(..)
+            | TypeKind::Slice(_)
+            | TypeKind::Optional(_) => {
                 let def = self.generate_type_def(type_id);
                 qbe::Type::aggregate(&def)
             }
@@ -182,9 +183,10 @@ impl<'a> CodeGen<'a> {
 
             TypeKind::Pointer(_) | TypeKind::Null | TypeKind::Fn(..) => qbe::Type::Long,
 
-            TypeKind::Optional(..) => todo!(),
-
-            TypeKind::Struct(..) | TypeKind::Array(..) | TypeKind::Slice(_) => qbe::Type::Long,
+            TypeKind::Struct(..)
+            | TypeKind::Array(..)
+            | TypeKind::Slice(_)
+            | TypeKind::Optional(_) => qbe::Type::Long,
 
             TypeKind::Unit | TypeKind::Never | TypeKind::Opaque => unreachable!(),
         }
@@ -210,9 +212,10 @@ impl<'a> CodeGen<'a> {
 
             TypeKind::Pointer(_) | TypeKind::Null | TypeKind::Fn(..) => qbe::Type::Long,
 
-            TypeKind::Optional(..) => todo!(),
-
-            TypeKind::Struct(..) | TypeKind::Array(..) | TypeKind::Slice(_) => qbe::Type::Long,
+            TypeKind::Struct(..)
+            | TypeKind::Array(..)
+            | TypeKind::Slice(_)
+            | TypeKind::Optional(_) => qbe::Type::Long,
 
             TypeKind::Unit | TypeKind::Never | TypeKind::Opaque => unreachable!(),
         }
@@ -287,6 +290,40 @@ impl<'a> CodeGen<'a> {
         let ty = self.types.get(type_id);
 
         let items = vec![(qbe::Type::Long, 1), (qbe::Type::Long, 1)];
+
+        let TypeId::Interned(n) = type_id else {
+            unreachable!()
+        };
+        let ident = format!("type.{n}");
+
+        Arc::new(qbe::TypeDef::Regular {
+            ident,
+            align: Some(ty.align as u64),
+            items,
+        })
+    }
+
+    fn build_optional_def(
+        &mut self,
+        type_id: TypeId,
+        payload_type_id: TypeId,
+    ) -> Arc<qbe::TypeDef> {
+        let ty = self.types.get(type_id);
+        let payload_ty = self.types.get(payload_type_id);
+        let mut items = vec![(qbe::Type::Byte, 1)];
+
+        if payload_ty.size != 0 {
+            let qbe_payload_ty = if payload_ty.is_aggregate() {
+                let payload_def = self
+                    .type_defs
+                    .get(&payload_type_id)
+                    .expect("payload type should be generated first");
+                qbe::Type::aggregate(payload_def)
+            } else {
+                self.qbe_store_type(payload_type_id)
+            };
+            items.push((qbe_payload_ty, 1));
+        }
 
         let TypeId::Interned(n) = type_id else {
             unreachable!()
@@ -528,6 +565,10 @@ impl<'a> CodeGen<'a> {
                         field.type_id,
                     );
                 }
+            }
+            TypeKind::Optional(_) => {
+                let size = self.types.get(type_id).size as u64;
+                qfunc.add_instr(qbe::Instr::Blit(src, dest, size));
             }
             _ => unreachable!(
                 "copy_aggregate called on non-aggregate type: {}",
@@ -786,6 +827,14 @@ impl<'a> CodeGen<'a> {
                 self.build_array_def(type_id, elem_type_id, len)
             }
             TypeKind::Slice(_) => self.build_slice_def(type_id),
+            TypeKind::Optional(payload_type_id) => {
+                let payload_ty = self.types.get(payload_type_id);
+                if payload_ty.size != 0 && payload_ty.is_aggregate() {
+                    self.generate_type_def(payload_type_id);
+                }
+
+                self.build_optional_def(type_id, payload_type_id)
+            }
             _ => unreachable!("non-aggregate type: {}", self.types.type_name(type_id)),
         };
 
@@ -954,6 +1003,60 @@ impl<'a> CodeGen<'a> {
             }
             Literal::Null => GenValue::Const(0, expr.type_id),
         }
+    }
+
+    fn generate_expr_optional(
+        &mut self,
+        qfunc: &mut qbe::Function,
+        expr: &Expr,
+    ) -> Result<GenValue, CodeGenError> {
+        let ExprKind::Optional(optional) = &expr.kind else {
+            unreachable!()
+        };
+
+        let TypeKind::Optional(payload_type_id) = self.types.get(expr.type_id).kind else {
+            unreachable!()
+        };
+        let optional_ty = self.types.get(expr.type_id).clone();
+        let payload_ty = self.types.get(payload_type_id).clone();
+        let optional_addr = self.alloc_local(qfunc, &optional_ty);
+
+        match optional {
+            Optional::None => {
+                self.store_field(
+                    qfunc,
+                    optional_addr.clone(),
+                    0,
+                    qbe::Value::Const(0),
+                    TypeId::U8,
+                );
+            }
+            Optional::Some(value) => {
+                let payload = self.generate_expression(qfunc, value)?;
+                self.store_field(
+                    qfunc,
+                    optional_addr.clone(),
+                    0,
+                    qbe::Value::Const(1),
+                    TypeId::U8,
+                );
+
+                if payload_ty.size != 0 {
+                    self.store_field(
+                        qfunc,
+                        optional_addr.clone(),
+                        payload_ty.align as u64,
+                        payload.into(),
+                        payload_type_id,
+                    );
+                }
+            }
+        }
+
+        Ok(match optional_addr {
+            qbe::Value::Temporary(name) => GenValue::Temp(name, expr.type_id),
+            _ => unreachable!(),
+        })
     }
 
     fn generate_expr_struct(
@@ -1460,7 +1563,7 @@ impl<'a> CodeGen<'a> {
     ) -> Result<GenValue, CodeGenError> {
         let result = match &expr.kind {
             ExprKind::Literal(..) => Ok(self.generate_expr_literal(qfunc, expr)),
-            ExprKind::Optional(..) => todo!(),
+            ExprKind::Optional(..) => self.generate_expr_optional(qfunc, expr),
             ExprKind::Const(..) => Ok(self.generate_expr_const(qfunc, expr)),
             ExprKind::Place(..) => Ok(self.generate_expr_place(qfunc, expr)),
             ExprKind::Struct(..) => self.generate_expr_struct(qfunc, expr),
