@@ -23,7 +23,6 @@ pub enum TokenKind {
     Static,   // static
     True,     // true
     False,    // false
-    Null,     // null
     Some,     // some
     None,     // none
 
@@ -365,7 +364,6 @@ impl<'a> Lexer<'a> {
             "static" => TokenKind::Static,
             "true" => TokenKind::True,
             "false" => TokenKind::False,
-            "null" => TokenKind::Null,
             "some" => TokenKind::Some,
             "none" => TokenKind::None,
             _ => TokenKind::Ident(ident),

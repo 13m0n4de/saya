@@ -1025,33 +1025,6 @@ fn test_optional_layout() {
 }
 
 #[test]
-fn test_null_literal() {
-    // null can be assigned to any pointer type
-    assert!(typecheck!("fn test() { let p: *i64 = null; }").is_ok());
-    assert!(typecheck!("fn test() { let p: *bool = null; }").is_ok());
-    assert!(typecheck!("fn test() { let p: *i8 = null; }").is_ok());
-
-    // pointer == null
-    assert!(typecheck!("fn test() -> bool { let p: *i64 = null; p == null }").is_ok());
-
-    // null == pointer
-    assert!(typecheck!("fn test() -> bool { let p: *i64 = null; null == p }").is_ok());
-
-    // pointer != null
-    assert!(typecheck!("fn test() -> bool { let p: *i64 = null; p != null }").is_ok());
-
-    // non-null pointer compared to null
-    assert!(
-        typecheck!("fn test() -> bool { let x: i64 = 0; let p: *i64 = &x; p != null }").is_ok()
-    );
-
-    // null cannot be assigned to non-pointer types
-    assert!(typecheck!("fn test() { let x: i64 = null; }").is_err());
-    assert!(typecheck!("fn test() { let x: bool = null; }").is_err());
-    assert!(typecheck!("fn test() { let x: f64 = null; }").is_err());
-}
-
-#[test]
 fn test_cast() {
     // result type
     let program = typecheck!("fn test() -> u8 { 300u32 as u8 }").unwrap();
@@ -1081,5 +1054,8 @@ fn test_cast() {
 
     // cannot be cast
     assert!(typecheck!("fn test() -> i64 { true as i64 }").is_err());
-    assert!(typecheck!("fn test() -> i64 { let x: *i64 = null; x as i64 }").is_err());
+    assert!(
+        typecheck!("fn test() -> i64 { let value: i64 = 0; let x: *i64 = &value; x as i64 }")
+            .is_err()
+    );
 }

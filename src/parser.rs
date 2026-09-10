@@ -947,11 +947,6 @@ impl<'a> Parser<'a> {
                 self.advance()?;
                 ExprKind::Literal(Literal::Bool(false))
             }
-            // null
-            TokenKind::Null => {
-                self.advance()?;
-                ExprKind::Literal(Literal::Null)
-            }
             // none-expr = "none"
             TokenKind::None => {
                 self.advance()?;

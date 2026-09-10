@@ -124,7 +124,7 @@ impl<'a> CodeGen<'a> {
 
             TypeKind::Bool => qbe::Type::Word,
 
-            TypeKind::Pointer(_) | TypeKind::Null | TypeKind::Fn(..) => qbe::Type::Long,
+            TypeKind::Pointer(_) | TypeKind::Fn(..) => qbe::Type::Long,
 
             TypeKind::Optional(payload_type_id) => match self.types.get(*payload_type_id).niche {
                 Some(Niche::NullPointer) => self.qbe_type(*payload_type_id),
@@ -161,7 +161,7 @@ impl<'a> CodeGen<'a> {
 
             TypeKind::Bool => qbe::Type::UnsignedByte,
 
-            TypeKind::Pointer(_) | TypeKind::Null | TypeKind::Fn(..) => qbe::Type::Long,
+            TypeKind::Pointer(_) | TypeKind::Fn(..) => qbe::Type::Long,
 
             TypeKind::Optional(payload_type_id) => match self.types.get(*payload_type_id).niche {
                 Some(Niche::NullPointer) => self.qbe_load_type(*payload_type_id),
@@ -192,7 +192,7 @@ impl<'a> CodeGen<'a> {
 
             TypeKind::Bool => qbe::Type::Byte,
 
-            TypeKind::Pointer(_) | TypeKind::Null | TypeKind::Fn(..) => qbe::Type::Long,
+            TypeKind::Pointer(_) | TypeKind::Fn(..) => qbe::Type::Long,
 
             TypeKind::Optional(payload_type_id) => match self.types.get(*payload_type_id).niche {
                 Some(Niche::NullPointer) => self.qbe_store_type(*payload_type_id),
@@ -731,9 +731,6 @@ impl<'a> CodeGen<'a> {
                 let label = self.emit_cstring_data(s);
                 vec![(qbe::Type::Long, qbe::DataItem::Symbol(label, None))]
             }
-            ConstValKind::Null => {
-                vec![(qbe::Type::Long, qbe::DataItem::Const(0))]
-            }
             ConstValKind::Struct(field_values) => {
                 let (fields, total_size) = {
                     let ty = self.types.get(val.type_id);
@@ -984,7 +981,6 @@ impl<'a> CodeGen<'a> {
                 let label = self.emit_cstring_data(s);
                 qbe::Value::Global(label)
             }
-            Literal::Null => qbe::Value::Const(0),
         }
     }
 
@@ -1639,7 +1635,6 @@ impl<'a> CodeGen<'a> {
                 let label = self.emit_cstring_data(s);
                 qbe::Value::Global(label)
             }
-            ConstValKind::Null => qbe::Value::Const(0),
             ConstValKind::String(s) => self.generate_string_slice(qfunc, s),
             ConstValKind::Struct(field_values) => {
                 let (fields, ty) = {

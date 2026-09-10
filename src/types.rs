@@ -20,7 +20,6 @@ pub enum TypeId {
     Unit,
     Never,
     Opaque,
-    Null,
 
     Interned(u32),
 }
@@ -141,13 +140,6 @@ impl Type {
         is_aggregate: false,
         niche: None,
     };
-    pub const NULL: Self = Type {
-        kind: TypeKind::Null,
-        size: 0,
-        align: 1,
-        is_aggregate: false,
-        niche: None,
-    };
 }
 
 impl Type {
@@ -238,7 +230,6 @@ pub enum TypeKind {
     Unit,
     Never,
     Opaque,
-    Null,
     Pointer(TypeId),
     Optional(TypeId),
 
@@ -324,7 +315,6 @@ impl TypeContext {
             TypeId::Unit => &Type::UNIT,
             TypeId::Never => &Type::NEVER,
             TypeId::Opaque => &Type::OPAQUE,
-            TypeId::Null => &Type::NULL,
             TypeId::Interned(n) => &self.interned[n as usize],
         }
     }
@@ -405,7 +395,6 @@ impl TypeContext {
             TypeKind::Unit => "()".into(),
             TypeKind::Never => "!".into(),
             TypeKind::Opaque => "opaque".into(),
-            TypeKind::Null => "null".into(),
             TypeKind::Pointer(inner) => format!("*{}", self.type_name(*inner)),
             TypeKind::Optional(inner) => format!("?{}", self.type_name(*inner)),
             TypeKind::Array(elem, len) => format!("[{}; {len}]", self.type_name(*elem)),
@@ -439,11 +428,6 @@ impl TypeContext {
             TypeKind::Pointer(inner) if matches!(self.get(inner).kind, TypeKind::Opaque)
         ) {
             return matches!(self.get(from).kind, TypeKind::Pointer(_));
-        }
-
-        // from null to *T
-        if from == TypeId::Null && matches!(self.get(to).kind, TypeKind::Pointer(_)) {
-            return true;
         }
 
         from == to

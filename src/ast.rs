@@ -235,7 +235,6 @@ pub enum Literal {
     Bool(bool),
     String(String),
     CString(String),
-    Null,
 }
 
 #[derive(Debug, Clone, PartialEq)]
