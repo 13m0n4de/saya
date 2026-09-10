@@ -2,7 +2,7 @@ use saya::hir::*;
 use saya::lexer::Lexer;
 use saya::parser::Parser;
 use saya::type_checker::TypeChecker;
-use saya::types::{TypeContext, TypeId, TypeKind};
+use saya::types::{Niche, TypeContext, TypeId, TypeKind};
 
 macro_rules! typecheck {
     ($input:expr) => {{
@@ -1007,13 +1007,21 @@ fn test_optional_layout() {
     let nested = types.mk_optional(optional_i32);
     assert_eq!(types.get(nested).size, 12);
     assert_eq!(types.get(nested).align, 4);
-    assert!(types.get(nested).is_aggregate());
+    assert!(types.get(nested).is_aggregate);
 
     let pointer = types.mk_pointer(TypeId::I32);
+    assert_eq!(types.get(pointer).niche, Some(Niche::NullPointer));
+
     let optional_pointer = types.mk_optional(pointer);
-    assert_eq!(types.get(optional_pointer).size, 16);
+    assert_eq!(types.get(optional_pointer).size, 8);
     assert_eq!(types.get(optional_pointer).align, 8);
-    assert!(types.get(optional_pointer).is_aggregate());
+    assert!(!types.get(optional_pointer).is_aggregate);
+    assert_eq!(types.get(optional_pointer).niche, None);
+
+    let nested_pointer = types.mk_optional(optional_pointer);
+    assert_eq!(types.get(nested_pointer).size, 16);
+    assert_eq!(types.get(nested_pointer).align, 8);
+    assert!(types.get(nested_pointer).is_aggregate);
 }
 
 #[test]
