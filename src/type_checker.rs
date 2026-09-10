@@ -15,7 +15,7 @@ use crate::{
         Static, Struct, TypeAlias,
     },
     span::Span,
-    types::{Field, TypeContext, TypeId, TypeKind},
+    types::{Field, Niche, TypeContext, TypeId, TypeKind},
 };
 
 #[derive(Debug, Clone)]
@@ -260,26 +260,34 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    fn type_dimensions(&mut self, type_ann: &ast::TypeAnn) -> Result<(usize, usize), TypeError> {
+    fn type_layout(
+        &mut self,
+        type_ann: &ast::TypeAnn,
+    ) -> Result<(usize, usize, Option<Niche>), TypeError> {
         match &type_ann.kind {
-            ast::TypeAnnKind::U8 | ast::TypeAnnKind::I8 | ast::TypeAnnKind::Bool => Ok((1, 1)),
+            ast::TypeAnnKind::U8 | ast::TypeAnnKind::I8 | ast::TypeAnnKind::Bool => {
+                Ok((1, 1, None))
+            }
 
-            ast::TypeAnnKind::U16 | ast::TypeAnnKind::I16 => Ok((2, 2)),
+            ast::TypeAnnKind::U16 | ast::TypeAnnKind::I16 => Ok((2, 2, None)),
 
-            ast::TypeAnnKind::U32 | ast::TypeAnnKind::I32 | ast::TypeAnnKind::F32 => Ok((4, 4)),
+            ast::TypeAnnKind::U32 | ast::TypeAnnKind::I32 | ast::TypeAnnKind::F32 => {
+                Ok((4, 4, None))
+            }
 
             ast::TypeAnnKind::U64
             | ast::TypeAnnKind::I64
             | ast::TypeAnnKind::F64
-            | ast::TypeAnnKind::Pointer(_)
-            | ast::TypeAnnKind::Fn(_, _, _) => Ok((8, 8)),
+            | ast::TypeAnnKind::Fn(_, _, _) => Ok((8, 8, None)),
 
-            ast::TypeAnnKind::Unit | ast::TypeAnnKind::Never => Ok((0, 1)),
+            ast::TypeAnnKind::Pointer(_) => Ok((8, 8, Some(Niche::NullPointer))),
 
-            ast::TypeAnnKind::Slice(_) => Ok((16, 8)),
+            ast::TypeAnnKind::Unit | ast::TypeAnnKind::Never => Ok((0, 1, None)),
+
+            ast::TypeAnnKind::Slice(_) => Ok((16, 8, None)),
 
             ast::TypeAnnKind::Array(elem, len_expr) => {
-                let (elem_size, elem_align) = self.type_dimensions(elem)?;
+                let (elem_size, elem_align, _) = self.type_layout(elem)?;
 
                 let typed_len = self.check_expression(len_expr, TypeId::I64)?;
 
@@ -300,7 +308,7 @@ impl<'a> TypeChecker<'a> {
                 }
 
                 let len = len_val as usize;
-                Ok((elem_size * len, elem_align))
+                Ok((elem_size * len, elem_align, None))
             }
 
             ast::TypeAnnKind::Path(path) => {
@@ -313,7 +321,7 @@ impl<'a> TypeChecker<'a> {
                         | ScopeObject::TypeAlias(TypeAlias::Resolved(type_id)),
                     ) => {
                         let t = self.types.get(*type_id);
-                        Ok((t.size, t.align))
+                        Ok((t.size, t.align, t.niche))
                     }
                     _ => Err(TypeError::new(
                         format!("undefined type `{path}`"),
@@ -328,9 +336,17 @@ impl<'a> TypeChecker<'a> {
             )),
 
             ast::TypeAnnKind::Optional(payload) => {
-                let (payload_size, payload_align) = self.type_dimensions(payload)?;
-                let size = payload_align + payload_size;
-                Ok((size, payload_align))
+                let (payload_size, payload_align, payload_niche) = self.type_layout(payload)?;
+
+                match payload_niche {
+                    Some(Niche::NullPointer) => Ok((payload_size, payload_align, None)),
+                    None => {
+                        let tag_size = 1usize;
+                        let payload_offset = tag_size.next_multiple_of(payload_align);
+                        let size = (payload_offset + payload_size).next_multiple_of(payload_align);
+                        Ok((size, payload_align, None))
+                    }
+                }
             }
         }
     }
@@ -458,7 +474,7 @@ impl<'a> TypeChecker<'a> {
         let mut max_align = 1;
 
         for field in &def.fields {
-            let (field_size, field_align) = self.type_dimensions(&field.type_ann)?;
+            let (field_size, field_align, _) = self.type_layout(&field.type_ann)?;
             max_align = max_align.max(field_align);
 
             if offset % field_align != 0 {
@@ -2453,7 +2469,7 @@ impl<'a> TypeChecker<'a> {
 
         if n as usize != expected_len {
             return Err(TypeError::new(
-                format!("array length mismatch: expected {expected_len} elements, found {n}",),
+                format!("array length mismatch: expected {expected_len} elements, found {n}"),
                 count.span,
             ));
         }

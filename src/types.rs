@@ -25,11 +25,18 @@ pub enum TypeId {
     Interned(u32),
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum Niche {
+    NullPointer,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Type {
     pub kind: TypeKind,
     pub size: usize,
     pub align: usize,
+    pub is_aggregate: bool,
+    pub niche: Option<Niche>,
 }
 
 impl Type {
@@ -37,79 +44,109 @@ impl Type {
         kind: TypeKind::U8,
         size: 1,
         align: 1,
+        is_aggregate: false,
+        niche: None,
     };
     pub const U16: Self = Type {
         kind: TypeKind::U16,
         size: 2,
         align: 2,
+        is_aggregate: false,
+        niche: None,
     };
     pub const U32: Self = Type {
         kind: TypeKind::U32,
         size: 4,
         align: 4,
+        is_aggregate: false,
+        niche: None,
     };
     pub const U64: Self = Type {
         kind: TypeKind::U64,
         size: 8,
         align: 8,
+        is_aggregate: false,
+        niche: None,
     };
 
     pub const I8: Self = Type {
         kind: TypeKind::I8,
         size: 1,
         align: 1,
+        is_aggregate: false,
+        niche: None,
     };
     pub const I16: Self = Type {
         kind: TypeKind::I16,
         size: 2,
         align: 2,
+        is_aggregate: false,
+        niche: None,
     };
     pub const I32: Self = Type {
         kind: TypeKind::I32,
         size: 4,
         align: 4,
+        is_aggregate: false,
+        niche: None,
     };
     pub const I64: Self = Type {
         kind: TypeKind::I64,
         size: 8,
         align: 8,
+        is_aggregate: false,
+        niche: None,
     };
 
     pub const F32: Self = Type {
         kind: TypeKind::F32,
         size: 4,
         align: 4,
+        is_aggregate: false,
+        niche: None,
     };
     pub const F64: Self = Type {
         kind: TypeKind::F64,
         size: 8,
         align: 8,
+        is_aggregate: false,
+        niche: None,
     };
 
     pub const BOOL: Self = Type {
         kind: TypeKind::Bool,
         size: 1,
         align: 1,
+        is_aggregate: false,
+        niche: None,
     };
     pub const UNIT: Self = Type {
         kind: TypeKind::Unit,
         size: 0,
         align: 1,
+        is_aggregate: false,
+        niche: None,
     };
     pub const NEVER: Self = Type {
         kind: TypeKind::Never,
         size: 0,
         align: 1,
+        is_aggregate: false,
+        niche: None,
     };
     pub const OPAQUE: Self = Type {
         kind: TypeKind::Opaque,
         size: 0,
         align: 1,
+        is_aggregate: false,
+        niche: None,
     };
     pub const NULL: Self = Type {
         kind: TypeKind::Null,
         size: 0,
         align: 1,
+        is_aggregate: false,
+        niche: None,
     };
 }
 
@@ -119,14 +156,34 @@ impl Type {
             kind: TypeKind::Pointer(referent),
             size: 8,
             align: 8,
+            is_aggregate: false,
+            niche: Some(Niche::NullPointer),
         }
     }
 
-    pub fn optional(payload: TypeId, payload_size: usize, payload_align: usize) -> Self {
-        Type {
-            kind: TypeKind::Optional(payload),
-            size: payload_align + payload_size, // align(tag + padding) + size
-            align: payload_align,
+    pub fn optional(payload: TypeId, payload_ty: &Type) -> Self {
+        match payload_ty.niche {
+            Some(Niche::NullPointer) => Type {
+                kind: TypeKind::Optional(payload),
+                size: payload_ty.size,
+                align: payload_ty.align,
+                is_aggregate: payload_ty.is_aggregate,
+                niche: None,
+            },
+
+            None => {
+                let tag_size = 1usize;
+                let payload_offset = tag_size.next_multiple_of(payload_ty.align);
+                let size = (payload_offset + payload_ty.size).next_multiple_of(payload_ty.align);
+
+                Type {
+                    kind: TypeKind::Optional(payload),
+                    size,
+                    align: payload_ty.align,
+                    is_aggregate: true,
+                    niche: None,
+                }
+            }
         }
     }
 
@@ -135,6 +192,8 @@ impl Type {
             kind: TypeKind::Array(elem, len),
             size: elem_size * len,
             align: elem_align,
+            is_aggregate: true,
+            niche: None,
         }
     }
 
@@ -143,6 +202,8 @@ impl Type {
             kind: TypeKind::Slice(elem),
             size: 16, // ptr + len
             align: 8,
+            is_aggregate: true,
+            niche: None,
         }
     }
 
@@ -151,17 +212,9 @@ impl Type {
             kind: TypeKind::Fn(params_type, return_type, is_variadic),
             size: 8,
             align: 8,
+            is_aggregate: false,
+            niche: None,
         }
-    }
-
-    pub fn is_aggregate(&self) -> bool {
-        matches!(
-            self.kind,
-            TypeKind::Slice(_)
-                | TypeKind::Array { .. }
-                | TypeKind::Struct { .. }
-                | TypeKind::Optional(..)
-        )
     }
 }
 
@@ -282,10 +335,7 @@ impl TypeContext {
 
     pub fn mk_optional(&mut self, payload: TypeId) -> TypeId {
         let payload_ty = self.get(payload);
-        let payload_size = payload_ty.size;
-        let payload_align = payload_ty.align;
-
-        self.intern(Type::optional(payload, payload_size, payload_align))
+        self.intern(Type::optional(payload, payload_ty))
     }
 
     pub fn mk_array(&mut self, elem: TypeId, len: usize) -> TypeId {
@@ -302,6 +352,8 @@ impl TypeContext {
             kind: TypeKind::Struct(String::new(), vec![]),
             size: 0,
             align: 1,
+            is_aggregate: true,
+            niche: None,
         };
         let id = TypeId::Interned(self.interned.len() as u32);
         self.interned.push(data);
@@ -323,6 +375,8 @@ impl TypeContext {
             kind: TypeKind::Struct(name, fields),
             size,
             align,
+            is_aggregate: true,
+            niche: None,
         };
     }
 
