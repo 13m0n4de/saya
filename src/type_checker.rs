@@ -15,7 +15,7 @@ use crate::{
         Static, Struct, TypeAlias,
     },
     span::Span,
-    types::{Field, TypeContext, TypeId, TypeKind},
+    types::{Field, Niche, TypeContext, TypeId, TypeKind},
 };
 
 #[derive(Debug, Clone)]
@@ -105,7 +105,6 @@ impl<'a> TypeChecker<'a> {
                 hir::Literal::CString(s) => {
                     hir::ConstVal::new(hir::ConstValKind::CString(s.clone()), expr.type_id)
                 }
-                hir::Literal::Null => hir::ConstVal::new(hir::ConstValKind::Null, expr.type_id),
             }),
 
             hir::ExprKind::Const(val) => Ok(val.clone()),
@@ -260,26 +259,34 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    fn type_dimensions(&mut self, type_ann: &ast::TypeAnn) -> Result<(usize, usize), TypeError> {
+    fn type_layout(
+        &mut self,
+        type_ann: &ast::TypeAnn,
+    ) -> Result<(usize, usize, Option<Niche>), TypeError> {
         match &type_ann.kind {
-            ast::TypeAnnKind::U8 | ast::TypeAnnKind::I8 | ast::TypeAnnKind::Bool => Ok((1, 1)),
+            ast::TypeAnnKind::U8 | ast::TypeAnnKind::I8 | ast::TypeAnnKind::Bool => {
+                Ok((1, 1, None))
+            }
 
-            ast::TypeAnnKind::U16 | ast::TypeAnnKind::I16 => Ok((2, 2)),
+            ast::TypeAnnKind::U16 | ast::TypeAnnKind::I16 => Ok((2, 2, None)),
 
-            ast::TypeAnnKind::U32 | ast::TypeAnnKind::I32 | ast::TypeAnnKind::F32 => Ok((4, 4)),
+            ast::TypeAnnKind::U32 | ast::TypeAnnKind::I32 | ast::TypeAnnKind::F32 => {
+                Ok((4, 4, None))
+            }
 
             ast::TypeAnnKind::U64
             | ast::TypeAnnKind::I64
             | ast::TypeAnnKind::F64
-            | ast::TypeAnnKind::Pointer(_)
-            | ast::TypeAnnKind::Fn(_, _, _) => Ok((8, 8)),
+            | ast::TypeAnnKind::Fn(_, _, _) => Ok((8, 8, None)),
 
-            ast::TypeAnnKind::Unit | ast::TypeAnnKind::Never => Ok((0, 1)),
+            ast::TypeAnnKind::Pointer(_) => Ok((8, 8, Some(Niche::NullPointer))),
 
-            ast::TypeAnnKind::Slice(_) => Ok((16, 8)),
+            ast::TypeAnnKind::Unit | ast::TypeAnnKind::Never => Ok((0, 1, None)),
+
+            ast::TypeAnnKind::Slice(_) => Ok((16, 8, None)),
 
             ast::TypeAnnKind::Array(elem, len_expr) => {
-                let (elem_size, elem_align) = self.type_dimensions(elem)?;
+                let (elem_size, elem_align, _) = self.type_layout(elem)?;
 
                 let typed_len = self.check_expression(len_expr, TypeId::I64)?;
 
@@ -300,7 +307,7 @@ impl<'a> TypeChecker<'a> {
                 }
 
                 let len = len_val as usize;
-                Ok((elem_size * len, elem_align))
+                Ok((elem_size * len, elem_align, None))
             }
 
             ast::TypeAnnKind::Path(path) => {
@@ -313,7 +320,7 @@ impl<'a> TypeChecker<'a> {
                         | ScopeObject::TypeAlias(TypeAlias::Resolved(type_id)),
                     ) => {
                         let t = self.types.get(*type_id);
-                        Ok((t.size, t.align))
+                        Ok((t.size, t.align, t.niche))
                     }
                     _ => Err(TypeError::new(
                         format!("undefined type `{path}`"),
@@ -321,10 +328,25 @@ impl<'a> TypeChecker<'a> {
                     )),
                 }
             }
+
             ast::TypeAnnKind::Opaque => Err(TypeError::new(
                 "opaque type cannot be used as a struct field".to_string(),
                 type_ann.span,
             )),
+
+            ast::TypeAnnKind::Optional(payload) => {
+                let (payload_size, payload_align, payload_niche) = self.type_layout(payload)?;
+
+                match payload_niche {
+                    Some(Niche::NullPointer) => Ok((payload_size, payload_align, None)),
+                    None => {
+                        let tag_size = 1usize;
+                        let payload_offset = tag_size.next_multiple_of(payload_align);
+                        let size = (payload_offset + payload_size).next_multiple_of(payload_align);
+                        Ok((size, payload_align, None))
+                    }
+                }
+            }
         }
     }
 
@@ -352,6 +374,28 @@ impl<'a> TypeChecker<'a> {
             ast::TypeAnnKind::Pointer(inner) => {
                 let inner_type_id = self.lower_type(inner)?;
                 Ok(self.types.mk_pointer(inner_type_id))
+            }
+
+            ast::TypeAnnKind::Optional(payload) => {
+                let payload_type_id = self.lower_type(payload)?;
+
+                match payload_type_id {
+                    TypeId::Never => {
+                        return Err(TypeError::new(
+                            "optional payload cannot have type `!`".into(),
+                            payload.span,
+                        ));
+                    }
+                    TypeId::Opaque => {
+                        return Err(TypeError::new(
+                            "optional payload cannot have type `opaque`".into(),
+                            payload.span,
+                        ));
+                    }
+                    _ => {}
+                }
+
+                Ok(self.types.mk_optional(payload_type_id))
             }
 
             ast::TypeAnnKind::Array(elem, len_expr) => {
@@ -429,7 +473,7 @@ impl<'a> TypeChecker<'a> {
         let mut max_align = 1;
 
         for field in &def.fields {
-            let (field_size, field_align) = self.type_dimensions(&field.type_ann)?;
+            let (field_size, field_align, _) = self.type_layout(&field.type_ann)?;
             max_align = max_align.max(field_align);
 
             if offset % field_align != 0 {
@@ -1237,6 +1281,7 @@ impl<'a> TypeChecker<'a> {
     fn infer_expression(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
         match &expr.kind {
             ast::ExprKind::Literal(..) => self.infer_expr_literal(expr),
+            ast::ExprKind::Optional(..) => self.infer_expr_optional(expr),
             ast::ExprKind::Struct(..) => self.infer_expr_struct(expr),
             ast::ExprKind::Path(..) => self.infer_expr_path(expr),
             ast::ExprKind::Array(..) => self.infer_expr_array(expr),
@@ -1315,7 +1360,6 @@ impl<'a> TypeChecker<'a> {
                 hir::ExprKind::Literal(hir::Literal::CString(s.clone())),
             ),
             ast::Literal::Bool(b) => (TypeId::Bool, hir::ExprKind::Literal(hir::Literal::Bool(*b))),
-            ast::Literal::Null => (TypeId::Null, hir::ExprKind::Literal(hir::Literal::Null)),
         };
 
         Ok(hir::Expr {
@@ -1323,6 +1367,40 @@ impl<'a> TypeChecker<'a> {
             type_id: ty,
             span: expr.span,
         })
+    }
+
+    fn infer_expr_optional(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
+        let ast::ExprKind::Optional(optional) = &expr.kind else {
+            unreachable!()
+        };
+
+        match optional {
+            ast::Optional::Some(value) => {
+                let typed_value = self.infer_expression(value)?;
+
+                if matches!(typed_value.type_id, TypeId::Never | TypeId::Opaque) {
+                    return Err(TypeError::new(
+                        format!(
+                            "type `{}` cannot be stored in an optional",
+                            self.types.type_name(typed_value.type_id),
+                        ),
+                        value.span,
+                    ));
+                }
+
+                let optional_type_id = self.types.mk_optional(typed_value.type_id);
+
+                Ok(hir::Expr {
+                    kind: hir::ExprKind::Optional(hir::Optional::Some(Box::new(typed_value))),
+                    type_id: optional_type_id,
+                    span: expr.span,
+                })
+            }
+            ast::Optional::None => Err(TypeError::new(
+                "cannot infer the type of `none` without an expected optional type".into(),
+                expr.span,
+            )),
+        }
     }
 
     fn infer_expr_struct(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
@@ -1819,16 +1897,7 @@ impl<'a> TypeChecker<'a> {
                 TypeId::Bool
             }
             hir::BinaryOp::Eq | hir::BinaryOp::Ne => {
-                let is_null = |id: TypeId| id == TypeId::Null;
-                let is_ptr = |id: TypeId| matches!(self.types.get(id).kind, TypeKind::Pointer(_));
-
-                // T == T
-                // *T == null
-                // null = *T
-                if typed_left.type_id == typed_right.type_id
-                    || (is_ptr(typed_left.type_id) && is_null(typed_right.type_id))
-                    || (is_null(typed_left.type_id) && is_ptr(typed_right.type_id))
-                {
+                if typed_left.type_id == typed_right.type_id {
                     TypeId::Bool
                 } else {
                     return Err(TypeError::new(
@@ -2164,6 +2233,7 @@ impl<'a> TypeChecker<'a> {
     ) -> Result<hir::Expr, TypeError> {
         match &expr.kind {
             ast::ExprKind::Literal(..) => self.check_expr_literal(expr, expected),
+            ast::ExprKind::Optional(..) => self.check_expr_optional(expr, expected),
             ast::ExprKind::Array(..) => self.check_expr_array(expr, expected),
             ast::ExprKind::Repeat(..) => self.check_expr_repeat(expr, expected),
             ast::ExprKind::Block(..) => self.check_expr_block(expr, expected),
@@ -2242,6 +2312,62 @@ impl<'a> TypeChecker<'a> {
                         expr.span,
                     ));
                 }
+                Ok(inferred)
+            }
+        }
+    }
+
+    fn check_expr_optional(
+        &mut self,
+        expr: &ast::Expr,
+        expected: TypeId,
+    ) -> Result<hir::Expr, TypeError> {
+        let ast::ExprKind::Optional(optional) = &expr.kind else {
+            unreachable!()
+        };
+
+        match optional {
+            ast::Optional::None => {
+                if !matches!(self.types.get(expected).kind, TypeKind::Optional(_)) {
+                    return Err(TypeError::new(
+                        format!(
+                            "expected `{}`, found `none`",
+                            self.types.type_name(expected),
+                        ),
+                        expr.span,
+                    ));
+                }
+
+                Ok(hir::Expr {
+                    kind: hir::ExprKind::Optional(hir::Optional::None),
+                    type_id: expected,
+                    span: expr.span,
+                })
+            }
+            ast::Optional::Some(value) => {
+                if let TypeKind::Optional(payload_type_id) = self.types.get(expected).kind {
+                    let typed_value = self.check_expression(value, payload_type_id)?;
+
+                    return Ok(hir::Expr {
+                        kind: hir::ExprKind::Optional(hir::Optional::Some(Box::new(typed_value))),
+                        type_id: expected,
+                        span: expr.span,
+                    });
+                }
+
+                let inferred = self.infer_expr_optional(expr)?;
+
+                if !self.types.is_assignable(inferred.type_id, expected) {
+                    return Err(TypeError::new(
+                        format!(
+                            "expected `{}`, found `{}`",
+                            self.types.type_name(expected),
+                            self.types.type_name(inferred.type_id),
+                        ),
+                        expr.span,
+                    ));
+                }
+
                 Ok(inferred)
             }
         }
@@ -2332,7 +2458,7 @@ impl<'a> TypeChecker<'a> {
 
         if n as usize != expected_len {
             return Err(TypeError::new(
-                format!("array length mismatch: expected {expected_len} elements, found {n}",),
+                format!("array length mismatch: expected {expected_len} elements, found {n}"),
                 count.span,
             ));
         }

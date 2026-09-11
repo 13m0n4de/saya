@@ -152,6 +152,7 @@ pub struct Expr {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExprKind {
     Literal(Literal),
+    Optional(Optional),
     Const(ConstVal),
     Struct(StructExpr),
     Place(Place),
@@ -180,7 +181,12 @@ pub enum Literal {
     Bool(bool),
     String(String),
     CString(String),
-    Null,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Optional {
+    None,
+    Some(Box<Expr>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -209,7 +215,6 @@ pub enum ConstValKind {
     Bool(bool),
     String(String),
     CString(String),
-    Null,
     Struct(Vec<ConstVal>),
     Array(Vec<ConstVal>),
     Repeat(Box<ConstVal>, usize),

@@ -2,7 +2,7 @@ use saya::hir::*;
 use saya::lexer::Lexer;
 use saya::parser::Parser;
 use saya::type_checker::TypeChecker;
-use saya::types::{TypeContext, TypeId, TypeKind};
+use saya::types::{Niche, TypeContext, TypeId, TypeKind};
 
 macro_rules! typecheck {
     ($input:expr) => {{
@@ -949,30 +949,79 @@ fn test_bidirectional_typing() {
 }
 
 #[test]
-fn test_null_literal() {
-    // null can be assigned to any pointer type
-    assert!(typecheck!("fn test() { let p: *i64 = null; }").is_ok());
-    assert!(typecheck!("fn test() { let p: *bool = null; }").is_ok());
-    assert!(typecheck!("fn test() { let p: *i8 = null; }").is_ok());
+fn test_optional_type() {
+    let program = typecheck!(
+        r#"
+        fn f() {
+            let a: ?i32 = none;
+            let b: ?i32 = some 1;
+            let c: ??i32 = some none;
+            let d: ??i32 = some some 1;
+            let e = some 1;
+        }
+        "#
+    )
+    .unwrap();
 
-    // pointer == null
-    assert!(typecheck!("fn test() -> bool { let p: *i64 = null; p == null }").is_ok());
+    let ItemKind::Function(func) = &program.items[0].kind else {
+        panic!("Expected function");
+    };
+    let body = func.body.as_ref().expect("Expected function body");
+    let StmtKind::Let(e) = &body.stmts[4].kind else {
+        panic!("Expected let statement");
+    };
+    assert!(matches!(e.init.kind, ExprKind::Optional(Optional::Some(_))));
 
-    // null == pointer
-    assert!(typecheck!("fn test() -> bool { let p: *i64 = null; null == p }").is_ok());
+    assert!(typecheck!("fn f() -> ?i32 { none }").is_ok());
+    assert!(typecheck!("fn f() -> ?i32 { some 1 }").is_ok());
+    assert!(typecheck!("fn take(x: ?i32) {} fn f() { take(none); take(some 1); }").is_ok());
+    assert!(typecheck!("fn f() -> ?i64 { let x = some 1; x }").is_ok());
 
-    // pointer != null
-    assert!(typecheck!("fn test() -> bool { let p: *i64 = null; p != null }").is_ok());
+    assert!(typecheck!("fn f() { let x = none; }").is_err());
+    assert!(typecheck!("fn f() { let x = some none; }").is_err());
+    assert!(typecheck!("fn f() { let x: ?i32 = 1; }").is_err());
+    assert!(typecheck!("fn f() { let x: ?i32 = some true; }").is_err());
+    assert!(typecheck!("fn f() { let x: i32 = none; }").is_err());
+    assert!(typecheck!("fn f() { let x: i32 = some 1; }").is_err());
+    assert!(typecheck!("fn f(x: ?!) {}").is_err());
+    assert!(typecheck!("fn f(x: ?opaque) {}").is_err());
+    assert!(typecheck!("type N = !; fn f(x: ?N) {}").is_err());
+}
 
-    // non-null pointer compared to null
-    assert!(
-        typecheck!("fn test() -> bool { let x: i64 = 0; let p: *i64 = &x; p != null }").is_ok()
-    );
+#[test]
+fn test_optional_layout() {
+    let mut types = TypeContext::new();
 
-    // null cannot be assigned to non-pointer types
-    assert!(typecheck!("fn test() { let x: i64 = null; }").is_err());
-    assert!(typecheck!("fn test() { let x: bool = null; }").is_err());
-    assert!(typecheck!("fn test() { let x: f64 = null; }").is_err());
+    let optional_u8 = types.mk_optional(TypeId::U8);
+    assert_eq!(types.get(optional_u8).size, 2);
+    assert_eq!(types.get(optional_u8).align, 1);
+
+    let optional_i32 = types.mk_optional(TypeId::I32);
+    assert_eq!(types.get(optional_i32).size, 8);
+    assert_eq!(types.get(optional_i32).align, 4);
+
+    let optional_i64 = types.mk_optional(TypeId::I64);
+    assert_eq!(types.get(optional_i64).size, 16);
+    assert_eq!(types.get(optional_i64).align, 8);
+
+    let nested = types.mk_optional(optional_i32);
+    assert_eq!(types.get(nested).size, 12);
+    assert_eq!(types.get(nested).align, 4);
+    assert!(types.get(nested).is_aggregate);
+
+    let pointer = types.mk_pointer(TypeId::I32);
+    assert_eq!(types.get(pointer).niche, Some(Niche::NullPointer));
+
+    let optional_pointer = types.mk_optional(pointer);
+    assert_eq!(types.get(optional_pointer).size, 8);
+    assert_eq!(types.get(optional_pointer).align, 8);
+    assert!(!types.get(optional_pointer).is_aggregate);
+    assert_eq!(types.get(optional_pointer).niche, None);
+
+    let nested_pointer = types.mk_optional(optional_pointer);
+    assert_eq!(types.get(nested_pointer).size, 16);
+    assert_eq!(types.get(nested_pointer).align, 8);
+    assert!(types.get(nested_pointer).is_aggregate);
 }
 
 #[test]
@@ -1005,5 +1054,8 @@ fn test_cast() {
 
     // cannot be cast
     assert!(typecheck!("fn test() -> i64 { true as i64 }").is_err());
-    assert!(typecheck!("fn test() -> i64 { let x: *i64 = null; x as i64 }").is_err());
+    assert!(
+        typecheck!("fn test() -> i64 { let value: i64 = 0; let x: *i64 = &value; x as i64 }")
+            .is_err()
+    );
 }

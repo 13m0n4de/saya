@@ -26,7 +26,7 @@ function-def = "fn" path "(" [param-list] ")" ["->" type-name] (block / ";")
 param-list = param *("," param) [","]
 param = identifier ":" type-name
 
-type-name = slice-type / array-type / pointer-type / fn-type / base-type / custom-type
+type-name = optional-type / slice-type / array-type / pointer-type / fn-type / base-type / custom-type
 base-type = "u8" / "u16" / "u32" / "u64"
           / "i8" / "i16" / "i32" / "i64"
           / "f32" / "f64"
@@ -36,6 +36,7 @@ array-type = "[" type-name ";" expression "]"
 slice-type = "[" type-name "]"
 fn-type = "fn" "(" [fn-type-params] ")" ["->" type-name]
 fn-type-params = *(type-name ",") (type-name [","] / "...")
+optional-type = "?" type-name
 custom-type = path
 
 block = "{" *statement [expression] "}"
@@ -78,7 +79,7 @@ multiplicative-op = "*" / "/" / "%"
 cast-expr = unary-expr *("as" type-name)
 
 unary-expr = unary-op unary-expr / postfix-expr
-unary-op = "-" / "!" / "&" / "*"
+unary-op = "-" / "!" / "&" / "*" / "some"
 
 postfix-expr = primary-expr *postfix-op
 postfix-op = field-op / index-op / call-op
@@ -87,9 +88,11 @@ field-op = "." identifier
 index-op = "[" expression "]"
 call-op = "(" [expression *("," expression) [","]] ")"
 
-primary-expr = literal / struct-expr / path / array-expr
+primary-expr = literal / none-expr / struct-expr / path / array-expr
              / if-expr / while-expr / loop-expr / break-expr / continue-expr
              / block / "(" expression ")"
+
+none-expr = "none"
 
 if-expr = "if" expression block ["else" (if-expr / block)]
 while-expr = "while" expression block

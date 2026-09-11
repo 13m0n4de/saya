@@ -5,33 +5,8 @@ use indexmap::IndexMap;
 use crate::{
     hir::*,
     span::Span,
-    types::{Field, Type, TypeContext, TypeId, TypeKind},
+    types::{Field, Niche, Type, TypeContext, TypeId, TypeKind},
 };
-
-#[derive(Debug, Clone)]
-pub enum GenValue {
-    Const(u64, TypeId),
-    Global(String, TypeId),
-    Temp(String, TypeId),
-}
-
-impl GenValue {
-    pub fn ty(&self) -> &TypeId {
-        match self {
-            GenValue::Const(_, ty) | GenValue::Global(_, ty) | GenValue::Temp(_, ty) => ty,
-        }
-    }
-}
-
-impl From<GenValue> for qbe::Value {
-    fn from(value: GenValue) -> Self {
-        match value {
-            GenValue::Const(val, _) => qbe::Value::Const(val),
-            GenValue::Global(name, _) => qbe::Value::Global(name),
-            GenValue::Temp(name, _) => qbe::Value::Temporary(name),
-        }
-    }
-}
 
 #[derive(Debug)]
 struct LoopContext {
@@ -149,7 +124,15 @@ impl<'a> CodeGen<'a> {
 
             TypeKind::Bool => qbe::Type::Word,
 
-            TypeKind::Pointer(_) | TypeKind::Null | TypeKind::Fn(..) => qbe::Type::Long,
+            TypeKind::Pointer(_) | TypeKind::Fn(..) => qbe::Type::Long,
+
+            TypeKind::Optional(payload_type_id) => match self.types.get(*payload_type_id).niche {
+                Some(Niche::NullPointer) => self.qbe_type(*payload_type_id),
+                None => {
+                    let def = self.generate_type_def(type_id);
+                    qbe::Type::aggregate(&def)
+                }
+            },
 
             TypeKind::Struct(..) | TypeKind::Array(..) | TypeKind::Slice(_) => {
                 let def = self.generate_type_def(type_id);
@@ -178,7 +161,12 @@ impl<'a> CodeGen<'a> {
 
             TypeKind::Bool => qbe::Type::UnsignedByte,
 
-            TypeKind::Pointer(_) | TypeKind::Null | TypeKind::Fn(..) => qbe::Type::Long,
+            TypeKind::Pointer(_) | TypeKind::Fn(..) => qbe::Type::Long,
+
+            TypeKind::Optional(payload_type_id) => match self.types.get(*payload_type_id).niche {
+                Some(Niche::NullPointer) => self.qbe_load_type(*payload_type_id),
+                None => qbe::Type::Long,
+            },
 
             TypeKind::Struct(..) | TypeKind::Array(..) | TypeKind::Slice(_) => qbe::Type::Long,
 
@@ -204,7 +192,12 @@ impl<'a> CodeGen<'a> {
 
             TypeKind::Bool => qbe::Type::Byte,
 
-            TypeKind::Pointer(_) | TypeKind::Null | TypeKind::Fn(..) => qbe::Type::Long,
+            TypeKind::Pointer(_) | TypeKind::Fn(..) => qbe::Type::Long,
+
+            TypeKind::Optional(payload_type_id) => match self.types.get(*payload_type_id).niche {
+                Some(Niche::NullPointer) => self.qbe_store_type(*payload_type_id),
+                None => qbe::Type::Long,
+            },
 
             TypeKind::Struct(..) | TypeKind::Array(..) | TypeKind::Slice(_) => qbe::Type::Long,
 
@@ -219,7 +212,7 @@ impl<'a> CodeGen<'a> {
             .iter()
             .map(|field| {
                 let field_ty = self.types.get(field.type_id);
-                let qbe_ty = if field_ty.is_aggregate() {
+                let qbe_ty = if field_ty.is_aggregate {
                     let field_def = self
                         .type_defs
                         .get(&field.type_id)
@@ -253,7 +246,7 @@ impl<'a> CodeGen<'a> {
         let ty = self.types.get(type_id);
         let elem_ty = self.types.get(elem_type_id);
 
-        let qbe_elem_ty = if elem_ty.is_aggregate() {
+        let qbe_elem_ty = if elem_ty.is_aggregate {
             let elem_def = self
                 .type_defs
                 .get(&elem_type_id)
@@ -294,6 +287,40 @@ impl<'a> CodeGen<'a> {
         })
     }
 
+    fn build_optional_def(
+        &mut self,
+        type_id: TypeId,
+        payload_type_id: TypeId,
+    ) -> Arc<qbe::TypeDef> {
+        let ty = self.types.get(type_id);
+        let payload_ty = self.types.get(payload_type_id);
+        let mut items = vec![(qbe::Type::Byte, 1)];
+
+        if payload_ty.size != 0 {
+            let qbe_payload_ty = if payload_ty.is_aggregate {
+                let payload_def = self
+                    .type_defs
+                    .get(&payload_type_id)
+                    .expect("payload type should be generated first");
+                qbe::Type::aggregate(payload_def)
+            } else {
+                self.qbe_store_type(payload_type_id)
+            };
+            items.push((qbe_payload_ty, 1));
+        }
+
+        let TypeId::Interned(n) = type_id else {
+            unreachable!()
+        };
+        let ident = format!("type.{n}");
+
+        Arc::new(qbe::TypeDef::Regular {
+            ident,
+            align: Some(ty.align as u64),
+            items,
+        })
+    }
+
     fn new_temp(&mut self) -> String {
         let name = format!("temp.{}", self.temp_counter);
         self.temp_counter += 1;
@@ -305,12 +332,12 @@ impl<'a> CodeGen<'a> {
         qfunc: &mut qbe::Function,
         type_id: TypeId,
         instr: qbe::Instr,
-    ) -> GenValue {
+    ) -> qbe::Value {
         let name = self.new_temp();
         let temp = qbe::Value::Temporary(name.clone());
         let qbe_ty = self.qbe_type(type_id);
         qfunc.assign_instr(temp, qbe_ty, instr);
-        GenValue::Temp(name, type_id)
+        qbe::Value::Temporary(name)
     }
 
     fn new_label(&mut self) -> usize {
@@ -356,7 +383,7 @@ impl<'a> CodeGen<'a> {
             temp
         };
 
-        if self.types.get(type_id).is_aggregate() {
+        if self.types.get(type_id).is_aggregate {
             return addr;
         }
 
@@ -387,7 +414,7 @@ impl<'a> CodeGen<'a> {
             temp
         };
 
-        if self.types.get(type_id).is_aggregate() {
+        if self.types.get(type_id).is_aggregate {
             self.copy_aggregate(qfunc, addr, value, type_id);
         } else {
             let store_ty = self.qbe_store_type(type_id);
@@ -523,6 +550,10 @@ impl<'a> CodeGen<'a> {
                     );
                 }
             }
+            TypeKind::Optional(_) => {
+                let size = self.types.get(type_id).size as u64;
+                qfunc.add_instr(qbe::Instr::Blit(src, dest, size));
+            }
             _ => unreachable!(
                 "copy_aggregate called on non-aggregate type: {}",
                 self.types.type_name(type_id)
@@ -534,14 +565,14 @@ impl<'a> CodeGen<'a> {
         &mut self,
         qfunc: &mut qbe::Function,
         dest_addr: qbe::Value,
-        src: GenValue,
+        src: qbe::Value,
         type_id: TypeId,
     ) {
-        if self.types.get(type_id).is_aggregate() {
-            self.copy_aggregate(qfunc, dest_addr, src.into(), type_id);
+        if self.types.get(type_id).is_aggregate {
+            self.copy_aggregate(qfunc, dest_addr, src, type_id);
         } else {
             let store_type = self.qbe_store_type(type_id);
-            qfunc.add_instr(qbe::Instr::Store(store_type, dest_addr, src.into()));
+            qfunc.add_instr(qbe::Instr::Store(store_type, dest_addr, src));
         }
     }
 
@@ -550,11 +581,10 @@ impl<'a> CodeGen<'a> {
         qfunc: &mut qbe::Function,
         addr: qbe::Value,
         type_id: TypeId,
-    ) -> GenValue {
-        if self.types.get(type_id).is_aggregate() {
+    ) -> qbe::Value {
+        if self.types.get(type_id).is_aggregate {
             match addr {
-                qbe::Value::Temporary(name) => GenValue::Temp(name, type_id),
-                qbe::Value::Global(name) => GenValue::Global(name, type_id),
+                addr @ (qbe::Value::Temporary(_) | qbe::Value::Global(_)) => addr,
                 qbe::Value::Const(_) => unreachable!("cannot load from a constant address"),
             }
         } else {
@@ -577,22 +607,22 @@ impl<'a> CodeGen<'a> {
             },
             // *ptr -> value_of(ptr)
             ExprKind::Unary(UnaryOp::Deref, ptr_expr) => {
-                Ok(self.generate_expression(qfunc, ptr_expr)?.into())
+                Ok(self.generate_expression(qfunc, ptr_expr)?)
             }
             // arr[i] or slice[i] -> calculate element address
             ExprKind::Index(base, index) => {
-                let index_val = self.generate_expression(qfunc, index)?.into();
+                let index_val = self.generate_expression(qfunc, index)?;
                 let base_type_kind = self.types.get(base.type_id).kind.clone();
 
                 let (base_ptr, elem_size) = match base_type_kind {
                     TypeKind::Array(elem, _) => {
                         // Array: base is already the array address
-                        let arr_ptr = self.generate_expression(qfunc, base)?.into();
+                        let arr_ptr = self.generate_expression(qfunc, base)?;
                         (arr_ptr, self.types.get(elem).size)
                     }
                     TypeKind::Slice(elem) => {
                         // Slice: need to load ptr field from slice struct
-                        let slice_addr = self.generate_expression(qfunc, base)?.into();
+                        let slice_addr = self.generate_expression(qfunc, base)?;
                         let ptr_type_id = self.types.mk_pointer(elem);
                         let ptr = self.load_field(qfunc, slice_addr, 0, ptr_type_id);
                         (ptr, self.types.get(elem).size)
@@ -656,7 +686,7 @@ impl<'a> CodeGen<'a> {
             }
             ExprKind::Const(_) => {
                 let gv = self.generate_expr_const(qfunc, expr);
-                match gv.into() {
+                match gv {
                     addr @ (qbe::Value::Temporary(_) | qbe::Value::Global(_)) => Ok(addr),
                     qbe::Value::Const(_) => Err(CodeGenError::new(
                         "cannot take address of primitive constant".to_string(),
@@ -700,9 +730,6 @@ impl<'a> CodeGen<'a> {
             ConstValKind::CString(s) => {
                 let label = self.emit_cstring_data(s);
                 vec![(qbe::Type::Long, qbe::DataItem::Symbol(label, None))]
-            }
-            ConstValKind::Null => {
-                vec![(qbe::Type::Long, qbe::DataItem::Const(0))]
             }
             ConstValKind::Struct(field_values) => {
                 let (fields, total_size) = {
@@ -765,7 +792,7 @@ impl<'a> CodeGen<'a> {
         let def = match type_kind {
             TypeKind::Struct(_, fields) => {
                 for field in &fields {
-                    if self.types.get(field.type_id).is_aggregate() {
+                    if self.types.get(field.type_id).is_aggregate {
                         self.generate_type_def(field.type_id);
                     }
                 }
@@ -773,13 +800,21 @@ impl<'a> CodeGen<'a> {
                 self.build_struct_def(type_id, &fields)
             }
             TypeKind::Array(elem_type_id, len) => {
-                if self.types.get(elem_type_id).is_aggregate() {
+                if self.types.get(elem_type_id).is_aggregate {
                     self.generate_type_def(elem_type_id);
                 }
 
                 self.build_array_def(type_id, elem_type_id, len)
             }
             TypeKind::Slice(_) => self.build_slice_def(type_id),
+            TypeKind::Optional(payload_type_id) => {
+                let payload_ty = self.types.get(payload_type_id);
+                if payload_ty.size != 0 && payload_ty.is_aggregate {
+                    self.generate_type_def(payload_type_id);
+                }
+
+                self.build_optional_def(type_id, payload_type_id)
+            }
             _ => unreachable!("non-aggregate type: {}", self.types.type_name(type_id)),
         };
 
@@ -851,8 +886,8 @@ impl<'a> CodeGen<'a> {
             };
             qfunc.assign_instr(addr.clone(), qbe::Type::Long, alloc_instr);
 
-            let param_gen_val = GenValue::Temp(format!("{}.param", param.name), param.type_id);
-            self.store_value(&mut qfunc, addr, param_gen_val, param.type_id);
+            let param_value = qbe::Value::Temporary(format!("{}.param", param.name));
+            self.store_value(&mut qfunc, addr, param_value, param.type_id);
         }
 
         qfunc.add_block("body");
@@ -870,7 +905,7 @@ impl<'a> CodeGen<'a> {
         } else if block.type_id == TypeId::Unit {
             qfunc.add_instr(qbe::Instr::Ret(None));
         } else {
-            qfunc.add_instr(qbe::Instr::Ret(Some(block_value.into())));
+            qfunc.add_instr(qbe::Instr::Ret(Some(block_value)));
         }
 
         Ok(qfunc)
@@ -880,8 +915,8 @@ impl<'a> CodeGen<'a> {
         &mut self,
         qfunc: &mut qbe::Function,
         block: &Block,
-    ) -> Result<GenValue, CodeGenError> {
-        let mut result = GenValue::Const(0, TypeId::Unit);
+    ) -> Result<qbe::Value, CodeGenError> {
+        let mut result = qbe::Value::Const(0);
         for stmt in &block.stmts {
             match &stmt.kind {
                 StmtKind::Semi(expr) => {
@@ -928,33 +963,90 @@ impl<'a> CodeGen<'a> {
         Ok(())
     }
 
-    fn generate_expr_literal(&mut self, qfunc: &mut qbe::Function, expr: &Expr) -> GenValue {
+    fn generate_expr_literal(&mut self, qfunc: &mut qbe::Function, expr: &Expr) -> qbe::Value {
         let ExprKind::Literal(lit) = &expr.kind else {
             unreachable!()
         };
 
         match lit {
-            Literal::Integer(n) => GenValue::Const(n.cast_unsigned(), expr.type_id),
+            Literal::Integer(n) => qbe::Value::Const(n.cast_unsigned()),
             Literal::Float(n) => match expr.type_id {
-                TypeId::F32 => GenValue::Const(u64::from((*n as f32).to_bits()), expr.type_id),
-                TypeId::F64 => GenValue::Const(n.to_bits(), expr.type_id),
+                TypeId::F32 => qbe::Value::Const(u64::from((*n as f32).to_bits())),
+                TypeId::F64 => qbe::Value::Const(n.to_bits()),
                 _ => unreachable!(),
             },
-            Literal::Bool(b) => GenValue::Const(u64::from(*b), TypeId::Bool),
-            Literal::String(s) => self.generate_string_slice(qfunc, s, expr.type_id),
+            Literal::Bool(b) => qbe::Value::Const(u64::from(*b)),
+            Literal::String(s) => self.generate_string_slice(qfunc, s),
             Literal::CString(s) => {
                 let label = self.emit_cstring_data(s);
-                GenValue::Global(label, expr.type_id)
+                qbe::Value::Global(label)
             }
-            Literal::Null => GenValue::Const(0, expr.type_id),
         }
+    }
+
+    fn generate_expr_optional(
+        &mut self,
+        qfunc: &mut qbe::Function,
+        expr: &Expr,
+    ) -> Result<qbe::Value, CodeGenError> {
+        let ExprKind::Optional(optional) = &expr.kind else {
+            unreachable!()
+        };
+
+        let TypeKind::Optional(payload_type_id) = self.types.get(expr.type_id).kind else {
+            unreachable!()
+        };
+        let optional_ty = self.types.get(expr.type_id).clone();
+        let payload_ty = self.types.get(payload_type_id).clone();
+
+        if let Some(Niche::NullPointer) = payload_ty.niche {
+            return match optional {
+                Optional::None => Ok(qbe::Value::Const(0)),
+                Optional::Some(value) => Ok(self.generate_expression(qfunc, value)?),
+            };
+        }
+
+        let optional_addr = self.alloc_local(qfunc, &optional_ty);
+        match optional {
+            Optional::None => {
+                self.store_field(
+                    qfunc,
+                    optional_addr.clone(),
+                    0,
+                    qbe::Value::Const(0),
+                    TypeId::U8,
+                );
+            }
+            Optional::Some(value) => {
+                let payload = self.generate_expression(qfunc, value)?;
+                self.store_field(
+                    qfunc,
+                    optional_addr.clone(),
+                    0,
+                    qbe::Value::Const(1),
+                    TypeId::U8,
+                );
+
+                if payload_ty.size != 0 {
+                    self.store_field(
+                        qfunc,
+                        optional_addr.clone(),
+                        payload_ty.align as u64,
+                        payload,
+                        payload_type_id,
+                    );
+                }
+            }
+        }
+
+        Ok(optional_addr)
     }
 
     fn generate_expr_struct(
         &mut self,
         qfunc: &mut qbe::Function,
         expr: &Expr,
-    ) -> Result<GenValue, CodeGenError> {
+    ) -> Result<qbe::Value, CodeGenError> {
         let ExprKind::Struct(struct_expr) = &expr.kind else {
             unreachable!()
         };
@@ -979,18 +1071,15 @@ impl<'a> CodeGen<'a> {
                 qfunc,
                 struct_addr.clone(),
                 field_info.offset as u64,
-                field_value.into(),
+                field_value,
                 field_info.type_id,
             );
         }
 
-        Ok(match struct_addr {
-            qbe::Value::Temporary(name) => GenValue::Temp(name, expr.type_id),
-            _ => unreachable!(),
-        })
+        Ok(struct_addr)
     }
 
-    fn generate_expr_place(&mut self, qfunc: &mut qbe::Function, expr: &Expr) -> GenValue {
+    fn generate_expr_place(&mut self, qfunc: &mut qbe::Function, expr: &Expr) -> qbe::Value {
         let ExprKind::Place(place) = &expr.kind else {
             unreachable!()
         };
@@ -1001,7 +1090,7 @@ impl<'a> CodeGen<'a> {
             }
             Place::Global(symbol) => {
                 if matches!(self.types.get(expr.type_id).kind, TypeKind::Fn(..)) {
-                    GenValue::Global(symbol.clone(), expr.type_id)
+                    qbe::Value::Global(symbol.clone())
                 } else {
                     self.load_value(qfunc, qbe::Value::Global(symbol.clone()), expr.type_id)
                 }
@@ -1013,18 +1102,18 @@ impl<'a> CodeGen<'a> {
         &mut self,
         qfunc: &mut qbe::Function,
         expr: &Expr,
-    ) -> Result<GenValue, CodeGenError> {
+    ) -> Result<qbe::Value, CodeGenError> {
         let ExprKind::Unary(unop, operand_expr) = &expr.kind else {
             unreachable!()
         };
 
         let instr = match unop {
             UnaryOp::Neg => {
-                let operand = self.generate_expression(qfunc, operand_expr)?.into();
+                let operand = self.generate_expression(qfunc, operand_expr)?;
                 qbe::Instr::Neg(operand)
             }
             UnaryOp::Not => {
-                let operand = self.generate_expression(qfunc, operand_expr)?.into();
+                let operand = self.generate_expression(qfunc, operand_expr)?;
                 let operand_expr_type = self.types.get(operand_expr.type_id).clone();
                 let result_ty = self.qbe_type(expr.type_id);
                 match operand_expr_type.kind {
@@ -1038,16 +1127,9 @@ impl<'a> CodeGen<'a> {
                     _ => unreachable!(),
                 }
             }
-            UnaryOp::Ref => {
-                let addr = self.address_of(qfunc, operand_expr)?;
-                return Ok(match addr {
-                    qbe::Value::Temporary(name) => GenValue::Temp(name, expr.type_id),
-                    qbe::Value::Global(name) => GenValue::Global(name, expr.type_id),
-                    qbe::Value::Const(_) => unreachable!(),
-                });
-            }
+            UnaryOp::Ref => return self.address_of(qfunc, operand_expr),
             UnaryOp::Deref => {
-                let ptr = self.generate_expression(qfunc, operand_expr)?.into();
+                let ptr = self.generate_expression(qfunc, operand_expr)?;
                 return Ok(self.load_value(qfunc, ptr, expr.type_id));
             }
         };
@@ -1059,7 +1141,7 @@ impl<'a> CodeGen<'a> {
         &mut self,
         qfunc: &mut qbe::Function,
         expr: &Expr,
-    ) -> Result<GenValue, CodeGenError> {
+    ) -> Result<qbe::Value, CodeGenError> {
         let ExprKind::Binary(binop, expr1, expr2) = &expr.kind else {
             unreachable!()
         };
@@ -1068,8 +1150,8 @@ impl<'a> CodeGen<'a> {
             BinaryOp::And => self.generate_expr_land(qfunc, expr),
             BinaryOp::Or => self.generate_expr_lor(qfunc, expr),
             _ => {
-                let operand1 = self.generate_expression(qfunc, expr1)?.into();
-                let operand2 = self.generate_expression(qfunc, expr2)?.into();
+                let operand1 = self.generate_expression(qfunc, expr1)?;
+                let operand2 = self.generate_expression(qfunc, expr2)?;
 
                 let instr = match binop {
                     BinaryOp::Add => qbe::Instr::Add(operand1, operand2),
@@ -1109,7 +1191,7 @@ impl<'a> CodeGen<'a> {
         &mut self,
         qfunc: &mut qbe::Function,
         expr: &Expr,
-    ) -> Result<GenValue, CodeGenError> {
+    ) -> Result<qbe::Value, CodeGenError> {
         let ExprKind::Assign(lhs, rhs) = &expr.kind else {
             unreachable!()
         };
@@ -1118,20 +1200,20 @@ impl<'a> CodeGen<'a> {
         let value = self.generate_expression(qfunc, rhs)?;
         self.store_value(qfunc, addr, value, rhs.type_id);
 
-        Ok(GenValue::Const(0, expr.type_id))
+        Ok(qbe::Value::Const(0))
     }
 
     fn generate_expr_cast(
         &mut self,
         qfunc: &mut qbe::Function,
         expr: &Expr,
-    ) -> Result<GenValue, CodeGenError> {
+    ) -> Result<qbe::Value, CodeGenError> {
         let ExprKind::Cast(lhs, target_type_id) = &expr.kind else {
             unreachable!()
         };
 
         let lhs_val = self.generate_expression(qfunc, lhs)?;
-        let val: qbe::Value = lhs_val.into();
+        let val: qbe::Value = lhs_val;
 
         let from_kind = self.types.get(lhs.type_id).kind.clone();
         let to_kind = self.types.get(*target_type_id).kind.clone();
@@ -1205,7 +1287,7 @@ impl<'a> CodeGen<'a> {
         &mut self,
         qfunc: &mut qbe::Function,
         expr: &Expr,
-    ) -> Result<GenValue, CodeGenError> {
+    ) -> Result<qbe::Value, CodeGenError> {
         let ExprKind::Return(ret_expr) = &expr.kind else {
             unreachable!()
         };
@@ -1213,19 +1295,18 @@ impl<'a> CodeGen<'a> {
         let value = ret_expr
             .as_ref()
             .map(|e| self.generate_expression(qfunc, e))
-            .transpose()?
-            .map(GenValue::into);
+            .transpose()?;
 
         qfunc.add_instr(qbe::Instr::Ret(value));
 
-        Ok(GenValue::Const(0, expr.type_id))
+        Ok(qbe::Value::Const(0))
     }
 
     fn generate_expr_control(
         &mut self,
         qfunc: &mut qbe::Function,
         expr: &Expr,
-    ) -> Result<GenValue, CodeGenError> {
+    ) -> Result<qbe::Value, CodeGenError> {
         match &expr.kind {
             ExprKind::Break(val_expr) => {
                 if let Some(val_expr) = val_expr {
@@ -1242,19 +1323,19 @@ impl<'a> CodeGen<'a> {
                         .last_mut()
                         .expect("ICE: break_values push outside of loop")
                         .break_values
-                        .push((predecessor, val.into()));
+                        .push((predecessor, val));
                 }
 
                 let loop_ctx = self.loops.last_mut().expect("ICE: break outside of loop");
                 qfunc.add_instr(qbe::Instr::Jmp(loop_ctx.break_label.clone()));
-                Ok(GenValue::Const(0, expr.type_id))
+                Ok(qbe::Value::Const(0))
             }
             ExprKind::Continue => {
                 let Some(loop_ctx) = self.loops.last() else {
                     unreachable!()
                 };
                 qfunc.add_instr(qbe::Instr::Jmp(loop_ctx.continue_label.clone()));
-                Ok(GenValue::Const(0, expr.type_id))
+                Ok(qbe::Value::Const(0))
             }
 
             _ => unreachable!(),
@@ -1265,7 +1346,7 @@ impl<'a> CodeGen<'a> {
         &mut self,
         qfunc: &mut qbe::Function,
         expr: &Expr,
-    ) -> Result<GenValue, CodeGenError> {
+    ) -> Result<qbe::Value, CodeGenError> {
         let ExprKind::Array(elements) = &expr.kind else {
             unreachable!()
         };
@@ -1292,19 +1373,19 @@ impl<'a> CodeGen<'a> {
         );
 
         for (i, elem) in elements.iter().enumerate() {
-            let elem_val: qbe::Value = self.generate_expression(qfunc, elem)?.into();
+            let elem_val: qbe::Value = self.generate_expression(qfunc, elem)?;
             let offset = i as u64 * elem_size;
             self.store_field(qfunc, array_ptr.clone(), offset, elem_val, elem_ty);
         }
 
-        Ok(GenValue::Temp(array_name, expr.type_id))
+        Ok(qbe::Value::Temporary(array_name))
     }
 
     fn generate_expr_repeat(
         &mut self,
         qfunc: &mut qbe::Function,
         expr: &Expr,
-    ) -> Result<GenValue, CodeGenError> {
+    ) -> Result<qbe::Value, CodeGenError> {
         let ExprKind::Repeat(elem, count) = &expr.kind else {
             unreachable!()
         };
@@ -1336,7 +1417,7 @@ impl<'a> CodeGen<'a> {
         let body_label = format!("fill.{label_id}.body");
         let end_label = format!("fill.{label_id}.end");
 
-        let elem_val: qbe::Value = self.generate_expression(qfunc, elem)?.into();
+        let elem_val: qbe::Value = self.generate_expression(qfunc, elem)?;
 
         // %i_slot =l alloc8 8
         // storel 0, %i_slot
@@ -1418,14 +1499,14 @@ impl<'a> CodeGen<'a> {
         // @fill.{label_id}.end
         qfunc.add_block(end_label);
 
-        Ok(GenValue::Temp(array_name, expr.type_id))
+        Ok(qbe::Value::Temporary(array_name))
     }
 
     fn generate_expr_index(
         &mut self,
         qfunc: &mut qbe::Function,
         expr: &Expr,
-    ) -> Result<GenValue, CodeGenError> {
+    ) -> Result<qbe::Value, CodeGenError> {
         let ExprKind::Index(..) = &expr.kind else {
             unreachable!()
         };
@@ -1438,7 +1519,7 @@ impl<'a> CodeGen<'a> {
         &mut self,
         qfunc: &mut qbe::Function,
         expr: &Expr,
-    ) -> Result<GenValue, CodeGenError> {
+    ) -> Result<qbe::Value, CodeGenError> {
         let ExprKind::Field(..) = &expr.kind else {
             unreachable!()
         };
@@ -1451,9 +1532,10 @@ impl<'a> CodeGen<'a> {
         &mut self,
         qfunc: &mut qbe::Function,
         expr: &Expr,
-    ) -> Result<GenValue, CodeGenError> {
+    ) -> Result<qbe::Value, CodeGenError> {
         let result = match &expr.kind {
             ExprKind::Literal(..) => Ok(self.generate_expr_literal(qfunc, expr)),
+            ExprKind::Optional(..) => self.generate_expr_optional(qfunc, expr),
             ExprKind::Const(..) => Ok(self.generate_expr_const(qfunc, expr)),
             ExprKind::Place(..) => Ok(self.generate_expr_place(qfunc, expr)),
             ExprKind::Struct(..) => self.generate_expr_struct(qfunc, expr),
@@ -1513,12 +1595,7 @@ impl<'a> CodeGen<'a> {
         label
     }
 
-    fn generate_string_slice(
-        &mut self,
-        qfunc: &mut qbe::Function,
-        s: &str,
-        type_id: TypeId,
-    ) -> GenValue {
+    fn generate_string_slice(&mut self, qfunc: &mut qbe::Function, s: &str) -> qbe::Value {
         let data_label = self.emit_string_data(s);
 
         // Allocate slice on stack: { ptr: l, len: l }
@@ -1534,13 +1611,10 @@ impl<'a> CodeGen<'a> {
         self.store_field(qfunc, slice_addr.clone(), 8, len, TypeId::I64);
 
         // Return address of slice
-        match slice_addr {
-            qbe::Value::Temporary(name) => GenValue::Temp(name, type_id),
-            _ => unreachable!(),
-        }
+        slice_addr
     }
 
-    fn generate_expr_const(&mut self, qfunc: &mut qbe::Function, expr: &Expr) -> GenValue {
+    fn generate_expr_const(&mut self, qfunc: &mut qbe::Function, expr: &Expr) -> qbe::Value {
         let ExprKind::Const(val) = &expr.kind else {
             unreachable!()
         };
@@ -1548,21 +1622,20 @@ impl<'a> CodeGen<'a> {
         self.generate_const_val(qfunc, val)
     }
 
-    fn generate_const_val(&mut self, qfunc: &mut qbe::Function, val: &ConstVal) -> GenValue {
+    fn generate_const_val(&mut self, qfunc: &mut qbe::Function, val: &ConstVal) -> qbe::Value {
         match &val.kind {
-            ConstValKind::Integer(n) => GenValue::Const(n.cast_unsigned(), val.type_id),
+            ConstValKind::Integer(n) => qbe::Value::Const(n.cast_unsigned()),
             ConstValKind::Float(n) => match val.type_id {
-                TypeId::F32 => GenValue::Const(u64::from((*n as f32).to_bits()), val.type_id),
-                TypeId::F64 => GenValue::Const(n.to_bits(), val.type_id),
+                TypeId::F32 => qbe::Value::Const(u64::from((*n as f32).to_bits())),
+                TypeId::F64 => qbe::Value::Const(n.to_bits()),
                 _ => unreachable!(),
             },
-            ConstValKind::Bool(b) => GenValue::Const(u64::from(*b), val.type_id),
+            ConstValKind::Bool(b) => qbe::Value::Const(u64::from(*b)),
             ConstValKind::CString(s) => {
                 let label = self.emit_cstring_data(s);
-                GenValue::Global(label, val.type_id)
+                qbe::Value::Global(label)
             }
-            ConstValKind::Null => GenValue::Const(0, val.type_id),
-            ConstValKind::String(s) => self.generate_string_slice(qfunc, s, val.type_id),
+            ConstValKind::String(s) => self.generate_string_slice(qfunc, s),
             ConstValKind::Struct(field_values) => {
                 let (fields, ty) = {
                     let type_ref = self.types.get(val.type_id);
@@ -1579,14 +1652,11 @@ impl<'a> CodeGen<'a> {
                         qfunc,
                         struct_addr.clone(),
                         field.offset as u64,
-                        gv.into(),
+                        gv,
                         field.type_id,
                     );
                 }
-                match struct_addr {
-                    qbe::Value::Temporary(name) => GenValue::Temp(name, val.type_id),
-                    _ => unreachable!(),
-                }
+                struct_addr
             }
             ConstValKind::Array(elems) => {
                 let elem_size = {
@@ -1606,15 +1676,9 @@ impl<'a> CodeGen<'a> {
                 for (i, elem_val) in elems.iter().enumerate() {
                     let offset = i as u64 * elem_size;
                     let gv = self.generate_const_val(qfunc, elem_val);
-                    self.store_field(
-                        qfunc,
-                        array_ptr.clone(),
-                        offset,
-                        gv.into(),
-                        elem_val.type_id,
-                    );
+                    self.store_field(qfunc, array_ptr.clone(), offset, gv, elem_val.type_id);
                 }
-                GenValue::Temp(array_name, val.type_id)
+                qbe::Value::Temporary(array_name)
             }
             ConstValKind::Repeat(elem, count) => {
                 let elem_size = {
@@ -1634,9 +1698,9 @@ impl<'a> CodeGen<'a> {
                 for i in 0..*count {
                     let offset = i as u64 * elem_size;
                     let gv = self.generate_const_val(qfunc, elem);
-                    self.store_field(qfunc, array_ptr.clone(), offset, gv.into(), elem.type_id);
+                    self.store_field(qfunc, array_ptr.clone(), offset, gv, elem.type_id);
                 }
-                GenValue::Temp(array_name, val.type_id)
+                qbe::Value::Temporary(array_name)
             }
         }
     }
@@ -1645,26 +1709,26 @@ impl<'a> CodeGen<'a> {
         &mut self,
         qfunc: &mut qbe::Function,
         expr: &Expr,
-    ) -> Result<GenValue, CodeGenError> {
+    ) -> Result<qbe::Value, CodeGenError> {
         let ExprKind::Call(call) = &expr.kind else {
             unreachable!()
         };
 
         let symbol = match &call.callee.kind {
             ExprKind::Place(Place::Global(symbol)) => qbe::Value::Global(symbol.clone()),
-            _ => self.generate_expression(qfunc, &call.callee)?.into(),
+            _ => self.generate_expression(qfunc, &call.callee)?,
         };
 
         let mut qbe_args = Vec::new();
         for arg in &call.args {
-            let arg_val = self.generate_expression(qfunc, arg)?.into();
+            let arg_val = self.generate_expression(qfunc, arg)?;
             let arg_ty = self.qbe_type(arg.type_id);
             qbe_args.push((arg_ty, arg_val));
         }
 
         if expr.type_id == TypeId::Unit || expr.type_id == TypeId::Never {
             qfunc.add_instr(qbe::Instr::Call(symbol, qbe_args, call.variadic_start));
-            Ok(GenValue::Const(0, expr.type_id))
+            Ok(qbe::Value::Const(0))
         } else {
             Ok(self.assign_to_temp(
                 qfunc,
@@ -1678,7 +1742,7 @@ impl<'a> CodeGen<'a> {
         &mut self,
         qfunc: &mut qbe::Function,
         expr: &Expr,
-    ) -> Result<GenValue, CodeGenError> {
+    ) -> Result<qbe::Value, CodeGenError> {
         let ExprKind::If(if_expr) = &expr.kind else {
             unreachable!()
         };
@@ -1689,7 +1753,7 @@ impl<'a> CodeGen<'a> {
         let end_label = format!("if.{label_id}.end");
 
         qfunc.add_block(cond_label);
-        let cond = self.generate_expression(qfunc, &if_expr.cond)?.into();
+        let cond = self.generate_expression(qfunc, &if_expr.cond)?;
 
         match &if_expr.else_body {
             None => {
@@ -1703,7 +1767,7 @@ impl<'a> CodeGen<'a> {
                 }
 
                 qfunc.add_block(end_label);
-                Ok(GenValue::Const(0, expr.type_id))
+                Ok(qbe::Value::Const(0))
             }
             Some(else_expr) => {
                 let else_label = format!("if.{label_id}.else");
@@ -1746,7 +1810,7 @@ impl<'a> CodeGen<'a> {
 
                 // Determine result based on expression type and branch types
                 match expr.type_id {
-                    TypeId::Unit | TypeId::Never => Ok(GenValue::Const(0, expr.type_id)),
+                    TypeId::Unit | TypeId::Never => Ok(qbe::Value::Const(0)),
                     _ => match (then_is_never, else_is_never) {
                         (true, false) => {
                             // Only else branch has value
@@ -1756,18 +1820,14 @@ impl<'a> CodeGen<'a> {
                             // Only then branch has value
                             Ok(then_result)
                         }
-                        (false, false) => {
-                            let then_val = then_result.into();
-                            let else_val = else_result.into();
-                            Ok(self.assign_to_temp(
-                                qfunc,
-                                expr.type_id,
-                                qbe::Instr::Phi(vec![
-                                    (then_predecessor, then_val),
-                                    (else_predecessor, else_val),
-                                ]),
-                            ))
-                        }
+                        (false, false) => Ok(self.assign_to_temp(
+                            qfunc,
+                            expr.type_id,
+                            qbe::Instr::Phi(vec![
+                                (then_predecessor, then_result),
+                                (else_predecessor, else_result),
+                            ]),
+                        )),
                         (true, true) => unreachable!(),
                     },
                 }
@@ -1779,7 +1839,7 @@ impl<'a> CodeGen<'a> {
         &mut self,
         qfunc: &mut qbe::Function,
         expr: &Expr,
-    ) -> Result<GenValue, CodeGenError> {
+    ) -> Result<qbe::Value, CodeGenError> {
         let ExprKind::While(while_expr) = &expr.kind else {
             unreachable!()
         };
@@ -1792,7 +1852,7 @@ impl<'a> CodeGen<'a> {
         qfunc.add_instr(qbe::Instr::Jmp(cond_label.clone()));
 
         qfunc.add_block(cond_label.clone());
-        let cond_val = self.generate_expression(qfunc, &while_expr.cond)?.into();
+        let cond_val = self.generate_expression(qfunc, &while_expr.cond)?;
         qfunc.add_instr(qbe::Instr::Jnz(
             cond_val,
             body_label.clone(),
@@ -1815,14 +1875,14 @@ impl<'a> CodeGen<'a> {
 
         qfunc.add_block(end_label);
 
-        Ok(GenValue::Const(0, expr.type_id))
+        Ok(qbe::Value::Const(0))
     }
 
     fn generate_expr_loop(
         &mut self,
         qfunc: &mut qbe::Function,
         expr: &Expr,
-    ) -> Result<GenValue, CodeGenError> {
+    ) -> Result<qbe::Value, CodeGenError> {
         let ExprKind::Loop(loop_expr) = &expr.kind else {
             unreachable!()
         };
@@ -1851,7 +1911,7 @@ impl<'a> CodeGen<'a> {
         qfunc.add_block(end_label);
 
         if loop_ctx.break_values.is_empty() {
-            Ok(GenValue::Const(0, expr.type_id))
+            Ok(qbe::Value::Const(0))
         } else {
             Ok(self.assign_to_temp(
                 qfunc,
@@ -1865,13 +1925,13 @@ impl<'a> CodeGen<'a> {
         &mut self,
         qfunc: &mut qbe::Function,
         expr: &Expr,
-    ) -> Result<GenValue, CodeGenError> {
+    ) -> Result<qbe::Value, CodeGenError> {
         let ExprKind::Binary(BinaryOp::And, left, right) = &expr.kind else {
             unreachable!()
         };
 
         let result_ty = self.qbe_type(expr.type_id);
-        let left_val = self.generate_expression(qfunc, left)?.into();
+        let left_val = self.generate_expression(qfunc, left)?;
 
         let label_id = self.new_label();
         let rhs_label = format!("land.{label_id}.rhs");
@@ -1885,7 +1945,7 @@ impl<'a> CodeGen<'a> {
         ));
 
         qfunc.add_block(rhs_label.clone());
-        let right_val = self.generate_expression(qfunc, right)?.into();
+        let right_val = self.generate_expression(qfunc, right)?;
         let right_temp = qbe::Value::Temporary(self.new_temp());
         qfunc.assign_instr(
             right_temp.clone(),
@@ -1925,13 +1985,13 @@ impl<'a> CodeGen<'a> {
         &mut self,
         qfunc: &mut qbe::Function,
         expr: &Expr,
-    ) -> Result<GenValue, CodeGenError> {
+    ) -> Result<qbe::Value, CodeGenError> {
         let ExprKind::Binary(BinaryOp::Or, left, right) = &expr.kind else {
             unreachable!()
         };
 
         let result_ty = self.qbe_type(expr.type_id);
-        let left_val = self.generate_expression(qfunc, left)?.into();
+        let left_val = self.generate_expression(qfunc, left)?;
 
         let label_id = self.new_label();
         let rhs_label = format!("lor.{label_id}.rhs");
@@ -1945,7 +2005,7 @@ impl<'a> CodeGen<'a> {
         ));
 
         qfunc.add_block(rhs_label.clone());
-        let right_val = self.generate_expression(qfunc, right)?.into();
+        let right_val = self.generate_expression(qfunc, right)?;
         let right_temp = qbe::Value::Temporary(self.new_temp());
         qfunc.assign_instr(
             right_temp.clone(),

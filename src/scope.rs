@@ -117,7 +117,10 @@ pub enum Const {
 pub enum Static {
     Unresolved(Rc<ast::Item>),
     Resolving(Rc<ast::Item>),
-    Resolved { value: hir::ConstVal, symbol: String },
+    Resolved {
+        value: hir::ConstVal,
+        symbol: String,
+    },
 }
 
 #[derive(Debug, Clone)]

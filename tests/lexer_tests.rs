@@ -18,7 +18,7 @@ fn tokenize(input: &str) -> Result<Vec<TokenKind>, LexError> {
 
 #[test]
 fn test_keywords() {
-    let input = "pub use fn extern return struct type let if else while loop break continue const static true false null";
+    let input = "pub use fn extern return struct type let if else while loop break continue const static true false some none";
     let tokens = tokenize(input).unwrap();
 
     assert_eq!(
@@ -42,7 +42,8 @@ fn test_keywords() {
             TokenKind::Static,
             TokenKind::True,
             TokenKind::False,
-            TokenKind::Null,
+            TokenKind::Some,
+            TokenKind::None,
             TokenKind::Eof,
         ]
     );
@@ -87,7 +88,7 @@ fn test_identifiers_and_numbers() {
 
 #[test]
 fn test_operators() {
-    let input = "+ - * / % < <= > >= == != && || ! & | =";
+    let input = "+ - * / % < <= > >= == != && || ! & | = ?";
     let tokens = tokenize(input).unwrap();
 
     assert_eq!(
@@ -110,6 +111,7 @@ fn test_operators() {
             TokenKind::And,
             TokenKind::Or,
             TokenKind::Eq,
+            TokenKind::Question,
             TokenKind::Eof,
         ]
     );
