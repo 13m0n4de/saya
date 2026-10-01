@@ -938,27 +938,18 @@ impl<'a> CodeGen<'a> {
         qfunc: &mut qbe::Function,
         let_stmt: &Let,
     ) -> Result<(), CodeGenError> {
-        // Allocate space on stack with proper alignment
-        let let_stmt_type = self.types.get(let_stmt.type_id);
-        let size = let_stmt_type.size;
-        let align = let_stmt_type.align;
-        let addr = qbe::Value::Temporary(let_stmt.name.clone());
+        let init = self.generate_expression(qfunc, &let_stmt.init)?;
 
-        let alloc_instr = if align >= 16 {
-            qbe::Instr::Alloc16(size as u128)
-        } else if align >= 8 {
-            qbe::Instr::Alloc8(size as u64)
-        } else {
-            qbe::Instr::Alloc4(size as u32)
-        };
-
-        qfunc.assign_instr(addr.clone(), qbe::Type::Long, alloc_instr);
-
-        // Generate initial value
-        let init_val = self.generate_expression(qfunc, &let_stmt.init)?;
-
-        // Store value
-        self.store_value(qfunc, addr, init_val, let_stmt.type_id);
+        // The pattern is irrefutable, so the failure target is never taken.
+        let end_label = format!("let.{}.end", self.new_label());
+        self.generate_pattern(
+            qfunc,
+            &let_stmt.pat,
+            init,
+            end_label.clone(),
+            end_label.clone(),
+        )?;
+        qfunc.add_block(end_label);
 
         Ok(())
     }
@@ -1550,6 +1541,7 @@ impl<'a> CodeGen<'a> {
             ExprKind::While(..) => self.generate_expr_while(qfunc, expr),
             ExprKind::Loop(..) => self.generate_expr_loop(qfunc, expr),
             ExprKind::Break(..) | ExprKind::Continue => self.generate_expr_control(qfunc, expr),
+            ExprKind::Let(..) => unreachable!(),
             ExprKind::Array(..) => self.generate_expr_array(qfunc, expr),
             ExprKind::Repeat(..) => self.generate_expr_repeat(qfunc, expr),
             ExprKind::Index(..) => self.generate_expr_index(qfunc, expr),
@@ -1738,6 +1730,147 @@ impl<'a> CodeGen<'a> {
         }
     }
 
+    fn generate_condition(
+        &mut self,
+        qfunc: &mut qbe::Function,
+        expr: &Expr,
+        success: String,
+        failure: String,
+    ) -> Result<(), CodeGenError> {
+        if let ExprKind::Let(let_expr) = &expr.kind {
+            let init = self.generate_expression(qfunc, &let_expr.init)?;
+            return self.generate_pattern(qfunc, &let_expr.pat, init, success, failure);
+        }
+
+        let value = self.generate_expression(qfunc, expr)?;
+        qfunc.add_instr(qbe::Instr::Jnz(value, success, failure));
+        Ok(())
+    }
+
+    // Match `value` against `pat`: jump to `success` on match, `failure` otherwise.
+    fn generate_pattern(
+        &mut self,
+        qfunc: &mut qbe::Function,
+        pat: &Pat,
+        value: qbe::Value,
+        success: String,
+        failure: String,
+    ) -> Result<(), CodeGenError> {
+        match &pat.kind {
+            PatKind::Binding(name) => {
+                // %name =l alloc{4,8,16} size
+                // store{t} %value, %name
+                // jmp @success
+                let ty = self.types.get(pat.type_id).clone();
+                let addr = qbe::Value::Temporary(name.clone());
+                let alloc = if ty.align >= 16 {
+                    qbe::Instr::Alloc16(ty.size as u128)
+                } else if ty.align >= 8 {
+                    qbe::Instr::Alloc8(ty.size as u64)
+                } else {
+                    qbe::Instr::Alloc4(ty.size as u32)
+                };
+
+                qfunc.assign_instr(addr.clone(), qbe::Type::Long, alloc);
+                self.store_value(qfunc, addr, value, pat.type_id);
+                qfunc.add_instr(qbe::Instr::Jmp(success));
+            }
+            PatKind::Some(inner) => {
+                let TypeKind::Optional(payload_type_id) = self.types.get(pat.type_id).kind else {
+                    unreachable!()
+                };
+                let payload_ty = self.types.get(payload_type_id).clone();
+                let payload_label = format!("pat.{}.some", self.new_label());
+
+                // niche:  %matched =w cnel %value, 0
+                // tagged: %tag     =w loadub %value
+                //         %matched =w ceqw %tag, 1
+                let matched = match payload_ty.niche {
+                    Some(Niche::NullPointer) => self.assign_to_temp(
+                        qfunc,
+                        TypeId::Bool,
+                        qbe::Instr::Cmp(
+                            qbe::Type::Long,
+                            qbe::Cmp::Ne,
+                            value.clone(),
+                            qbe::Value::Const(0),
+                        ),
+                    ),
+                    None => {
+                        let tag = self.load_field(qfunc, value.clone(), 0, TypeId::U8);
+                        self.assign_to_temp(
+                            qfunc,
+                            TypeId::Bool,
+                            qbe::Instr::Cmp(
+                                qbe::Type::Word,
+                                qbe::Cmp::Eq,
+                                tag,
+                                qbe::Value::Const(1),
+                            ),
+                        )
+                    }
+                };
+
+                // jnz %matched, @pat.N.some, @failure
+                // @pat.N.some
+                qfunc.add_instr(qbe::Instr::Jnz(
+                    matched,
+                    payload_label.clone(),
+                    failure.clone(),
+                ));
+                qfunc.add_block(payload_label);
+
+                // niche:     %payload = %value
+                // zero-size: %payload = 0
+                // tagged:    %payload = load_field(%value, align(T))
+                //            (scalar -> loaded value, aggregate -> address)
+                let payload = match payload_ty.niche {
+                    Some(Niche::NullPointer) => value,
+                    None if payload_ty.size == 0 => qbe::Value::Const(0),
+                    None => self.load_field(qfunc, value, payload_ty.align as u64, payload_type_id),
+                };
+
+                // match %payload against inner, same success/failure
+                self.generate_pattern(qfunc, inner, payload, success, failure)?;
+            }
+            PatKind::None => {
+                let TypeKind::Optional(payload_type_id) = self.types.get(pat.type_id).kind else {
+                    unreachable!()
+                };
+                let payload_ty = self.types.get(payload_type_id).clone();
+
+                // niche:  %matched =w ceql %value, 0
+                // tagged: %tag     =w loadub %value
+                //         %matched =w ceqw %tag, 0
+                // jnz %matched, @success, @failure
+                let matched = match payload_ty.niche {
+                    Some(Niche::NullPointer) => self.assign_to_temp(
+                        qfunc,
+                        TypeId::Bool,
+                        qbe::Instr::Cmp(qbe::Type::Long, qbe::Cmp::Eq, value, qbe::Value::Const(0)),
+                    ),
+                    None => {
+                        let tag = self.load_field(qfunc, value, 0, TypeId::U8);
+                        self.assign_to_temp(
+                            qfunc,
+                            TypeId::Bool,
+                            qbe::Instr::Cmp(
+                                qbe::Type::Word,
+                                qbe::Cmp::Eq,
+                                tag,
+                                qbe::Value::Const(0),
+                            ),
+                        )
+                    }
+                };
+
+                qfunc.add_instr(qbe::Instr::Jnz(matched, success, failure));
+            }
+        }
+
+        Ok(())
+    }
+
     fn generate_expr_if(
         &mut self,
         qfunc: &mut qbe::Function,
@@ -1753,12 +1886,16 @@ impl<'a> CodeGen<'a> {
         let end_label = format!("if.{label_id}.end");
 
         qfunc.add_block(cond_label);
-        let cond = self.generate_expression(qfunc, &if_expr.cond)?;
 
         match &if_expr.else_body {
             None => {
                 // if without else: always returns Unit
-                qfunc.add_instr(qbe::Instr::Jnz(cond, then_label.clone(), end_label.clone()));
+                self.generate_condition(
+                    qfunc,
+                    &if_expr.cond,
+                    then_label.clone(),
+                    end_label.clone(),
+                )?;
 
                 qfunc.add_block(then_label);
                 self.generate_block(qfunc, &if_expr.then_body)?;
@@ -1771,11 +1908,12 @@ impl<'a> CodeGen<'a> {
             }
             Some(else_expr) => {
                 let else_label = format!("if.{label_id}.else");
-                qfunc.add_instr(qbe::Instr::Jnz(
-                    cond,
+                self.generate_condition(
+                    qfunc,
+                    &if_expr.cond,
                     then_label.clone(),
                     else_label.clone(),
-                ));
+                )?;
 
                 // Generate then branch
                 qfunc.add_block(then_label.clone());
@@ -1852,12 +1990,12 @@ impl<'a> CodeGen<'a> {
         qfunc.add_instr(qbe::Instr::Jmp(cond_label.clone()));
 
         qfunc.add_block(cond_label.clone());
-        let cond_val = self.generate_expression(qfunc, &while_expr.cond)?;
-        qfunc.add_instr(qbe::Instr::Jnz(
-            cond_val,
+        self.generate_condition(
+            qfunc,
+            &while_expr.cond,
             body_label.clone(),
             end_label.clone(),
-        ));
+        )?;
 
         qfunc.add_block(body_label);
         self.loops.push(LoopContext::new(

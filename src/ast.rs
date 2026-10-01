@@ -1,6 +1,29 @@
 use crate::span::Span;
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct Pat {
+    pub kind: PatKind,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum PatKind {
+    Binding(String),
+    Some(Box<Pat>),
+    None,
+}
+
+impl std::fmt::Display for Pat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.kind {
+            PatKind::Binding(name) => write!(f, "{name}"),
+            PatKind::Some(inner) => write!(f, "some {inner}"),
+            PatKind::None => write!(f, "none"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Path {
     pub segments: Vec<String>,
     pub span: Span,
@@ -192,7 +215,7 @@ pub enum StmtKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Let {
-    pub name: String,
+    pub pat: Pat,
     pub type_ann: Option<TypeAnn>,
     pub init: Expr,
     pub span: Span,
@@ -226,6 +249,14 @@ pub enum ExprKind {
     Loop(Loop),
     Break(Option<Box<Expr>>),
     Continue,
+    Let(LetExpr),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LetExpr {
+    pub pat: Pat,
+    pub init: Box<Expr>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]

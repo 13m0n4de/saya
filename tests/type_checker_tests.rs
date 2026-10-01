@@ -989,6 +989,89 @@ fn test_optional_type() {
 }
 
 #[test]
+fn test_if_let_optional_pattern() {
+    let program = typecheck!(
+        r#"
+        fn f(value: ?i64) -> i64 {
+            if let some inner = value {
+                inner
+            } else {
+                0
+            }
+        }
+        "#
+    )
+    .unwrap();
+
+    let ItemKind::Function(func) = &program.items[0].kind else {
+        panic!("Expected function");
+    };
+    let body = func.body.as_ref().expect("Expected function body");
+    let StmtKind::Expr(expr) = &body.stmts[0].kind else {
+        panic!("Expected trailing expression");
+    };
+    let ExprKind::If(if_expr) = &expr.kind else {
+        panic!("Expected if expression");
+    };
+    let ExprKind::Let(let_expr) = &if_expr.cond.kind else {
+        panic!("Expected let expression condition");
+    };
+
+    assert_eq!(if_expr.cond.type_id, TypeId::Bool);
+    assert_eq!(let_expr.pat.type_id, let_expr.init.type_id);
+
+    let PatKind::Some(inner) = &let_expr.pat.kind else {
+        panic!("Expected some pattern");
+    };
+    assert_eq!(inner.type_id, TypeId::I64);
+    assert!(matches!(&inner.kind, PatKind::Binding(name) if name == "inner"));
+
+    assert!(typecheck!("fn f(value: ?i64) { if let none = value {} }").is_ok());
+    assert!(
+        typecheck!(
+            "fn f(value: ??i64) -> i64 { if let some some inner = value { inner } else { 0 } }"
+        )
+        .is_ok()
+    );
+
+    assert!(typecheck!("fn f(value: i64) { if let some inner = value {} }").is_err());
+    assert!(typecheck!("fn f(value: i64) { if let none = value {} }").is_err());
+
+    // Pattern bindings are only visible in the successful branch.
+    assert!(typecheck!("fn f(value: ?i64) { if let some inner = value {} inner; }").is_err());
+    assert!(
+        typecheck!("fn f(value: ?i64) { if let some inner = value {} else { inner; } }").is_err()
+    );
+}
+
+#[test]
+fn test_let_statement_refutability() {
+    assert!(typecheck!("fn f(value: ?i64) { let x = value; }").is_ok());
+    assert!(typecheck!("fn f(value: ?i64) { let x: ?i64 = value; }").is_ok());
+
+    assert!(typecheck!("fn f(value: ?i64) { let some x = value; }").is_err());
+    assert!(typecheck!("fn f(value: ?i64) { let none = value; }").is_err());
+    assert!(typecheck!("fn f(value: ?i64) { let some x: ?i64 = value; }").is_err());
+}
+
+#[test]
+fn test_while_let_optional_pattern() {
+    assert!(
+        typecheck!(
+            r#"
+        fn f(value: ?i64) {
+            while let some inner = value {
+                let copy: i64 = inner;
+                break;
+            }
+        }
+        "#
+        )
+        .is_ok()
+    );
+}
+
+#[test]
 fn test_optional_layout() {
     let mut types = TypeContext::new();
 

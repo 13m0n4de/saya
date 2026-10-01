@@ -43,11 +43,18 @@ block = "{" *statement [expression] "}"
 
 statement = expr-stmt / let-stmt
 expr-stmt = expression ";"
-let-stmt = "let" identifier [":" type-name] "=" expression ";"
+let-stmt = "let" pattern [":" type-name] "=" expression ";"
 
 expression = return-expr / assign-expr
 
 return-expr = "return" [expression]
+
+condition = let-expr / expression
+let-expr = "let" pattern "=" bitwise-or-expr
+
+pattern = identifier / some-pattern / none-pattern
+some-pattern = "some" pattern
+none-pattern = "none"
 
 assign-expr = logical-or-expr [assign-op assign-expr]
 assign-op = "="
@@ -94,8 +101,8 @@ primary-expr = literal / none-expr / struct-expr / path / array-expr
 
 none-expr = "none"
 
-if-expr = "if" expression block ["else" (if-expr / block)]
-while-expr = "while" expression block
+if-expr = "if" condition block ["else" (if-expr / block)]
+while-expr = "while" condition block
 loop-expr = "loop" block
 break-expr = "break" [expression]
 continue-expr = "continue"

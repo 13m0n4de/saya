@@ -692,13 +692,13 @@ impl<'a> Parser<'a> {
         }
     }
 
-    // let-stmt = "let" identifier ":" type-name "=" expression ";"
+    // let-stmt = "let" pattern [":" type-name] "=" expression ";"
     fn parse_stmt_let(&mut self) -> Result<Stmt, ParseError> {
         let start_span = self.current.span;
 
         self.expect(TokenKind::Let)?;
 
-        let name = self.parse_identifier()?;
+        let pat = self.parse_pattern()?;
 
         let type_ann = if self.eat(TokenKind::Colon)? {
             Some(self.parse_type_ann()?)
@@ -714,7 +714,7 @@ impl<'a> Parser<'a> {
 
         Ok(Stmt {
             kind: StmtKind::Let(Let {
-                name,
+                pat,
                 type_ann,
                 init,
                 span: start_span,
@@ -725,26 +725,52 @@ impl<'a> Parser<'a> {
 
     // expr-stmt = expression ";"
     pub fn parse_expression(&mut self) -> Result<Expr, ParseError> {
-        let start_span = self.current.span;
+        match self.current.kind {
+            TokenKind::Return => {
+                let span = self.current.span;
+                self.advance()?;
 
-        if self.current.kind == TokenKind::Return {
-            self.advance()?;
+                let value = if self.current.kind == TokenKind::Semi
+                    || self.current.kind == TokenKind::CloseBrace
+                {
+                    None
+                } else {
+                    Some(Box::new(self.parse_expression()?))
+                };
 
-            let ret_expr = if self.current.kind == TokenKind::Semi
-                || self.current.kind == TokenKind::CloseBrace
-            {
-                None
-            } else {
-                Some(Box::new(self.parse_expression()?))
-            };
-
-            return Ok(Expr {
-                kind: ExprKind::Return(ret_expr),
-                span: start_span,
-            });
+                Ok(Expr {
+                    kind: ExprKind::Return(value),
+                    span,
+                })
+            }
+            TokenKind::Let => Err(ParseError::new(
+                "let expressions are only allowed in conditions".into(),
+                self.current.span,
+            )),
+            _ => self.parse_expr_assign(),
         }
+    }
 
-        self.parse_expr_assign()
+    // let-expr = "let" pattern "=" bitwise-or-expr
+    fn parse_expr_let(&mut self) -> Result<Expr, ParseError> {
+        let span = self.current.span;
+
+        self.expect(TokenKind::Let)?;
+        let pat = self.parse_pattern()?;
+        self.expect(TokenKind::Eq)?;
+
+        // bitwise-or-expr: stop before `&&` and `||`
+        let (bitwise_or_lbp, _) = Self::BP_BITWISE_OR;
+        let init = self.parse_expr_bp(bitwise_or_lbp)?;
+
+        Ok(Expr {
+            kind: ExprKind::Let(LetExpr {
+                pat,
+                init: Box::new(init),
+                span,
+            }),
+            span,
+        })
     }
 
     // assign-expr = logical-or-expr [assign-op assign-expr]
@@ -1123,15 +1149,20 @@ impl<'a> Parser<'a> {
         })
     }
 
+    // condition = let-expr / expression
     fn parse_expr_cond(&mut self) -> Result<Expr, ParseError> {
         let old_flag = self.no_struct_literal;
         self.no_struct_literal = true;
-        let result = self.parse_expression();
+        let result = if self.current.kind == TokenKind::Let {
+            self.parse_expr_let()
+        } else {
+            self.parse_expression()
+        };
         self.no_struct_literal = old_flag;
         result
     }
 
-    // if-expr = "if" expression block ["else" (if-expr / block)]
+    // if-expr = "if" condition block ["else" (if-expr / block)]
     fn parse_if(&mut self) -> Result<If, ParseError> {
         let if_span = self.current.span;
         self.expect(TokenKind::If)?;
@@ -1166,7 +1197,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    // while-expr = "while" expression block
+    // while-expr = "while" condition block
     fn parse_while(&mut self) -> Result<While, ParseError> {
         let while_span = self.current.span;
         self.expect(TokenKind::While)?;
@@ -1189,6 +1220,31 @@ impl<'a> Parser<'a> {
         let body = Box::new(self.parse_block()?);
 
         Ok(Loop { body, span })
+    }
+
+    // pattern = identifier / "some" pattern / "none"
+    fn parse_pattern(&mut self) -> Result<Pat, ParseError> {
+        let span = self.current.span;
+
+        let kind = match self.current.kind {
+            TokenKind::Ident(_) => PatKind::Binding(self.parse_identifier()?),
+            TokenKind::Some => {
+                self.advance()?;
+                PatKind::Some(Box::new(self.parse_pattern()?))
+            }
+            TokenKind::None => {
+                self.advance()?;
+                PatKind::None
+            }
+            _ => {
+                return Err(ParseError::new(
+                    format!("Expected pattern, found {:?}", self.current.kind),
+                    self.current.span,
+                ));
+            }
+        };
+
+        Ok(Pat { kind, span })
     }
 
     // path = identifier *( "::" identifier)
@@ -1217,28 +1273,42 @@ impl<'a> Parser<'a> {
         }
     }
 
+    // Infix binding powers: (left, right)
+    const BP_LOGICAL_OR: (u8, u8) = (10, 11); // ||
+    const BP_LOGICAL_AND: (u8, u8) = (20, 21); // &&
+    const BP_BITWISE_OR: (u8, u8) = (30, 31); // |
+    const BP_BITWISE_AND: (u8, u8) = (40, 41); // &
+    const BP_EQUALITY: (u8, u8) = (50, 51); // == !=
+    const BP_RELATIONAL: (u8, u8) = (60, 61); // < <= > >=
+    const BP_ADDITIVE: (u8, u8) = (70, 71); // + -
+    const BP_MULTIPLICATIVE: (u8, u8) = (80, 81); // * / %
+    const BP_CAST: (u8, u8) = (90, 91); // as
+
+    const BP_UNARY: u8 = 100; // - ! & * some
+    const BP_POSTFIX: u8 = 110; // call, index, field
+
     fn prefix_binding_power(token: &TokenKind) -> Option<u8> {
         match token {
-            TokenKind::Minus => Some(100), // -
-            TokenKind::Bang => Some(100),  // !
-            TokenKind::And => Some(100),   // &
-            TokenKind::Star => Some(100),  // *
-            TokenKind::Some => Some(100),  // some
+            TokenKind::Minus
+            | TokenKind::Bang
+            | TokenKind::And
+            | TokenKind::Star
+            | TokenKind::Some => Some(Self::BP_UNARY),
             _ => None,
         }
     }
 
     fn infix_binding_power(token: &TokenKind) -> Option<(u8, u8)> {
         let bp = match token {
-            TokenKind::OrOr => (10, 11),                 // ||
-            TokenKind::AndAnd => (20, 21),               // &&
-            TokenKind::Or => (30, 31),                   // |
-            TokenKind::And => (40, 41),                  // &
-            TokenKind::EqEq | TokenKind::Ne => (50, 51), // == !=
-            TokenKind::Lt | TokenKind::Le | TokenKind::Gt | TokenKind::Ge => (60, 61), // < <= > >=
-            TokenKind::Plus | TokenKind::Minus => (70, 71), // + -
-            TokenKind::Star | TokenKind::Slash | TokenKind::Percent => (80, 81), // * / %
-            TokenKind::As => (90, 91),                   // as
+            TokenKind::OrOr => Self::BP_LOGICAL_OR,
+            TokenKind::AndAnd => Self::BP_LOGICAL_AND,
+            TokenKind::Or => Self::BP_BITWISE_OR,
+            TokenKind::And => Self::BP_BITWISE_AND,
+            TokenKind::EqEq | TokenKind::Ne => Self::BP_EQUALITY,
+            TokenKind::Lt | TokenKind::Le | TokenKind::Gt | TokenKind::Ge => Self::BP_RELATIONAL,
+            TokenKind::Plus | TokenKind::Minus => Self::BP_ADDITIVE,
+            TokenKind::Star | TokenKind::Slash | TokenKind::Percent => Self::BP_MULTIPLICATIVE,
+            TokenKind::As => Self::BP_CAST,
             _ => return None,
         };
         Some(bp)
@@ -1246,9 +1316,9 @@ impl<'a> Parser<'a> {
 
     fn postfix_binding_power(token: &TokenKind) -> Option<u8> {
         match token {
-            TokenKind::OpenParen => Some(110),   // function call
-            TokenKind::OpenBracket => Some(110), // array index
-            TokenKind::Dot => Some(110),         // field
+            TokenKind::OpenParen | TokenKind::OpenBracket | TokenKind::Dot => {
+                Some(Self::BP_POSTFIX)
+            }
             _ => None,
         }
     }

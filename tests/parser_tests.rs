@@ -351,7 +351,11 @@ fn test_let_binding() {
             let body = func.body.as_ref().expect("Expected function body");
             match &body.stmts[0].kind {
                 StmtKind::Let(let_stmt) => {
-                    assert_eq!(let_stmt.name, "x");
+                    assert!(matches!(
+                        &let_stmt.pat.kind,
+                        PatKind::Binding(name) if name == "x"
+                    ));
+                    assert_eq!(let_stmt.pat.to_string(), "x");
                     assert_eq!(let_stmt.type_ann.as_ref().unwrap().kind, TypeAnnKind::I64);
                 }
                 _ => panic!("Expected let statement"),
@@ -359,6 +363,66 @@ fn test_let_binding() {
         }
         _ => panic!("Expected function"),
     }
+}
+
+#[test]
+fn test_let_expression_patterns() {
+    let expr = parse_expr!("if let some value = optional {}").unwrap();
+    let ExprKind::If(if_expr) = expr.kind else {
+        panic!("Expected if expression");
+    };
+    let ExprKind::Let(let_expr) = if_expr.cond.kind else {
+        panic!("Expected let expression");
+    };
+
+    assert_eq!(let_expr.pat.to_string(), "some value");
+    assert!(matches!(
+        let_expr.pat.kind,
+        PatKind::Some(inner)
+            if matches!(inner.kind, PatKind::Binding(ref name) if name == "value")
+    ));
+
+    let nested = parse_expr!("if let some some value = optional {}").unwrap();
+    let ExprKind::If(if_expr) = nested.kind else {
+        panic!("Expected if expression");
+    };
+    let ExprKind::Let(let_expr) = if_expr.cond.kind else {
+        panic!("Expected let expression");
+    };
+    assert_eq!(let_expr.pat.to_string(), "some some value");
+
+    let none = parse_expr!("if let none = optional {}").unwrap();
+    let ExprKind::If(if_expr) = none.kind else {
+        panic!("Expected if expression");
+    };
+    let ExprKind::Let(let_expr) = if_expr.cond.kind else {
+        panic!("Expected let expression");
+    };
+    assert!(matches!(let_expr.pat.kind, PatKind::None));
+    assert_eq!(let_expr.pat.to_string(), "none");
+
+    assert!(parse_expr!("while let some value = optional {}").is_ok());
+
+    // `let` is only allowed directly as a condition.
+    assert!(parse_expr!("let some value = optional").is_err());
+    assert!(parse_expr!("if (let some value = optional) {}").is_err());
+    assert!(parse_expr!("if !(let some value = optional) {}").is_err());
+    assert!(parse_expr!("if f(let some value = optional) {}").is_err());
+    assert!(parse_expr!("if let some a = let some b = optional {}").is_err());
+
+    // The right-hand side of `let` stops before `&&` and `||`.
+    assert!(parse_expr!("if let some value = a && b {}").is_err());
+    assert!(parse_expr!("if let some value = a || b {}").is_err());
+    assert!(parse_expr!("if let some value = (a && b) {}").is_ok());
+    assert!(parse_expr!("if let some value = a | b {}").is_ok());
+    assert!(parse_expr!("if let some value = f(x).y[0] {}").is_ok());
+}
+
+#[test]
+fn test_let_statement_patterns() {
+    // Refutability is checked by the type checker, not the parser.
+    assert!(parse!("fn f() { let some value = optional; }").is_ok());
+    assert!(parse!("fn f() { let none = optional; }").is_ok());
 }
 
 #[test]

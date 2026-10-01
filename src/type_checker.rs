@@ -1242,22 +1242,16 @@ impl<'a> TypeChecker<'a> {
                     (typed_init.type_id, typed_init)
                 };
 
-                let obj = ScopeObject::Var(type_id);
-                if self
-                    .scopes
-                    .last_mut()
-                    .insert(let_stmt.name.clone(), obj)
-                    .is_some()
-                {
+                let typed_pat = self.check_pattern(&let_stmt.pat, type_id)?;
+                if !Self::is_irrefutable(&typed_pat) {
                     return Err(TypeError::new(
-                        format!("variable `{}` already defined", let_stmt.name),
-                        let_stmt.span,
+                        format!("refutable pattern `{}` in let statement", let_stmt.pat),
+                        let_stmt.pat.span,
                     ));
                 }
 
                 hir::StmtKind::Let(hir::Let {
-                    name: let_stmt.name.clone(),
-                    type_id,
+                    pat: typed_pat,
                     init: typed_init,
                     span: let_stmt.span,
                 })
@@ -1275,6 +1269,85 @@ impl<'a> TypeChecker<'a> {
         Ok(hir::Stmt {
             kind,
             span: stmt.span,
+        })
+    }
+
+    fn check_pattern(&mut self, pat: &ast::Pat, expected: TypeId) -> Result<hir::Pat, TypeError> {
+        let kind = match &pat.kind {
+            ast::PatKind::Binding(name) => {
+                if self
+                    .scopes
+                    .last_mut()
+                    .insert(name.clone(), ScopeObject::Var(expected))
+                    .is_some()
+                {
+                    return Err(TypeError::new(
+                        format!("variable `{name}` already defined"),
+                        pat.span,
+                    ));
+                }
+
+                hir::PatKind::Binding(name.clone())
+            }
+            ast::PatKind::Some(inner) => {
+                let TypeKind::Optional(payload) = &self.types.get(expected).kind else {
+                    return Err(TypeError::new(
+                        format!(
+                            "`some` pattern cannot match type `{}`",
+                            self.types.type_name(expected)
+                        ),
+                        pat.span,
+                    ));
+                };
+
+                let inner = self.check_pattern(inner, *payload)?;
+                hir::PatKind::Some(Box::new(inner))
+            }
+            ast::PatKind::None => {
+                if !matches!(self.types.get(expected).kind, TypeKind::Optional(_)) {
+                    return Err(TypeError::new(
+                        format!(
+                            "`none` pattern cannot match type `{}`",
+                            self.types.type_name(expected)
+                        ),
+                        pat.span,
+                    ));
+                }
+
+                hir::PatKind::None
+            }
+        };
+
+        Ok(hir::Pat {
+            kind,
+            type_id: expected,
+            span: pat.span,
+        })
+    }
+
+    fn is_irrefutable(pat: &hir::Pat) -> bool {
+        match &pat.kind {
+            hir::PatKind::Binding(_) => true,
+            hir::PatKind::Some(_) | hir::PatKind::None => false,
+        }
+    }
+
+    fn infer_expr_let(&mut self, expr: &ast::Expr) -> Result<hir::Expr, TypeError> {
+        let ast::ExprKind::Let(let_expr) = &expr.kind else {
+            unreachable!()
+        };
+
+        let typed_init = self.infer_expression(&let_expr.init)?;
+        let typed_pat = self.check_pattern(&let_expr.pat, typed_init.type_id)?;
+
+        Ok(hir::Expr {
+            kind: hir::ExprKind::Let(hir::LetExpr {
+                pat: typed_pat,
+                init: Box::new(typed_init),
+                span: let_expr.span,
+            }),
+            type_id: TypeId::Bool,
+            span: expr.span,
         })
     }
 
@@ -1300,6 +1373,7 @@ impl<'a> TypeChecker<'a> {
             ast::ExprKind::Loop(..) => self.infer_expr_loop(expr),
             ast::ExprKind::Break(..) => self.infer_expr_break(expr),
             ast::ExprKind::Continue => self.infer_expr_continue(expr),
+            ast::ExprKind::Let(..) => self.infer_expr_let(expr),
         }
     }
 
@@ -2038,9 +2112,15 @@ impl<'a> TypeChecker<'a> {
             unreachable!()
         };
 
-        let typed_cond = self.check_expression(&if_expr.cond, TypeId::Bool)?;
+        self.scopes.push(Scope {
+            kind: ScopeKind::Block,
+            objects: HashMap::new(),
+        });
 
+        let typed_cond = self.check_expression(&if_expr.cond, TypeId::Bool)?;
         let typed_then = self.infer_block(&if_expr.then_body)?;
+
+        self.scopes.pop();
 
         let (ty, typed_else) = if let Some(else_expr) = &if_expr.else_body {
             let typed_else = self.infer_expression(else_expr)?;
@@ -2496,9 +2576,15 @@ impl<'a> TypeChecker<'a> {
             unreachable!()
         };
 
-        let typed_cond = self.check_expression(&if_expr.cond, TypeId::Bool)?;
+        self.scopes.push(Scope {
+            kind: ScopeKind::Block,
+            objects: HashMap::new(),
+        });
 
+        let typed_cond = self.check_expression(&if_expr.cond, TypeId::Bool)?;
         let typed_then = self.check_block(&if_expr.then_body, expected)?;
+
+        self.scopes.pop();
 
         let typed_else = if let Some(else_expr) = &if_expr.else_body {
             Some(Box::new(self.check_expression(else_expr, expected)?))

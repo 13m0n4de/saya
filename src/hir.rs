@@ -130,10 +130,23 @@ pub enum StmtKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Let {
-    pub name: String,
-    pub type_id: TypeId,
+    pub pat: Pat,
     pub init: Expr,
     pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Pat {
+    pub kind: PatKind,
+    pub type_id: TypeId,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum PatKind {
+    Binding(String),
+    Some(Box<Pat>),
+    None,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -172,6 +185,14 @@ pub enum ExprKind {
     Loop(Loop),
     Break(Option<Box<Expr>>),
     Continue,
+    Let(LetExpr),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LetExpr {
+    pub pat: Pat,
+    pub init: Box<Expr>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
