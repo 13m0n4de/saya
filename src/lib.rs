@@ -5,6 +5,7 @@ pub mod lexer;
 pub mod parser;
 pub mod scope;
 pub mod span;
+pub mod token;
 pub mod type_checker;
 pub mod typedef;
 pub mod types;

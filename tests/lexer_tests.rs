@@ -1,4 +1,7 @@
-use saya::lexer::{LexError, Lexer, TokenKind};
+use saya::{
+    lexer::{LexError, Lexer},
+    token::TokenKind,
+};
 
 fn tokenize(input: &str) -> Result<Vec<TokenKind>, LexError> {
     let mut lexer = Lexer::new(input);

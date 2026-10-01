@@ -34,7 +34,7 @@ impl fmt::Display for TypeError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "type error at {}:{}: {}",
+            "{}:{}: type error: {}",
             self.span.line, self.span.column, self.message
         )
     }
@@ -43,6 +43,10 @@ impl fmt::Display for TypeError {
 impl Error for TypeError {}
 
 type StructLayout = (Vec<(String, usize)>, usize, usize);
+
+fn plural(n: usize) -> &'static str {
+    if n == 1 { "" } else { "s" }
+}
 
 pub struct TypeChecker<'a> {
     pub scopes: Scopes,
@@ -112,7 +116,7 @@ impl<'a> TypeChecker<'a> {
                 match self.scopes.lookup(symbol) {
                     Some(ScopeObject::Const(Const::Resolved(val))) => Ok(val.clone()),
                     _ => Err(TypeError::new(
-                        format!("Constant `{symbol}` not found"),
+                        format!("`{symbol}` is not a constant"),
                         expr.span,
                     )),
                 }
@@ -170,7 +174,7 @@ impl<'a> TypeChecker<'a> {
                         type_id: expr.type_id,
                     }),
                     _ => Err(TypeError::new(
-                        "Cannot negate a non-numeric value".to_string(),
+                        "cannot negate non-numeric constant".to_string(),
                         expr.span,
                     )),
                 }
@@ -199,7 +203,7 @@ impl<'a> TypeChecker<'a> {
                         hir::BinaryOp::Ne => hir::ConstValKind::Bool(l != r),
                         _ => {
                             return Err(TypeError::new(
-                                "Invalid operator for integer operands".to_string(),
+                                "invalid operator for integer constants".to_string(),
                                 expr.span,
                             ));
                         }
@@ -220,7 +224,7 @@ impl<'a> TypeChecker<'a> {
                         hir::BinaryOp::Ne => hir::ConstValKind::Bool(l != r),
                         _ => {
                             return Err(TypeError::new(
-                                "Invalid operator for float operands".to_string(),
+                                "invalid operator for float constants".to_string(),
                                 expr.span,
                             ));
                         }
@@ -234,14 +238,14 @@ impl<'a> TypeChecker<'a> {
                         hir::BinaryOp::Ne => hir::ConstValKind::Bool(l != r),
                         _ => {
                             return Err(TypeError::new(
-                                "Invalid operator for boolean operands".to_string(),
+                                "invalid operator for boolean constants".to_string(),
                                 expr.span,
                             ));
                         }
                     },
                     _ => {
                         return Err(TypeError::new(
-                            "Type mismatch in constant expression".to_string(),
+                            "mismatched types in constant expression".to_string(),
                             expr.span,
                         ));
                     }
@@ -253,7 +257,7 @@ impl<'a> TypeChecker<'a> {
                 })
             }
             _ => Err(TypeError::new(
-                "Invalid constant expression".to_string(),
+                "expression is not constant".to_string(),
                 expr.span,
             )),
         }
@@ -294,14 +298,14 @@ impl<'a> TypeChecker<'a> {
 
                 let hir::ConstValKind::Integer(len_val) = evaluated_len.kind else {
                     return Err(TypeError::new(
-                        "Array length must be an integer".to_string(),
+                        "array length must be an integer".to_string(),
                         len_expr.span,
                     ));
                 };
 
                 if len_val <= 0 {
                     return Err(TypeError::new(
-                        format!("Array length must be positive, found {len_val}"),
+                        format!("array length must be positive, found {len_val}"),
                         len_expr.span,
                     ));
                 }
@@ -406,7 +410,7 @@ impl<'a> TypeChecker<'a> {
                 if typed_len.type_id != TypeId::I64 {
                     return Err(TypeError::new(
                         format!(
-                            "Array length must be `i64`, found `{}`",
+                            "array length must be `i64`, found `{}`",
                             self.types.type_name(typed_len.type_id)
                         ),
                         len_expr.span,
@@ -417,14 +421,14 @@ impl<'a> TypeChecker<'a> {
 
                 let hir::ConstValKind::Integer(len_val) = evaluated_len.kind else {
                     return Err(TypeError::new(
-                        "Array length must be an integer".to_string(),
+                        "array length must be an integer".to_string(),
                         len_expr.span,
                     ));
                 };
 
                 if len_val <= 0 {
                     return Err(TypeError::new(
-                        format!("Array length must be positive, found {len_val}"),
+                        format!("array length must be positive, found {len_val}"),
                         len_expr.span,
                     ));
                 }
@@ -521,14 +525,22 @@ impl<'a> TypeChecker<'a> {
             let lexer = Lexer::new(&code);
             let mut parser = Parser::new(lexer).map_err(|e| {
                 TypeError::new(
-                    format!("failed to parse module `{}`: {}", use_item.name, e),
+                    format!(
+                        "failed to parse module `{}`: {}:{e}",
+                        use_item.name,
+                        file_path.display()
+                    ),
                     use_item.span,
                 )
             })?;
 
             let program = parser.parse().map_err(|e| {
                 TypeError::new(
-                    format!("failed to parse module `{}`: {}", use_item.name, e),
+                    format!(
+                        "failed to parse module `{}`: {}:{e}",
+                        use_item.name,
+                        file_path.display()
+                    ),
                     use_item.span,
                 )
             })?;
@@ -536,7 +548,11 @@ impl<'a> TypeChecker<'a> {
             let mut checker = TypeChecker::new(self.types, None, HashMap::new());
             checker.check(&program).map_err(|e| {
                 TypeError::new(
-                    format!("failed to type check module `{}`: {}", use_item.name, e),
+                    format!(
+                        "failed to type check module `{}`: {}:{e}",
+                        use_item.name,
+                        file_path.display()
+                    ),
                     use_item.span,
                 )
             })?;
@@ -1175,7 +1191,7 @@ impl<'a> TypeChecker<'a> {
         for (idx, stmt) in block.stmts.iter().enumerate() {
             if has_never {
                 return Err(TypeError::new(
-                    "unreachable statement after diverging expression".to_string(),
+                    "unreachable code after diverging expression".to_string(),
                     stmt.span,
                 ));
             }
@@ -1192,7 +1208,7 @@ impl<'a> TypeChecker<'a> {
                 {
                     return Err(TypeError::new(
                         format!(
-                            "expected `;` after expression: expected `()`, found `{}`",
+                            "expected `()`, found `{}`; add `;` to discard the value",
                             self.types.type_name(expr.type_id)
                         ),
                         expr.span,
@@ -1395,7 +1411,7 @@ impl<'a> TypeChecker<'a> {
                     Some("i64") | None => (0i64, i64::MAX, TypeId::I64),
                     Some(unknown) => {
                         return Err(TypeError::new(
-                            format!("Unknown integer suffix `{unknown}`"),
+                            format!("unknown integer suffix `{unknown}`"),
                             expr.span,
                         ));
                     }
@@ -1418,7 +1434,7 @@ impl<'a> TypeChecker<'a> {
                     Some("f64") | None => TypeId::F64,
                     Some(unknown) => {
                         return Err(TypeError::new(
-                            format!("Unknown float suffix `{unknown}`"),
+                            format!("unknown float suffix `{unknown}`"),
                             expr.span,
                         ));
                     }
@@ -1539,7 +1555,7 @@ impl<'a> TypeChecker<'a> {
 
         if let Some((field_name, field_init)) = provided_fields.into_iter().next() {
             return Err(TypeError::new(
-                format!("struct `{path}` has no field `{field_name}`"),
+                format!("struct `{path}` has no field named `{field_name}`"),
                 field_init.span,
             ));
         }
@@ -1724,7 +1740,13 @@ impl<'a> TypeChecker<'a> {
             .iter()
             .find(|field| &field.name == field_name)
             .ok_or_else(|| {
-                TypeError::new(format!("no field `{field_name}` on struct"), expr.span)
+                TypeError::new(
+                    format!(
+                        "no field `{field_name}` on type `{}`",
+                        self.types.type_name(struct_type_id)
+                    ),
+                    expr.span,
+                )
             })?;
 
         Ok(hir::Expr {
@@ -1804,7 +1826,8 @@ impl<'a> TypeChecker<'a> {
             if call.args.len() < min_args {
                 return Err(TypeError::new(
                     format!(
-                        "function expects at least {min_args} arguments, got {}",
+                        "expected at least {min_args} argument{}, found {}",
+                        plural(min_args),
                         call.args.len()
                     ),
                     call.span,
@@ -1813,7 +1836,8 @@ impl<'a> TypeChecker<'a> {
         } else if call.args.len() != min_args {
             return Err(TypeError::new(
                 format!(
-                    "function expects {min_args} arguments, got {}",
+                    "expected {min_args} argument{}, found {}",
+                    plural(min_args),
                     call.args.len()
                 ),
                 call.span,
@@ -1880,15 +1904,15 @@ impl<'a> TypeChecker<'a> {
             }
             hir::UnaryOp::Ref => {
                 match &typed_operand.kind {
-                    hir::ExprKind::Literal(lit) => {
+                    hir::ExprKind::Literal(_) => {
                         return Err(TypeError::new(
-                            format!("cannot take address of constant `{lit:?}`"),
+                            "cannot take address of a literal".to_string(),
                             operand.span,
                         ));
                     }
-                    hir::ExprKind::Const(val) => {
+                    hir::ExprKind::Const(_) => {
                         return Err(TypeError::new(
-                            format!("cannot take address of constant `{val:?}`"),
+                            "cannot take address of a constant".to_string(),
                             operand.span,
                         ));
                     }
@@ -2133,7 +2157,7 @@ impl<'a> TypeChecker<'a> {
                 (then_ty, else_ty) => {
                     return Err(TypeError::new(
                         format!(
-                            "if-else branches have different types: `{}` and `{}`",
+                            "`if` and `else` have incompatible types: `{}` and `{}`",
                             self.types.type_name(then_ty),
                             self.types.type_name(else_ty),
                         ),
@@ -2269,7 +2293,7 @@ impl<'a> TypeChecker<'a> {
             Some(existing) if existing != val_type => {
                 return Err(TypeError::new(
                     format!(
-                        "break value type mismatch: expected {}, found {}",
+                        "mismatched `break` value types: expected `{}`, found `{}`",
                         self.types.type_name(existing),
                         self.types.type_name(val_type),
                     ),
@@ -2659,7 +2683,7 @@ impl<'a> TypeChecker<'a> {
                 {
                     return Err(TypeError::new(
                         format!(
-                            "expected `;` after expression: expected `()`, found `{}`",
+                            "expected `()`, found `{}`; add `;` to discard the value",
                             self.types.type_name(expr.type_id)
                         ),
                         expr.span,

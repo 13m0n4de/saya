@@ -2,8 +2,9 @@ use std::{error::Error, fmt};
 
 use crate::{
     ast::*,
-    lexer::{LexError, Lexer, Token, TokenKind},
+    lexer::{LexError, Lexer},
     span::Span,
+    token::*,
 };
 
 #[derive(Debug)]
@@ -21,7 +22,7 @@ impl ParseError {
 impl From<LexError> for ParseError {
     fn from(lex_error: LexError) -> Self {
         ParseError {
-            message: format!("Lexer error: {}", lex_error.message),
+            message: lex_error.message,
             span: lex_error.span,
         }
     }
@@ -31,7 +32,7 @@ impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "parse error at {}:{}: {}",
+            "{}:{}: parse error: {}",
             self.span.line, self.span.column, self.message
         )
     }
@@ -68,7 +69,7 @@ impl<'a> Parser<'a> {
     fn expect(&mut self, expected: TokenKind) -> Result<(), ParseError> {
         if self.current.kind != expected {
             return Err(ParseError::new(
-                format!("Expected {:?}, found {:?}", expected, self.current.kind),
+                format!("expected {expected}, found {}", self.current.kind),
                 self.current.span,
             ));
         }
@@ -111,7 +112,7 @@ impl<'a> Parser<'a> {
                 TokenKind::Eof => break,
                 _ => {
                     return Err(ParseError::new(
-                        format!("Unexpected token: {:?}", self.current.kind),
+                        format!("expected item, found {}", self.current.kind),
                         self.current.span,
                     ));
                 }
@@ -149,7 +150,7 @@ impl<'a> Parser<'a> {
                         }
                         _ => {
                             return Err(ParseError::new(
-                                "expected string in @symbol".to_string(),
+                                "expected string literal in `@symbol`".to_string(),
                                 self.current.span,
                             ));
                         }
@@ -157,7 +158,12 @@ impl<'a> Parser<'a> {
                     self.expect(TokenKind::CloseParen)?;
                     AttrKind::Symbol(sym)
                 }
-                _ => return Err(ParseError::new(format!("unknown attribute: {name}"), span)),
+                _ => {
+                    return Err(ParseError::new(
+                        format!("unknown attribute `@{name}`"),
+                        span,
+                    ));
+                }
             };
 
             attrs.push(Attr { kind, span });
@@ -204,7 +210,10 @@ impl<'a> Parser<'a> {
             TokenKind::Fn => Ok(ExternItem::Function(self.parse_extern_function()?)),
             TokenKind::Static => Ok(ExternItem::Static(self.parse_extern_static()?)),
             _ => Err(ParseError::new(
-                "expected 'fn' or 'static' after 'extern'".to_string(),
+                format!(
+                    "expected `fn` or `static` after `extern`, found {}",
+                    self.current.kind
+                ),
                 self.current.span,
             )),
         }
@@ -549,10 +558,7 @@ impl<'a> Parser<'a> {
                     }
                     _ => {
                         return Err(ParseError::new(
-                            format!(
-                                "Expected `]` or `;` after type in brackets, found {:?}",
-                                self.current.kind
-                            ),
+                            format!("expected `]` or `;`, found {}", self.current.kind),
                             self.current.span,
                         ));
                     }
@@ -618,7 +624,7 @@ impl<'a> Parser<'a> {
             }
             _ => {
                 return Err(ParseError::new(
-                    format!("Unknown type: {:?}", self.current.kind),
+                    format!("expected type, found {}", self.current.kind),
                     self.current.span,
                 ));
             }
@@ -682,10 +688,7 @@ impl<'a> Parser<'a> {
             } else {
                 // Other expressions require semicolons
                 Err(ParseError::new(
-                    format!(
-                        "Expected ';' after expression (found {:?})",
-                        self.current.kind
-                    ),
+                    format!("expected `;` after expression, found {}", self.current.kind),
                     self.current.span,
                 ))
             }
@@ -744,7 +747,7 @@ impl<'a> Parser<'a> {
                 })
             }
             TokenKind::Let => Err(ParseError::new(
-                "let expressions are only allowed in conditions".into(),
+                "`let` expressions are only allowed in `if` and `while` conditions".into(),
                 self.current.span,
             )),
             _ => self.parse_expr_assign(),
@@ -1076,7 +1079,7 @@ impl<'a> Parser<'a> {
 
             _ => {
                 return Err(ParseError::new(
-                    format!("Expected expression, found {:?}", self.current.kind),
+                    format!("expected expression, found {}", self.current.kind),
                     self.current.span,
                 ));
             }
@@ -1238,7 +1241,7 @@ impl<'a> Parser<'a> {
             }
             _ => {
                 return Err(ParseError::new(
-                    format!("Expected pattern, found {:?}", self.current.kind),
+                    format!("expected pattern, found {}", self.current.kind),
                     self.current.span,
                 ));
             }
@@ -1267,7 +1270,7 @@ impl<'a> Parser<'a> {
             Ok(name)
         } else {
             Err(ParseError::new(
-                format!("Expected identifier, found {:?}", self.current.kind),
+                format!("expected identifier, found {}", self.current.kind),
                 self.current.span,
             ))
         }

@@ -45,7 +45,7 @@ impl fmt::Display for CodeGenError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "codegen error at {}:{}: {}",
+            "{}:{}: codegen error: {}",
             self.span.line, self.span.column, self.message
         )
     }
@@ -630,7 +630,7 @@ impl<'a> CodeGen<'a> {
                     _ => {
                         return Err(CodeGenError::new(
                             format!(
-                                "Cannot index into type {}",
+                                "cannot index into type `{}`",
                                 self.types.type_name(base.type_id)
                             ),
                             expr.span,
@@ -696,7 +696,7 @@ impl<'a> CodeGen<'a> {
             }
             _ => Err(CodeGenError::new(
                 format!(
-                    "Cannot take address of this expression: {}",
+                    "cannot take address of expression of type `{}`",
                     self.types.type_name(expr.type_id)
                 ),
                 expr.span,
@@ -1345,7 +1345,7 @@ impl<'a> CodeGen<'a> {
         let TypeKind::Array(elem_ty, _) = self.types.get(expr.type_id).kind else {
             return Err(CodeGenError::new(
                 format!(
-                    "Expected array type, found {}",
+                    "expected array type, found `{}`",
                     self.types.type_name(expr.type_id)
                 ),
                 expr.span,
@@ -1384,7 +1384,7 @@ impl<'a> CodeGen<'a> {
         let TypeKind::Array(elem_ty, _) = self.types.get(expr.type_id).kind else {
             return Err(CodeGenError::new(
                 format!(
-                    "Expected array type, found {}",
+                    "expected array type, found `{}`",
                     self.types.type_name(expr.type_id)
                 ),
                 expr.span,

@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::{env, error::Error, fs, process};
+use std::{env, fs, process};
 
 use saya::codegen::CodeGen;
 use saya::lexer::Lexer;
@@ -50,36 +50,45 @@ fn parse_args() -> Result<Args, String> {
     Ok(config)
 }
 
-fn run() -> Result<(), Box<dyn Error>> {
-    let args = parse_args()?;
+fn run() -> Result<(), String> {
+    let args = parse_args().map_err(|e| format!("error: {e}"))?;
+    let input = &args.input;
 
-    let code = fs::read_to_string(&args.input)?;
+    let code =
+        fs::read_to_string(input).map_err(|e| format!("error: cannot read `{input}`: {e}"))?;
 
     let lexer = Lexer::new(&code);
-    let mut parser = Parser::new(lexer)?;
-    let program = parser.parse()?;
+    let mut parser = Parser::new(lexer).map_err(|e| format!("{input}:{e}"))?;
+    let program = parser.parse().map_err(|e| format!("{input}:{e}"))?;
 
     let mut types = TypeContext::new();
 
     let mut type_checker = TypeChecker::new(&mut types, args.namespace, args.td_paths);
-    let typed_program = type_checker.check(&program)?;
+    let typed_program = type_checker
+        .check(&program)
+        .map_err(|e| format!("{input}:{e}"))?;
 
     if let Some(td_path) = &args.typedef {
-        let mut file = fs::File::create(td_path)?;
-        emit_typedefs(&typed_program, &types, &mut file)?;
+        let mut file = fs::File::create(td_path)
+            .map_err(|e| format!("error: cannot create `{td_path}`: {e}"))?;
+        emit_typedefs(&typed_program, &types, &mut file)
+            .map_err(|e| format!("error: cannot write `{td_path}`: {e}"))?;
     }
 
     let mut code_gen = CodeGen::new(&mut types);
-    let qbe_il = code_gen.generate(&typed_program)?;
+    let qbe_il = code_gen
+        .generate(&typed_program)
+        .map_err(|e| format!("{input}:{e}"))?;
 
-    fs::write(args.output, qbe_il)?;
+    fs::write(&args.output, qbe_il)
+        .map_err(|e| format!("error: cannot write `{}`: {e}", args.output))?;
 
     Ok(())
 }
 
 fn main() {
     if let Err(e) = run() {
-        eprintln!("Error: {e}");
+        eprintln!("{e}");
         process::exit(1);
     }
 }

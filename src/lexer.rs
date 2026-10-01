@@ -1,83 +1,7 @@
 use std::{error::Error, fmt, str::Chars};
 
 use crate::span::Span;
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum TokenKind {
-    Pub,      // pub
-    Use,      // use
-    As,       // as
-    Fn,       // fn
-    Extern,   // extern
-    Return,   // return
-    Struct,   // struct
-    Type,     // type
-    Let,      // let
-    If,       // if
-    Else,     // else
-    While,    // while
-    Loop,     // loop
-    Break,    // break
-    Continue, // continue
-    Const,    // const
-    Static,   // static
-    True,     // true
-    False,    // false
-    Some,     // some
-    None,     // none
-
-    Ident(String),
-    Integer(i64, Option<String>),
-    Float(f64, Option<String>),
-    String(String),
-    CString(String),
-
-    Plus,    // +
-    Minus,   // -
-    Star,    // *
-    Slash,   // /
-    Percent, // %
-
-    Lt, // <
-    Le, // <=
-    Gt, // >
-    Ge, // >=
-
-    And,      // &
-    Or,       // |
-    Eq,       // =
-    Bang,     // !
-    Question, // ?
-
-    EqEq, // ==
-    Ne,   // !=
-
-    AndAnd, // &&
-    OrOr,   // ||
-
-    OpenParen,    // (
-    CloseParen,   // )
-    OpenBrace,    // {
-    CloseBrace,   // }
-    OpenBracket,  // [
-    CloseBracket, // ]
-    Dot,          // .
-    DotDotDot,    //...
-    Comma,        // ,
-    Semi,         // ;
-    Colon,        // :
-    PathSep,      // ::
-    Arrow,        // ->
-    At,           // @
-
-    Eof,
-}
-
-#[derive(Debug, Clone)]
-pub struct Token {
-    pub kind: TokenKind,
-    pub span: Span,
-}
+use crate::token::{Token, TokenKind};
 
 #[derive(Debug)]
 pub struct LexError {
@@ -95,7 +19,7 @@ impl fmt::Display for LexError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "lex error at {}:{}: {}",
+            "{}:{}: lex error: {}",
             self.span.line, self.span.column, self.message
         )
     }
@@ -174,7 +98,7 @@ impl<'a> Lexer<'a> {
                     TokenKind::DotDotDot
                 } else {
                     return Err(LexError::new(
-                        "unexpected token '..'".into(),
+                        "unexpected `..`, expected `...`".into(),
                         self.start_span,
                     ));
                 }
@@ -303,7 +227,7 @@ impl<'a> Lexer<'a> {
 
             Some(ch) => {
                 return Err(LexError::new(
-                    format!("Unexpected character: '{ch}'"),
+                    format!("unexpected character `{ch}`"),
                     self.start_span,
                 ));
             }
@@ -419,12 +343,15 @@ impl<'a> Lexer<'a> {
 
         if is_float {
             let value = num.parse::<f64>().map_err(|_| {
-                LexError::new(format!("Invalid float literal: {num}"), self.start_span)
+                LexError::new(format!("invalid float literal `{num}`"), self.start_span)
             })?;
             Ok(TokenKind::Float(value, suffix))
         } else {
             let value = num.parse::<i64>().map_err(|_| {
-                LexError::new(format!("Invalid integer literal: {num}"), self.start_span)
+                LexError::new(
+                    format!("integer literal `{num}` is too large"),
+                    self.start_span,
+                )
             })?;
             Ok(TokenKind::Integer(value, suffix))
         }
@@ -443,7 +370,7 @@ impl<'a> Lexer<'a> {
     fn read_string_content(&mut self) -> Result<String, LexError> {
         if self.current != Some('"') {
             return Err(LexError::new(
-                "Expected '\"' at start of string".to_string(),
+                "expected `\"` at start of string literal".to_string(),
                 self.span,
             ));
         }
@@ -468,7 +395,7 @@ impl<'a> Lexer<'a> {
                         }
                         None => {
                             return Err(LexError::new(
-                                "Unexpected EOF in escape sequence".to_string(),
+                                "unexpected end of file in escape sequence".to_string(),
                                 self.span,
                             ));
                         }
@@ -476,7 +403,7 @@ impl<'a> Lexer<'a> {
                 }
                 '\n' => {
                     return Err(LexError::new(
-                        "Unterminated string literal".to_string(),
+                        "unterminated string literal".to_string(),
                         self.start_span,
                     ));
                 }
@@ -488,7 +415,7 @@ impl<'a> Lexer<'a> {
         }
 
         Err(LexError::new(
-            "Unterminated string literal".to_string(),
+            "unterminated string literal".to_string(),
             self.start_span,
         ))
     }
