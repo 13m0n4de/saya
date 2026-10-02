@@ -1,29 +1,16 @@
-build:
-    cargo build
+set positional-arguments
 
-run file:
-    cargo run {{file}}
-    @cat out.ssa
+# just exec foo.saya
+# echo '...' | just exec
+exec *args:
+    #!/usr/bin/env bash
+    set -uo pipefail
 
-check:
-    cargo check
+    exe=$(mktemp)
+    trap 'rm -f "$exe"' EXIT
 
-test:
-    cargo test
+    ir=$(cargo run -q -- "$@") || exit 1
+    asm=$(qbe <<< "$ir") || exit 1
+    cc -x assembler - -o "$exe" <<< "$asm" || exit 1
 
-fmt:
-    cargo fmt
-
-lint:
-    cargo clippy
-
-clean:
-    cargo clean
-    -rm -f out.ssa out.s a.out
-
-compile file: (run file)
-    qbe out.ssa -o out.s
-    cc out.s -o a.out
-
-exec file: (compile file)
-    -./a.out; echo "Exit code: $?"
+    "$exe"; echo "exit code: $?"

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::{self, Read, Write};
 use std::{env, fs, process};
 
 use saya::codegen::CodeGen;
@@ -8,9 +9,10 @@ use saya::type_checker::TypeChecker;
 use saya::typedef::emit_typedefs;
 use saya::types::TypeContext;
 
+#[derive(Default)]
 struct Args {
-    input: String,
-    output: String,
+    input: Option<String>,
+    output: Option<String>,
     typedef: Option<String>,
     namespace: Option<String>,
     td_paths: HashMap<String, String>,
@@ -18,17 +20,11 @@ struct Args {
 
 fn parse_args() -> Result<Args, String> {
     let mut args = env::args().skip(1);
-    let mut config = Args {
-        input: String::new(),
-        output: "out.ssa".to_string(),
-        typedef: None,
-        namespace: None,
-        td_paths: HashMap::new(),
-    };
+    let mut config = Args::default();
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "-o" => config.output = args.next().ok_or("missing argument for '-o'")?,
+            "-o" => config.output = Some(args.next().ok_or("missing argument for '-o'")?),
             "-t" => config.typedef = Some(args.next().ok_or("missing argument for '-t'")?),
             "-N" => config.namespace = Some(args.next().ok_or("missing argument for '-N'")?),
             "-M" => {
@@ -39,12 +35,8 @@ fn parse_args() -> Result<Args, String> {
                 config.td_paths.insert(name.into(), path.into());
             }
             s if s.starts_with('-') => return Err(format!("unknown option: '{s}'")),
-            path => config.input = path.to_string(),
+            path => config.input = Some(path.to_string()),
         }
-    }
-
-    if config.input.is_empty() {
-        return Err("no input file".to_string());
     }
 
     Ok(config)
@@ -52,10 +44,19 @@ fn parse_args() -> Result<Args, String> {
 
 fn run() -> Result<(), String> {
     let args = parse_args().map_err(|e| format!("error: {e}"))?;
-    let input = &args.input;
-
-    let code =
-        fs::read_to_string(input).map_err(|e| format!("error: cannot read `{input}`: {e}"))?;
+    let (input, code) = match &args.input {
+        Some(path) => (
+            path.as_str(),
+            fs::read_to_string(path).map_err(|e| format!("error: cannot read `{path}`: {e}"))?,
+        ),
+        None => {
+            let mut code = String::new();
+            io::stdin()
+                .read_to_string(&mut code)
+                .map_err(|e| format!("error: cannot read stdin: {e}"))?;
+            ("<stdin>", code)
+        }
+    };
 
     let lexer = Lexer::new(&code);
     let mut parser = Parser::new(lexer).map_err(|e| format!("{input}:{e}"))?;
@@ -80,8 +81,14 @@ fn run() -> Result<(), String> {
         .generate(&typed_program)
         .map_err(|e| format!("{input}:{e}"))?;
 
-    fs::write(&args.output, qbe_il)
-        .map_err(|e| format!("error: cannot write `{}`: {e}", args.output))?;
+    match &args.output {
+        Some(path) => {
+            fs::write(path, qbe_il).map_err(|e| format!("error: cannot write `{path}`: {e}"))?
+        }
+        None => io::stdout()
+            .write_all(qbe_il.as_bytes())
+            .map_err(|e| format!("error: cannot write stdout: {e}"))?,
+    }
 
     Ok(())
 }
